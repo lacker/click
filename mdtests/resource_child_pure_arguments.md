@@ -33,14 +33,14 @@ int32 read_child(int32* p) {
 } by {
     have model_pointer(root.model) == p by {
         rewrite(root.model, Address::At(p));
-        unfold(model_pointer(Address::At(p))); solve();
+        unfold(model_pointer(Address::At(p))); close();
     }
     let { child: child } = unfold(root);
     unfold(child);
     step_until(function.exit);
     let child = fold(cell(p), { value: old(root.value) });
     let root = fold(holder(), { model: old(root.model), value: old(root.value), child: child });
-    solve();
+    close();
 }
 ```
 

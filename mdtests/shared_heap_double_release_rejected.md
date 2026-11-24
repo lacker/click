@@ -61,7 +61,7 @@ void child_release(struct child* obj) {
         unfold(child_ref(obj));
         unfold(authority(child_ref(obj)));
         step_until(function.exit);
-        solve();
+        close();
     } else {
         unfold(child_ref(obj));
         have 1 < obj->refs by {
@@ -72,7 +72,7 @@ void child_release(struct child* obj) {
         step();
         fold(child_control(obj));
         step_until(function.exit);
-        solve();
+        close();
     }
 }
 
@@ -84,7 +84,7 @@ void release_twice(struct child* obj) {
     step(child_release);
     step(child_release);
     step();
-    solve();
+    close();
 }
 ```
 

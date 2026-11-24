@@ -19,7 +19,7 @@ unsigned long set_then_read(struct counter *p) {
     views library::state.value;
     ensures library::state.value == old(library::state.value);
 } by {
-    have separate(memory(p->value), memory(library::state.value)) by { known(); }
+    have separate(memory(p->value), memory(library::state.value)) by { close(); }
 }
 unsigned long next() {
     owns library::state.value;

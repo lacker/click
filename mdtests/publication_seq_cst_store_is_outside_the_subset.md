@@ -38,7 +38,7 @@ void* producer(void* argument) {
     fold(ready_payload(channel));
     step();
     step();
-    solve();
+    close();
 }
 ```
 

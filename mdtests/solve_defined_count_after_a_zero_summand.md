@@ -27,7 +27,7 @@ void increment(int32* o, int32 n) {
     requires 0 < n;
     requires n < 2147483647;
     ensures count(tok(o)) == n + 1;
-} by { step(); have defined(count(tok(o)) + 1) by solve(); }
+} by { step(); have defined(count(tok(o)) + 1) by close(); }
 ```
 
 ```expect

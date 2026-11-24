@@ -36,7 +36,7 @@ void traverse(int32 *next, int32 *visited, int32 n, int32 from, int32 to) diverg
     step();
     have exists (fuel: Nat) { fuel == Nat::Zero } by {
         witness(Nat::Zero);
-        solve();
+        close();
     }
     loop diverges {
         invariant 0 <= cur;
@@ -46,19 +46,19 @@ void traverse(int32 *next, int32 *visited, int32 n, int32 from, int32 to) diverg
         };
         views next[0..n];
         owns visited[0..n];
-        initialize by { solve(); }
+        initialize by { close(); }
         maintain by {
             mark iter;
             have 0 <= next[cur] and next[cur] < n by {
                 instantiate(forall (k: int32) {
                     0 <= k and k < n implies 0 <= next[k] and next[k] < n
                 }, cur);
-                known();
+                close();
             }
             if cur == to {
                 step();
                 step();
-                solve();
+                close();
             } else {
                 step();
             }
@@ -83,7 +83,7 @@ void traverse(int32 *next, int32 *visited, int32 n, int32 from, int32 to) diverg
                 have next[k] == at(iter, next[k]) by {
                     preserve(memory(next[k]), loop(0).statement(1));
                 }
-                known();
+                close();
             }
             have forall (k: int32) {
                 0 <= k and k < n implies 0 <= next[k] and next[k] < n
@@ -96,17 +96,17 @@ void traverse(int32 *next, int32 *visited, int32 n, int32 from, int32 to) diverg
                     0 <= j and j < n implies at(iter, next[j]) == next[j]
                 }, k);
                 rewrite(next[k], at(iter, next[k]));
-                known();
+                close();
             }
             have 0 <= next[cur] and next[cur] < n by {
                 instantiate(forall (k: int32) {
                     0 <= k and k < n implies 0 <= next[k] and next[k] < n
                 }, cur);
-                known();
+                close();
             }
             step();
-            have 0 <= cur by { known(); }
-            have cur < n by { known(); }
+            have 0 <= cur by { close(); }
+            have cur < n by { close(); }
         }
     }
 }

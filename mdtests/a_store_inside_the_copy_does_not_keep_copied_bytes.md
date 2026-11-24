@@ -24,8 +24,8 @@ void copy_n(char* dst, const char* src, uint64 n) {
 } by {
     unfold(bytes::equal(dst, 0u64, src, 0u64, n));
     step();
-    have 0 <= to_integer(n - 1u64) by { solve(); }
-    have to_integer(n - 1u64) < to_integer(n + 1u64) by { solve(); }
+    have 0 <= to_integer(n - 1u64) by { close(); }
+    have to_integer(n - 1u64) < to_integer(n + 1u64) by { close(); }
     have contains(memory(dst[0u64..n + 1u64]), memory(dst[n - 1u64])) by {
         apply(click::separation::contains_element(dst, 0u64, n + 1u64, n - 1u64));
     }
@@ -42,10 +42,10 @@ void copy_n(char* dst, const char* src, uint64 n) {
             (dst as (uint8 *))[k] == at(copied, (dst as (uint8 *))[k])
         } by {
             intro(); intro();
-            have separate(statement(1).footprint, memory((dst as (uint8 *))[k])) by { known(); }
+            have separate(statement(1).footprint, memory((dst as (uint8 *))[k])) by { close(); }
             preserve(memory((dst as (uint8 *))[k]), statement(1));
         }
-        known();
+        close();
     }
 }
 ```

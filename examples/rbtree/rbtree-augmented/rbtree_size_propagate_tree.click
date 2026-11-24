@@ -151,7 +151,7 @@ void sized_propagate(struct rb_node* rb, struct rb_node* stop) {
                                     implies rb_subtree_size(sized_shape(sized_walk_tree(walk.model))) <= 2147483647 by {
                                     intro();
                                     intro();
-                                    known();
+                                    close();
                                 }
                                 have 0 <= sized_walk_rank(walk.model) by { close(); }
                                 have sized_walk_rank(walk.model) < sized_context_depth(sized_path_context(path_model)) + 1 by { close(); }

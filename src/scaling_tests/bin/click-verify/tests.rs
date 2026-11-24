@@ -9,7 +9,7 @@ fn trace_source_locations_resolve_each_claim_once() {
     let mut cold_work = Vec::new();
     for size in [16, 64, 256] {
         let source = format!(
-            "verifying \"program.c\";\nvoid sample() {{ ensures 1 == 1; }} by {{\n{}\nstep_until(function.exit); solve();\n}}",
+            "verifying \"program.c\";\nvoid sample() {{ ensures 1 == 1; }} by {{\n{}\nstep_until(function.exit); close();\n}}",
             "have 1 == 1 by { normalize(); }\n".repeat(size)
         );
         let (root, path) = temporary_project("trace-source-cache", "void sample() {}", &source);
@@ -48,7 +48,7 @@ fn trace_source_locations_share_the_index_across_distinct_nested_sites() {
     let mut measured = Vec::new();
     for size in [16, 64, 256] {
         let source = format!(
-            "verifying \"program.c\";\nvoid sample() {{ ensures 1 == 1; }} by {{\n{}\nstep_until(function.exit); solve();\n}}",
+            "verifying \"program.c\";\nvoid sample() {{ ensures 1 == 1; }} by {{\n{}\nstep_until(function.exit); close();\n}}",
             "have 1 == 1 by { normalize(); }\n".repeat(size)
         );
         let (root, path) = temporary_project("trace-nested-index", "void sample() {}", &source);

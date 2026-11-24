@@ -13,9 +13,9 @@ int64 with_word_facts(int64 n, int64 k) {
     ensures true;
 } by {
     step() by {
-        have (k & 15i64) >= 0 by { known(); }
-        have (k & 15i64) <= 15 by { known(); }
-        solve();
+        have (k & 15i64) >= 0 by { close(); }
+        have (k & 15i64) <= 15 by { close(); }
+        close();
     }
 }
 int64 implicit(int64 n, int64 k) {

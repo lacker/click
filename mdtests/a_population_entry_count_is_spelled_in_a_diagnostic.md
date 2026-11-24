@@ -53,7 +53,7 @@ void pool_checkout(struct pool* pool, struct object* object) {
         have defined(old(pool->checked_out) + 1);
         have to_integer(pool->checked_out) == to_integer(count(pool_object(pool, _)));
         have to_integer(pool->capacity)
-            == to_integer(pool->checked_out) + to_integer(count(pool_slot(pool))) + 1 by known();
+            == to_integer(pool->checked_out) + to_integer(count(pool_slot(pool))) + 1 by close();
     }
 }
 ```

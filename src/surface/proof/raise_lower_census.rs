@@ -213,8 +213,8 @@ mod tests {
             .next()
             .unwrap();
         let click = click.replace(
-            "    step();\n    solve();",
-            "    have p->left == p->left;\n    step();\n    solve();",
+            "    step();\n    close();",
+            "    have p->left == p->left;\n    step();\n    close();",
         );
         let lines = capture(|| {
             let error = crate::surface::verify_c_sources(
@@ -299,7 +299,7 @@ mod tests {
         let error = crate::surface::verify_c_sources(
             "spec enum Pair { Both(int32, int32) }
              theorem swapped(p: Pair) {
-                 ensures p == (match p { Pair::Both(a, b) => Pair::Both(b, a) }) by known();
+                 ensures p == (match p { Pair::Both(a, b) => Pair::Both(b, a) }) by close();
              }",
             &[],
         )
@@ -917,11 +917,11 @@ void keep(int32* p) {
     owns before: modeled(p);
 } by {
     match before.items {
-        List::Nil => { step_until(function.exit); solve(); },
+        List::Nil => { step_until(function.exit); close(); },
         List::Cons(value, tail_items) => {
             unfold(is_cons(List::Cons(value, tail_items)));
             step_until(function.exit);
-            solve();
+            close();
         },
     }
 }
@@ -1126,7 +1126,7 @@ theorem only_element(v: int32, x: int32) {
             predicate positive(x: int32) { x > 0 }
             theorem from_positive(x: int32) {
                 requires positive(x);
-                ensures x > 0 by { unfold(positive(x)); known(); }
+                ensures x > 0 by { unfold(positive(x)); close(); }
             }
         "#;
         let checked = capture(|| {
@@ -1160,7 +1160,7 @@ void set(int32* a, int32 i, int32 j) {
     ensures a[j] == 5;
 } by {
     step_until(function.exit);
-    known();
+    close();
     rewrite(j, i);
 }
 "#;
@@ -1201,7 +1201,7 @@ void bump(struct cell* p) {
     unfold(flat(p));
     step_until(function.exit);
     fold(flat(p));
-    solve();
+    close();
 }
 "#;
         let lines = capture(|| {
@@ -1242,7 +1242,7 @@ void pack(struct node* p, struct node* id) {
         unfold(tag_at(model_id));
         step();
         fold(tag_at(model_id));
-        step_until(function.exit); solve();
+        step_until(function.exit); close();
     }, }
 }
 "#;
@@ -1280,7 +1280,7 @@ int32 add3(int32 x) {
 theorem add3_adds_four() {
     ensures Adds(&add3, { amount: 4 }) by {
         unfold(Adds(&add3, { amount: 4 }));
-        solve();
+        close();
     }
 }
 "#;

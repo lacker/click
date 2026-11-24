@@ -28,14 +28,14 @@ fn comparison_lookahead_stops_at_its_proposition() {
         for _ in 0..size {
             source.push_str("    requires x < y;\n");
         }
-        source.push_str("    ensures x < y by { known(); }\n}\n");
+        source.push_str("    ensures x < y by { close(); }\n}\n");
         constructor_lookahead_tokens(&source)
     });
     assert_linear(&statements);
     let conjuncts = [32, 64, 128, 256].map(|size| {
         let chain = vec!["x < y"; size].join(" and ");
         let source = format!(
-            "theorem chain(x: Integer, y: Integer) {{\n    requires {chain};\n    ensures x < y by {{ known(); }}\n}}\n"
+            "theorem chain(x: Integer, y: Integer) {{\n    requires {chain};\n    ensures x < y by {{ close(); }}\n}}\n"
         );
         constructor_lookahead_tokens(&source)
     });

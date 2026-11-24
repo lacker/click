@@ -32,12 +32,12 @@ int32 f(int32 n) {
             step(); step();
             loop { decreases 2-j; invariant j >= 0; invariant j <= 2; invariant i >= 0; invariant i < n; }
             step();
-            solve();
+            close();
         }
     }
     step();
-    have result == 5 by solve();
-    solve();
+    have result == 5 by close();
+    close();
 }
 ```
 

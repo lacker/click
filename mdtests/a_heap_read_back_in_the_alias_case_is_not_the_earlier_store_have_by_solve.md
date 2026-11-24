@@ -41,15 +41,15 @@ int32 read_back(int32 u) {
         step();
         if u == 0 {
             step();
-            have r == 3 by solve();
+            have r == 3 by close();
             step();
             step();
-            solve();
+            close();
         } else {
             step();
             step();
             step();
-            solve();
+            close();
         }
     }
 }

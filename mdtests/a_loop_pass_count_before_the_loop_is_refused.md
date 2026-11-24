@@ -25,7 +25,7 @@ int32 doubled(int32 n) {
 } by {
     step();
     step();
-    have loop(0).iterations == 0 by { solve(); }
+    have loop(0).iterations == 0 by { close(); }
     step();
     step();
     loop {

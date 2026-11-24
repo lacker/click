@@ -34,7 +34,7 @@ void check() {
     step_until(call(0).entry);
     step();
     step_until(function.exit);
-    solve();
+    close();
 }
 ```
 

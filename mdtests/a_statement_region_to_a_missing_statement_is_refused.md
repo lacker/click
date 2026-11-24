@@ -13,8 +13,8 @@ int32 probe(int32 x) {
     ensures result == x;
 } by {
     step();
-    have at(statement(3).exit, x) == x by solve();
-    solve();
+    have at(statement(3).exit, x) == x by close();
+    close();
 }
 ```
 

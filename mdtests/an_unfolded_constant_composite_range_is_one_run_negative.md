@@ -25,7 +25,7 @@ int32 put_then_read(int32 *a, int32 k) {
     unfold(block(a));
     step_until(function.exit);
     fold(block(a));
-    solve();
+    close();
 }
 ```
 

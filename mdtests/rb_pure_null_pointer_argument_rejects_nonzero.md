@@ -129,7 +129,7 @@ struct rb_node* rb_left_of(struct rb_node* node) {
             let sub = fold(rb_at(node), { model: old(t.model), left: l, right: r });
             have rb_parent_is(sub.model, 0) == 1 by {
                 rewrite(sub.model, old(t.model));
-                known();
+                close();
             }
             have rb_tree_parent_consistent(sub.model)
                 == rb_parent_consistent(sub.model, 0) by {
@@ -138,9 +138,9 @@ struct rb_node* rb_left_of(struct rb_node* node) {
             }
             have ctx_holds(Context::Top, sub.model) == 1 by {
                 unfold(ctx_holds(Context::Top, sub.model));
-                known();
+                close();
             }
-            solve();
+            close();
         },
     }
 }

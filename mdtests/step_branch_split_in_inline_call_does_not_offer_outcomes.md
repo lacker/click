@@ -40,7 +40,7 @@ void choose(int32* p, int32 c) {
     ensures p[0] == 1 or p[0] == 2;
 } by {
     step();
-    solve();
+    close();
 }
 ```
 

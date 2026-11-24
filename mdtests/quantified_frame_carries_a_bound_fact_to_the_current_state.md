@@ -22,7 +22,7 @@ void mark(int32 *next, int32 *visited, int32 n, int32 cur) {
     ensures forall (k: int32) { 0 <= k and k < n implies 0 <= next[k] and next[k] < n };
 } by {
     mark before;
-    have at(before, forall (k: int32) { 0 <= k and k < n implies 0 <= next[k] and next[k] < n }) by known();
+    have at(before, forall (k: int32) { 0 <= k and k < n implies 0 <= next[k] and next[k] < n }) by close();
     have contains(memory(visited[0..n]), memory(visited[cur])) by {
         apply(click::separation::contains_element(visited, 0, n, cur));
     }
@@ -53,7 +53,7 @@ void mark(int32 *next, int32 *visited, int32 n, int32 cur) {
         }
         instantiate(at(before, forall (j: int32) { 0 <= j and j < n implies 0 <= next[j] and next[j] < n }), k);
         rewrite(next[k], at(before, next[k]));
-        known();
+        close();
     }
 }
 ```

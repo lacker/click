@@ -19,7 +19,7 @@ fn function_pointers::apply(f: fn(i32) -> i32, x: i32) -> i32 {
 theorem twice_is_doubling() {
     ensures Doubling(function_pointers::twice) by {
         unfold(Doubling(function_pointers::twice));
-        solve();
+        close();
     }
 }
 

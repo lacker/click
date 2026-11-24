@@ -13,13 +13,13 @@ fn inline_array_element_addresses_are_logical_without_granting_access() {
     let proof = r#"verifying "addresses.c";
         void logical(struct packet* p) {
             ensures &p->values[0] == p->values;
-        } by { step_until(function.exit); solve(); }
+        } by { step_until(function.exit); close(); }
         uint8* byte_at(struct packet* p, uint32 i) {
             views p->bytes[0..4];
             requires i < 4u32;
             ensures result == &p->bytes[i];
             ensures result == &p->bytes[0] + i;
-        } by { step_until(function.exit); solve(); }
+        } by { step_until(function.exit); close(); }
     "#;
     let verified_for_expansion = verify_c_sources(proof, &inputs).unwrap();
     for (_, expanded) in
@@ -51,7 +51,7 @@ fn inline_array_element_addresses_are_logical_without_granting_access() {
     let missing_view = r#"verifying "addresses.c";
         int32 read(struct packet* p) {
             ensures &p->values[0] == p->values;
-        } by { step_until(function.exit); solve(); }
+        } by { step_until(function.exit); close(); }
     "#;
     assert!(verify_c_sources(missing_view, &inputs).is_err());
 }
@@ -71,9 +71,9 @@ fn historical_wide_view_bound_reads_the_marked_counter() {
             }} by {{
                 mark before;
                 step();
-                have to_integer(at(before, 16u64 * n as uint64)) == to_integer(32u64) by solve();
-                have at(before, viewable(p[0u64..16u64 * n as uint64])) by solve();
-                step_until(function.exit); solve();
+                have to_integer(at(before, 16u64 * n as uint64)) == to_integer(32u64) by close();
+                have at(before, viewable(p[0u64..16u64 * n as uint64])) by close();
+                step_until(function.exit); close();
             }}
         "#
         );
@@ -710,7 +710,7 @@ fn closing_constructs_only_a_missing_authorized_output_token() {
 
     for individual_proof in [
         "produces token(result) by { step_until(function.exit); }",
-        "produces token(result) by { step_until(function.exit); solve(); }",
+        "produces token(result) by { step_until(function.exit); close(); }",
     ] {
         let individual = source
             .replace("produces token(result);", individual_proof)
@@ -763,7 +763,7 @@ fn contradiction_closes_an_impossible_concrete_outcome() {
                     intro();
                     contradiction(result == 1);
                 }
-                known();
+                close();
             }
         "#;
 
@@ -819,7 +819,7 @@ fn individual_linear_open_proof_stays_on_proof_through_claim_acceptance() {
                     with(marker(x)) {
                         step_until(function.exit);
                     }
-                    solve();
+                    close();
                 }
             }
         "#;
@@ -913,7 +913,7 @@ fn explicit_call_partition_if_stays_on_one_proof_after_scoped_open() {
                 branch { true => { step(); } false => { } }
                 step_until(function.exit);
                 fold(allocated_cell(owner));
-                solve();
+                close();
             }
 
             int32 replace_after_scoped_open(struct cell_owner* owner) {
@@ -931,7 +931,7 @@ fn explicit_call_partition_if_stays_on_one_proof_after_scoped_open() {
                     step();
                 }
                 step_until(function.exit);
-                solve();
+                close();
             }
         "#;
     let sources = &[
@@ -1009,7 +1009,7 @@ pub(super) fn result_case_split_sources() -> (&'static str, &'static str, &'stat
                 branch { true => { step(); } false => { } }
                 step_until(function.exit);
                 fold(allocated_cell(owner));
-                solve();
+                close();
             }
 
             int32 replace_then_branch(struct cell_owner* owner) {
@@ -1029,7 +1029,7 @@ pub(super) fn result_case_split_sources() -> (&'static str, &'static str, &'stat
                     step();
                     step();
                 }
-                solve();
+                close();
             }
         "#;
 
@@ -1136,7 +1136,7 @@ fn proof_if_splits_one_frontier_after_execution_has_started() {
                     step();
                     step();
                 }
-                solve();
+                close();
             }
     "#;
     let sources = &[("identity_after_prefix.c", c_source)];
@@ -1186,7 +1186,7 @@ fn post_execution_resource_fold_completes_without_a_body_rerun() {
             unfold(cell(p));
             step_until(function.exit);
             fold(cell(p));
-            solve();
+            close();
         }
     "#;
 
@@ -1302,7 +1302,7 @@ fn token_quantity_entry_completes_without_a_body_rerun() {
             ensures result == x;
         } by {
             step();
-            solve();
+            close();
         }
     "#;
 
@@ -1433,7 +1433,7 @@ fn grouped_n_way_outcomes_discard_exactly_infeasible_siblings_on_proof() {
                 ensures result == 1;
             } by {
                 step_until(function.exit);
-                solve();
+                close();
             }
         "#;
 
@@ -1593,7 +1593,7 @@ fn outcome_solve_spells_a_call_postcondition_across_two_states() {
         .nth(1)
         .expect("the expanded source should retain the caller");
     // The checked frame equation connects the states in the shared graph.
-    assert!(caller_expansion.contains("known();"), "{expanded}");
+    assert!(caller_expansion.contains("close();"), "{expanded}");
     verify_c_sources(&expanded, sources)
         .expect("the rewritten caller proof should verify normally");
 }
@@ -1714,7 +1714,7 @@ fn grouped_mutable_composite_calls_keep_open_scopes_on_proof() {
                 with(owned_cell(cell)) {
                     step_until(function.exit);
                 }
-                solve();
+                close();
             }
 
             int32 set_wrapped_seven(int32* cell) {
@@ -1724,7 +1724,7 @@ fn grouped_mutable_composite_calls_keep_open_scopes_on_proof() {
                 with(wrapped_cell(cell)) {
                     step_until(function.exit);
                 }
-                solve();
+                close();
             }
         "#;
     let sources = &[
@@ -1810,7 +1810,7 @@ fn grouped_mutable_composite_calls_continue_on_proof_after_preparatory_scope() {
                     branch { true => { step(); } false => { } }
                     step_until(function.exit);
                 }
-                solve();
+                close();
             }
 
             int32 prepare_then_set_seven(int32* cell, int32 choose) {
@@ -1820,7 +1820,7 @@ fn grouped_mutable_composite_calls_continue_on_proof_after_preparatory_scope() {
                 with(wrapped_cell(cell)) {
                 }
                 step_until(function.exit);
-                solve();
+                close();
             }
         "#;
     let sources = &[
@@ -1888,7 +1888,7 @@ fn grouped_sequential_top_level_scopes_stay_on_one_proof() {
                 with(second_marker(x)) {
                     step_until(function.exit);
                 }
-                solve();
+                close();
             }
         "#;
     let sources = &[("add_twice.c", c_source)];
@@ -2019,7 +2019,7 @@ fn heap_backed_predicate_contract_stays_on_checked_proof() {
                 ensures remains_ordered: ordered_pair(p);
             } by {
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -2062,9 +2062,9 @@ fn quantified_heap_scope_stays_on_checked_proof() {
                 } by {
                     intro();
                     intro();
-                    solve();
+                    close();
                 }
-                solve();
+                close();
             }
         "#;
 
@@ -2105,13 +2105,13 @@ fn grouped_leading_resource_relations_stay_on_one_proof() {
                 ensures result == 0;
             } by {
                 have contains(pair(left, right), memory(left[0..1])) by {
-                    known();
+                    close();
                 }
                 have separate(memory(left[0..1]), memory(right[0..1])) by {
-                    known();
+                    close();
                 }
                 step_until(function.exit);
-                solve();
+                close();
             }
         "#;
     let sources = &[("inspect_pair.c", c_source)];
@@ -2189,14 +2189,14 @@ fn grouped_unfolded_resource_relations_stay_on_one_proof() {
                 observe(pair(left, right));
                 unfold(pair(left, right));
                 have contains(pair(left, right), memory(left[0..1])) by {
-                    known();
+                    close();
                 }
                 have separate(memory(left[0..1]), memory(right[0..1])) by {
-                    known();
+                    close();
                 }
                 fold(pair(left, right));
                 step_until(function.exit);
-                solve();
+                close();
             }
         "#;
     let sources = &[("inspect_pair.c", c_source)];
@@ -2270,10 +2270,10 @@ fn grouped_owned_outcome_resources_stay_on_one_proof() {
                 unfold(seven_cell(cell));
                 step_until(function.exit);
                 have cell[0] == 7 by {
-                    solve();
+                    close();
                 }
                 fold(seven_cell(cell));
-                solve();
+                close();
             }
         "#;
     let sources = &[("set_seven.c", c_source)];
@@ -2355,9 +2355,9 @@ fn post_execution_frame_using_relowers_a_preceding_have_fact() {
             } by {
                 step_until(function.exit);
                 have data[0] == 0 by {
-                    known();
+                    close();
                 }
-                solve();
+                close();
             }
         "#;
 
@@ -2454,7 +2454,7 @@ fn solve_rejects_loop_backed_claims() {
             verifying "count_to_three.c";
 
             int32 count_to_three() {
-                ensures returns_three: result == 3 by solve();
+                ensures returns_three: result == 3 by close();
             }
         "#;
 
@@ -2464,7 +2464,7 @@ fn solve_rejects_loop_backed_claims() {
     assert!(
         error
             .message()
-            .contains("`solve` closes the outcome claims at function exit and does not execute"),
+            .contains("`close` closes the outcome claims at function exit and does not execute"),
         "{}",
         error.message()
     );
@@ -2690,9 +2690,9 @@ fn source_have_failures_keep_the_written_operation_in_each_execution_phase() {
         ("step_until(function.exit);", ""),
     ] {
         for (body, diagnostic) in [
-            ("apply(missing()); known();", "unknown theorem `missing`"),
-            ("unfold(missing(0)); known();", "missing"),
-            ("step(); known();", "unsupported proof operation `step`"),
+            ("apply(missing()); close();", "unknown theorem `missing`"),
+            ("unfold(missing(0)); close();", "missing"),
+            ("step(); close();", "unsupported proof operation `step`"),
         ] {
             let source = format!(
                 r#"
@@ -2703,7 +2703,7 @@ fn source_have_failures_keep_the_written_operation_in_each_execution_phase() {
                     {before}
                     have x == x by {{ {body} }}
                     {after}
-                    solve();
+                    close();
                 }}
             "#
             );
@@ -2734,12 +2734,12 @@ fn grouped_outcome_fold_is_local_to_the_returning_branch() {
             if (flag != 0) {
                 unfold(seven_cell(cell));
                 step_until(function.exit);
-                have cell[0] == 7 by { solve(); }
+                have cell[0] == 7 by { close(); }
                 fold(seven_cell(cell));
-                solve();
+                close();
             } else {
                 step_until(function.exit);
-                solve();
+                close();
             }
         }
     "#;
@@ -2877,7 +2877,7 @@ fn have_sorry_admits_one_fact_while_the_rest_checks() {
         } by {
             step_until(function.exit);
             have result == x by { sorry(); }
-            solve();
+            close();
         }
     "#;
     let _ = crate::surface::verification::take_sorry_admissions();
@@ -2922,9 +2922,9 @@ uint64 nested(uint64 total) {
   decreases to_integer(remaining);
   invariant remaining <= total;
   invariant total <= 64u64;
-  initialize by solve();
+  initialize by close();
   maintain by {
-   have 16u64 <= remaining by solve();
+   have 16u64 <= remaining by close();
    have to_integer(remaining - 16u64) == to_integer(remaining) - 16;
    mark before_subtract;
    step(); step_until(loop(1).entry);
@@ -2941,10 +2941,10 @@ uint64 nested(uint64 total) {
       remaining == at(before_subtract, remaining) - 16u64;
      };
      have 16u64 <= total by close() using { 16u64 <= at(before_subtract, remaining); at(before_subtract, remaining) <= total; };
-     solve();
+     close();
     }
     maintain by {
-     have remaining <= total - 16u64 by known();
+     have remaining <= total - 16u64 by close();
      have 1u32 <= n by close() using { n > 0u32; n <= 2u32; };
      have to_integer(n - 1u32) == to_integer(n) - 1;
      mark before_inner;
@@ -2972,10 +2972,10 @@ uint64 nested(uint64 total) {
    have to_integer(remaining) < at(before_subtract, to_integer(remaining)) by close() using {
     to_integer(remaining) == at(before_subtract, to_integer(remaining)) - 16;
    };
-   solve();
+   close();
   }
  }
- step_until(function.exit); solve();
+ step_until(function.exit); close();
 }
 "#;
     verify_c_sources(proof, &[("nested.c", c)]).unwrap();
@@ -3040,7 +3040,7 @@ fn casts_of_resource_fields_keep_their_declared_scalar_types() {
             ensures (o.size as int64) == -1i64;
         } by {
             have (o.size as int32) == o.size by normalize();
-            step_until(function.exit); solve();
+            step_until(function.exit); close();
         }
     "#;
     verify_c_sources(source, &[("field.c", c)])
@@ -3068,7 +3068,7 @@ fn contract_claims_cannot_hide_overflow_behind_reflexivity() {
             r#"verifying "domain.c";
             int32 identity(int32 x) {{
                 ensures to_integer({expression}) == to_integer({expression});
-            }} by {{ step(); solve(); }}
+            }} by {{ step(); close(); }}
         "#
         );
         verify_c_sources(&source, &[("domain.c", c)])
@@ -3084,7 +3084,7 @@ fn contract_claims_cannot_hide_overflow_behind_reflexivity() {
             r#"verifying "domain.c";
             int32 identity(int32 x) {{
                 ensures to_integer({expression}) == to_integer({expression});
-            }} by {{ step(); solve(); }}
+            }} by {{ step(); close(); }}
         "#
         );
         assert!(
@@ -3101,7 +3101,7 @@ fn contract_quantifier_domains_keep_the_chosen_witness_and_polarity() {
     for (claim, proof, passes) in [
         (
             "exists (k: int32) { to_integer(k + 1) == 0 }",
-            "witness(-1); solve();",
+            "witness(-1); close();",
             true,
         ),
         (
@@ -3116,12 +3116,12 @@ fn contract_quantifier_domains_keep_the_chosen_witness_and_polarity() {
         ),
         (
             "not (forall (k: int32) { to_integer(k + 1) != 0 })",
-            "witness(-1); solve();",
+            "witness(-1); close();",
             true,
         ),
         (
             "not (forall (k: int32) { to_integer(k + 1) != to_integer(k + 1) })",
-            "witness(2147483647); solve();",
+            "witness(2147483647); close();",
             false,
         ),
     ] {

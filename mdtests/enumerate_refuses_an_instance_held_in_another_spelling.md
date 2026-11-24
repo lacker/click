@@ -5,7 +5,7 @@ An instance that does not evaluate to true must be an exact available fact.
 `0 == f(0)` states the `k == 0` instance with its sides swapped, which is not
 the instance `f(0) == 0`, so `enumerate` refuses rather than searching for an
 equivalent fact. Restate it first, for example with `have f(0) == 0 by
-known();`, or prove the instance with `have`.
+close();`, or prove the instance with `have`.
 
 ```click
 function f(x: int32) -> int32 { x }

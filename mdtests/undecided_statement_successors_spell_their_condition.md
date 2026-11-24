@@ -31,7 +31,7 @@ uint32 pick(uint32 x) {
     step();
     step();
     step();
-    solve();
+    close();
 }
 ```
 

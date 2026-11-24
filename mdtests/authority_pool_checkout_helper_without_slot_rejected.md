@@ -36,7 +36,7 @@ void pool_checkout(struct pool* pool, struct object* object) {
     produces pool_object(pool, object);
 } by {
     with(pool_control(pool)) {
-        have 1 <= count(pool_slot(pool)) by solve();
+        have 1 <= count(pool_slot(pool)) by close();
         have defined(pool->checked_out + 1);
         unfold(pool_slot(pool));
         step();

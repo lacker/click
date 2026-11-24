@@ -6,7 +6,7 @@ theorem choice_is_not_universal() {
     ensures forall (arbitrary: Integer) { arbitrary == 0 } by {
         intro();
         let chosen = obtain(exists (chosen: Integer) { chosen == 0 });
-        known();
+        close();
     }
 }
 ```

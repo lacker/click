@@ -42,17 +42,17 @@ theorem decrement_is_decrease() {
         intro();
         all {
             0 < old(cell[0]) => {
-                known();
+                close();
             }
             (to_integer(cell[0]) == to_integer(old(cell[0])) - 1 implies cell[0] < old(cell[0])) => {
                 intro();
                 have *cell == (old(*cell) - 1);
                 all {
                     cell[0] == old(cell[0]) - 1 => {
-                        known();
+                        close();
                     }
                     cell[0] < old(cell[0]) => {
-                        solve();
+                        close();
                     }
                 }
             }

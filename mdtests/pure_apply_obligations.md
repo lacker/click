@@ -3,7 +3,7 @@
 ```click
 theorem nonnegative(n: Integer) {
     requires n >= 0;
-    ensures n >= 0 by known();
+    ensures n >= 0 by close();
 }
 theorem positive(n: Integer) {
     requires n > 0;
@@ -14,7 +14,7 @@ theorem positive(n: Integer) {
 
 theorem nonpositive(n: Integer) {
     requires n <= 0;
-    ensures true by { solve(); }
+    ensures true by { close(); }
 }
 theorem integer_literal_argument() {
     ensures true by {

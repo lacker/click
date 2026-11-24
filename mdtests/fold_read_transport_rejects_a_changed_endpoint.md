@@ -25,11 +25,11 @@ void set_end(int32 *v, int32 i, int32 n) {
     ensures ones(v, 0, i + 1) == old(ones(v, 0, i));
 } by {
     mark entry;
-    have ones(at(entry, v), 0, i) == ones(at(entry, v), 0, i) by known();
+    have ones(at(entry, v), 0, i) == ones(at(entry, v), 0, i) by close();
     step();
     have ones(at(entry, v), 0, i) == ones(v, 0, i + 1) by {
-        solve();
-        known();
+        close();
+        close();
     }
 }
 ```

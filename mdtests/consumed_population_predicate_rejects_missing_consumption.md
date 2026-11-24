@@ -53,10 +53,10 @@ void consume_population(struct owner* owner, int32 amount) {
     with(accounting(owner)) {
         unfold(valid_capacity(owner));
         step();
-        have to_integer(owner->used) == to_integer(old(owner->used)) by { known(); }
+        have to_integer(owner->used) == to_integer(old(owner->used)) by { close(); }
         have to_integer(old(owner->capacity)) ==
             to_integer(old(owner->used)) + to_integer(old(count(slot(owner)))) by {
-            known();
+            close();
         }
         have owner->capacity == old(owner->capacity) - amount;
         have to_integer(owner->capacity) ==
@@ -74,7 +74,7 @@ void consume_population(struct owner* owner, int32 amount) {
     }
     step_until(function.exit);
     unfold(valid_capacity(owner));
-    solve();
+    close();
 }
 ```
 

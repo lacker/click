@@ -25,7 +25,7 @@ int32 identity(int32 *p, int32 n) {
     ensures result == n by {
         have viewable(p[-2000000000..2000000000]);
         step();
-        solve();
+        close();
     }
 }
 ```

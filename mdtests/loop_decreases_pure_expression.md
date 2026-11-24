@@ -35,7 +35,7 @@ int32 drain(int32 box[4]) {
         decreases head(box);
         invariant 0 <= box[0];
         invariant head(box) == box[0];
-        initialize by { unfold(head(box)); solve(); }
+        initialize by { unfold(head(box)); close(); }
         maintain by {
             have 0 <= to_integer(box[0] - 1);
             step();
@@ -43,7 +43,7 @@ int32 drain(int32 box[4]) {
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

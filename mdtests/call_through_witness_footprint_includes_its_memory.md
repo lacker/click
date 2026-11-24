@@ -98,18 +98,18 @@ void overwrite(struct node* p, struct node* q) {
         preserve(memory(p->word), statement(1));
     }
 
-    have aligned(saved_next, 8) by known();
+    have aligned(saved_next, 8) by close();
     have p->word == address(saved_next) + (p->word & 1) by {
         rewrite(p->word, at(before_word_0, p->word));
-        known();
+        close();
     }
     have ((p->word & ~1) as (struct node *)) == saved_next by {
         have ((p->word & ~1) as (struct node *)) == at(before_word_0, ((p->word & ~1) as (struct node *))) by {
             rewrite(p->word, at(before_word_0, p->word));
-            known();
+            close();
         }
         rewrite(((p->word & ~1) as (struct node *)), at(before_word_0, ((p->word & ~1) as (struct node *))));
-        known();
+        close();
     }
     fold(hop(p));
     let h = fold(holder(p, q), { tag: t, side: s });
@@ -157,19 +157,19 @@ int32 caller(struct node* p, struct node* q) {
         preserve(memory(p->word), statement(1));
     }
 
-    have next->value == 0 by solve();
-    have aligned(saved_next, 8) by known();
+    have next->value == 0 by close();
+    have aligned(saved_next, 8) by close();
     have p->word == address(saved_next) + (p->word & 1) by {
         rewrite(p->word, at(before_word_0, p->word));
-        known();
+        close();
     }
     have ((p->word & ~1) as (struct node *)) == saved_next by {
         have ((p->word & ~1) as (struct node *)) == at(before_word_0, ((p->word & ~1) as (struct node *))) by {
             rewrite(p->word, at(before_word_0, p->word));
-            known();
+            close();
         }
         rewrite(((p->word & ~1) as (struct node *)), at(before_word_0, ((p->word & ~1) as (struct node *))));
-        known();
+        close();
     }
     fold(hop(p));
     let h = fold(holder(p, q), { tag: t, side: s });
@@ -177,24 +177,24 @@ int32 caller(struct node* p, struct node* q) {
     step(overwrite, { h: h });
     let { tag: t2, side: s2 } = unfold(h);
     have next->value == at(before, next->value) by {
-        solve();
+        close();
     }
-    have next->value == 0 by solve();
+    have next->value == 0 by close();
     let { next: saved_next } = unfold(hop(p));
     step();
     step();
-    have aligned(saved_next, 8) by known();
+    have aligned(saved_next, 8) by close();
     have p->word == address(saved_next) + (p->word & 1) by {
         rewrite(p->word, at(before_word_0, p->word));
-        known();
+        close();
     }
     have ((p->word & ~1) as (struct node *)) == saved_next by {
         have ((p->word & ~1) as (struct node *)) == at(before_word_0, ((p->word & ~1) as (struct node *))) by {
             rewrite(p->word, at(before_word_0, p->word));
-            known();
+            close();
         }
         rewrite(((p->word & ~1) as (struct node *)), at(before_word_0, ((p->word & ~1) as (struct node *))));
-        known();
+        close();
     }
     fold(hop(p));
     let h = fold(holder(p, q), { tag: t2, side: s2 });

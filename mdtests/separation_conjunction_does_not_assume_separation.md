@@ -6,11 +6,11 @@ theorem no_permission(A: Resource, B: Resource) {
     ensures separate(A, B) by {
         apply(separation::contains_left(A, B));
         apply(separation::contains_right(A, B));
-        known();
+        close();
     }
 }
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: could not establish `separate(A, B)`
 ```

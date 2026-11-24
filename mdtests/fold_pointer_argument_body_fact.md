@@ -83,11 +83,11 @@ void clear(struct cell* c) {
             unfold(t);
             have is_owner(Owned::Held(c, 0), c) == 1 by {
                 unfold(is_owner(Owned::Held(c, 0), c));
-                known();
+                close();
             }
             step_until(function.exit);
             let u = fold(cell_at(c), { model: Owned::Held(c, 0) });
-            solve();
+            close();
         },
     }
 }
@@ -103,7 +103,7 @@ int32 peek(struct cell* c) {
             unfold(t);
             step_until(function.exit);
             let t = fold(cell_at(c), { model: Owned::Held(owner, v) });
-            solve();
+            close();
         },
     }
 }

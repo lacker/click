@@ -11,8 +11,8 @@ void set(int32* p, int32 x) {
     requires x > 0;
     owns cell(p);
 } by {
-    with(cell(p)) { } by { solve(); }
-    solve();
+    with(cell(p)) { } by { close(); }
+    close();
 }
 ```
 

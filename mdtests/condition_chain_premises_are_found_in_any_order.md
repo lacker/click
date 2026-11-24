@@ -19,7 +19,7 @@ theorem reversed_chain(a: int32, b: int32, c: int32, d: int32, p: int32, q: int3
     requires q < 9;
     requires b < c;
     requires a < b;
-    ensures a < d by solve();
+    ensures a < d by close();
 }
 ```
 

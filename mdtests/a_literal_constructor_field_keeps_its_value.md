@@ -17,7 +17,7 @@ function same(x: int64) -> Seq<int64> {
 theorem wrong_literal() {
     ensures same(2) == Seq<int64>::Cons(3, Seq<int64>::Nil) by {
         unfold(same(2));
-        solve();
+        close();
     }
 }
 ```

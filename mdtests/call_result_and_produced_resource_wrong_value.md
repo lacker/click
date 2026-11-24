@@ -23,7 +23,7 @@ int32 set(int32* p) {
     unfold(input);
     step_until(function.exit);
     let output = fold(Cell(p), { value: 1 });
-    solve();
+    close();
 }
 void caller(int32* p) {
     consumes input: Cell(p);
@@ -31,9 +31,9 @@ void caller(int32* p) {
     ensures checked.value == 1;
 } by {
     let { result: status, output: checked } = step(set, { input: input });
-    have status == 2 by { known(); }
+    have status == 2 by { close(); }
 }
 ```
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: could not establish `status == 2`
 ```

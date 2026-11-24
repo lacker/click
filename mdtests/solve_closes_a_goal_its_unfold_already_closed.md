@@ -21,8 +21,8 @@ function color_bit(color: Color) -> int {
 theorem bit_after_a_trivial_have() {
     ensures color_bit(Color::Black) == 1 by {
         have 1 == 1;
-        have color_bit(Color::Black) == 1 by solve();
-        known();
+        have color_bit(Color::Black) == 1 by close();
+        close();
     }
 }
 ```

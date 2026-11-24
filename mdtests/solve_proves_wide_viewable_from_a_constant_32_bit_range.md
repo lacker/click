@@ -24,18 +24,18 @@ uint64 f(uint8 bytes[], uint64 n) {
         }
         have viewable(memory(bytes[0..3u64])) by {
             apply(click::separation::viewable_restrict(memory(bytes[0..3]), memory(bytes[0..3u64])));
-            known();
+            close();
         }
         have contains(memory(bytes[0..3]), memory(bytes[0..n])) by {
             rewrite(n, 3u64);
-            known();
+            close();
         }
         have viewable(memory(bytes[0..n])) by {
             apply(click::separation::viewable_restrict(memory(bytes[0..3]), memory(bytes[0..n])));
-            known();
+            close();
         }
         step();
-        solve();
+        close();
     }
 }
 ```

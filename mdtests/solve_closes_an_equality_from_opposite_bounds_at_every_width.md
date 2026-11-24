@@ -59,7 +59,7 @@ uint32 count(uint32 n) {
     loop {
         decreases n - i;
         invariant i <= n;
-        otherwise { have i == n by solve(); }
+        otherwise { have i == n by close(); }
     }
 }
 ```

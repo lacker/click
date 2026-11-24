@@ -44,7 +44,7 @@ theorem increment_is_guarded_progress() {
         intro();
         all {
             old(cell[0]) < 1000 => {
-                have 100 <= 1000 by known();
+                have 100 <= 1000 by close();
                 apply(click::integer::int32_less_than_less_equal_transitive(old(cell[0]), 100, 1000));
             }
             (
@@ -63,7 +63,7 @@ theorem increment_is_guarded_progress() {
                         contradiction(not (old(cell[0]) < 0));
                     }
                     old(cell[0]) < cell[0] => {
-                        solve();
+                        close();
                     }
                 }
             }

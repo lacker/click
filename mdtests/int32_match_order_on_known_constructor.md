@@ -9,7 +9,7 @@ theorem written() {
             Packet::Empty => 0,
             Packet::Full(n) => n,
         }) < 0
-    } by { intro(); known(); }
+    } by { intro(); close(); }
 }
 
 theorem rewritten(p: Packet) {
@@ -22,7 +22,7 @@ theorem rewritten(p: Packet) {
     } by {
         intro();
         rewrite(p, Packet::Full(-7));
-        known();
+        close();
     }
 }
 
@@ -32,7 +32,7 @@ theorem right_operand() {
             Packet::Empty => 0,
             Packet::Full(n) => n,
         })
-    } by { intro(); known(); }
+    } by { intro(); close(); }
 }
 
 theorem both_operands() {
@@ -44,7 +44,7 @@ theorem both_operands() {
             Packet::Empty => 0,
             Packet::Full(n) => n,
         })
-    } by { intro(); known(); }
+    } by { intro(); close(); }
 }
 
 theorem non_strict() {
@@ -53,7 +53,7 @@ theorem non_strict() {
             Packet::Empty => 0,
             Packet::Full(n) => n,
         }) >= -7
-    } by { intro(); known(); }
+    } by { intro(); close(); }
 }
 
 theorem from_bound(value: int32) {
@@ -61,14 +61,14 @@ theorem from_bound(value: int32) {
     ensures (match Packet::Full(value) {
         Packet::Empty => 0,
         Packet::Full(n) => n,
-    }) < 9 by known();
+    }) < 9 by close();
 }
 
 theorem nested_cast() {
     ensures ((match Packet::Full(7) {
         Packet::Empty => 0,
         Packet::Full(n) => n,
-    }) as int64) < (9 as int64) by known();
+    }) as int64) < (9 as int64) by close();
 }
 
 ```

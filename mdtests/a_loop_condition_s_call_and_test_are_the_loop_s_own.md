@@ -47,41 +47,41 @@ unsigned count(int n) {
         maintain by {
             step();
             have statement(2).call(take, 0).result
-                == (if at(statement(2).call(take, 0).entry, left) == 0 { 0 } else { 1 }) by solve();
+                == (if at(statement(2).call(take, 0).entry, left) == 0 { 0 } else { 1 }) by close();
             have left
                 == (if at(statement(2).call(take, 0).entry, left) == 0 { 0 }
-                    else { at(statement(2).call(take, 0).entry, left) - 1 }) by solve();
+                    else { at(statement(2).call(take, 0).entry, left) - 1 }) by close();
             if statement(2).call(take, 0).result != 0 {
                 have at(statement(2).call(take, 0).entry, left) != 0 by {
                     if at(statement(2).call(take, 0).entry, left) == 0 {
-                        have statement(2).call(take, 0).result == 0 by solve();
+                        have statement(2).call(take, 0).result == 0 by close();
                         contradiction(statement(2).call(take, 0).result == 0);
                     } else {
-                        solve();
+                        close();
                     }
                 }
-                have left == at(statement(2).call(take, 0).entry, left) - 1 by solve();
+                have left == at(statement(2).call(take, 0).entry, left) - 1 by close();
             } else {
                 have at(statement(2).call(take, 0).entry, left) == 0 by {
                     if at(statement(2).call(take, 0).entry, left) == 0 {
-                        solve();
+                        close();
                     } else {
-                        have statement(2).call(take, 0).result == 1 by solve();
-                        have statement(2).call(take, 0).result != 1 by solve();
+                        have statement(2).call(take, 0).result == 1 by close();
+                        have statement(2).call(take, 0).result != 1 by close();
                         contradiction(statement(2).call(take, 0).result == 1);
                     }
                 }
-                have left == 0 by solve();
+                have left == 0 by close();
                 have to_integer(c) + to_integer(at(statement(2).call(take, 0).entry, left))
-                    == to_integer(n) by known();
-                have to_integer(c) == to_integer(n) by solve();
+                    == to_integer(n) by close();
+                have to_integer(c) == to_integer(n) by close();
             }
         }
         otherwise {
-            have at(statement(2).call(take, 0).entry, left) == 0 by known();
+            have at(statement(2).call(take, 0).entry, left) == 0 by close();
         }
     }
-    have at(loop(0).test().entry, left) == 0 by solve();
+    have at(loop(0).test().entry, left) == 0 by close();
 }
 ```
 

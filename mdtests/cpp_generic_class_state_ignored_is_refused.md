@@ -131,12 +131,12 @@ template<class T> bool Stack<T>::pop(T& out) {
                 List::Nil => {
                     unfold(tail);
                     let state = fold(nodes<T>(this->head), { items: List<T>::Nil });
-                    solve();
+                    close();
                 },
                 List::Cons(next_value, next_items) => {
                     let { tail: next } = unfold(tail);
                     let state = fold(nodes<T>(this->head), { items: List::Cons(next_value, next_items), tail: next });
-                    solve();
+                    close();
                 },
             }
         },
@@ -152,7 +152,7 @@ int caller(Stack<int>& stack, int x) {
 } by {
     step_until(function.exit);
     unfold(first_or(List<int>::Cons(x, old(state.items)), 0));
-    solve();
+    close();
 }
 ```
 

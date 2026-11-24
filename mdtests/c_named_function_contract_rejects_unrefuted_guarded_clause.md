@@ -47,7 +47,7 @@ void apply_step(void (*step)(int32*), int32* cell) {
 theorem proposed_increment_contract() {
     ensures GuardedProgress(&increment) by {
         unfold(GuardedProgress(&increment));
-        solve();
+        close();
     }
 }
 

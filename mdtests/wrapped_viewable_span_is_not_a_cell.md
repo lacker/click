@@ -33,7 +33,7 @@ theorem a_wrapped_span_is_free(v: int32[], n: int32) {
     ensures n >= 0 and viewable(v[0..n]) by {
         have n >= 0 by { close() using { n == 1073741824; }; }
         have viewable(v[0..n]);
-        known();
+        close();
     }
 }
 
@@ -45,7 +45,7 @@ theorem a_wrapped_span_yields_a_cell(v: int32[], n: int32) {
         have 0 <= 0;
         have 0 < n by { close() using { n == 1073741824; }; }
         have defined(v[0]);
-        known();
+        close();
     }
 }
 ```

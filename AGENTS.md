@@ -112,7 +112,7 @@ Follow the [proof repair procedure](docs/concepts/tracing.md): record the goal
 that was not proved, write the argument as a chain of `have` goals, and refine
 the first link that does not close until each link is one simple tactic.
 Every attempt must change that chain. A new tactic, written form, or position for
-the same link is not progress. Stop at one of its named outcomes. A link `solve` does not prove is too big, never by itself a
+the same link is not progress. Stop at one of its named outcomes. A link `close()` does not prove is too big, never by itself a
 verifier problem. File defects found through this workflow as GitHub issues
 after user approval, following the skill's reporting instructions, including
 for `inexpressible-fact`, `contract-bug`, `obligation-bug`, `tactic-bug`, `internal-error`,

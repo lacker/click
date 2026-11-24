@@ -40,7 +40,7 @@ int32 apply_read(int32 (*read)(int32*), int32* cell) {
 theorem proposed_claims_ownership_contract() {
     ensures BorrowedRead(&claims_ownership) by {
         unfold(BorrowedRead(&claims_ownership));
-        solve();
+        close();
     }
 }
 

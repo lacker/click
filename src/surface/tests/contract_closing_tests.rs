@@ -17,7 +17,7 @@ fn proof(steps: &str) -> String {
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by contract_closing_batch_00")]
 fn explicit_contract_closing_uses_ordinary_known_steps() {
-    let source = proof("normalize(); known(); known(); known();");
+    let source = proof("normalize(); close(); close(); close();");
     let mut verified = without_implicit_solve(|| verify_c_sources(&source, C))
         .unwrap_or_else(|error| panic!("{}", error.message()));
     // Reuse the completed artifact: losing its ordinary root must refuse,
@@ -38,7 +38,7 @@ fn explicit_contract_closing_uses_ordinary_known_steps() {
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by contract_closing_batch_00")]
 fn implicit_contract_closing_expands_into_explicit_steps() {
-    let source = proof("solve();");
+    let source = proof("close();");
     verify_c_sources(&source, C).unwrap();
     let expanded = expand_function_proof_source(&source, C, "value").unwrap();
     assert!(!expanded.contains("solve();"), "{expanded}");
@@ -65,7 +65,7 @@ fn omitted_closing_steps_leave_their_obligations_open() {
         (1, "allocation lifetime"),
         (2, "write footprint"),
     ] {
-        let source = proof(&format!("normalize(); {}", "known(); ".repeat(count)));
+        let source = proof(&format!("normalize(); {}", "close(); ".repeat(count)));
         let error = without_implicit_solve(|| verify_c_sources(&source, C))
             .expect_err("ordinary completion cannot supply an omitted proof");
         assert_eq!(
@@ -86,7 +86,7 @@ fn omitted_closing_steps_leave_their_obligations_open() {
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by contract_closing_batch_01")]
 fn written_solve_closes_only_one_selected_closing_goal() {
-    let source = proof("normalize(); solve();");
+    let source = proof("normalize(); close();");
     let error = without_implicit_solve(|| verify_c_sources(&source, C)).unwrap_err();
     assert!(
         error
@@ -101,11 +101,11 @@ fn written_solve_closes_only_one_selected_closing_goal() {
 fn expansion_writes_each_closing_step_and_requires_them_when_cold() {
     let source = proof("normalize();");
     let expanded = expand_function_proof_source(&source, C, "value").unwrap();
-    assert_eq!(expanded.matches("known();").count(), 3, "{expanded}");
+    assert_eq!(expanded.matches("close();").count(), 3, "{expanded}");
     without_implicit_solve(|| verify_c_sources(&expanded, C)).unwrap();
-    let last = expanded.rfind("known();").unwrap();
+    let last = expanded.rfind("close();").unwrap();
     let mut missing = expanded.clone();
-    missing.replace_range(last..last + "known();".len(), "");
+    missing.replace_range(last..last + "close();".len(), "");
     let error = without_implicit_solve(|| verify_c_sources(&missing, C)).unwrap_err();
     assert!(
         error
@@ -127,11 +127,11 @@ fn expansion_closes_each_rewritten_postcondition() {
             ensures result == 7;
         } by {
             step_until(function.exit);
-            known();
+            close();
             rewrite(result, old(p[0]));
-            known();
+            close();
             rewrite(result, old(p[0]));
-            solve();
+            close();
         }
     "#;
     let claim = "value.contract";
@@ -148,7 +148,7 @@ fn proposition_closers_name_the_pending_closing_goal() {
     for closer in [
         "normalize();",
         "close() using {};",
-        "all { true => { known(); } true => { known(); } }",
+        "all { true => { close(); } true => { close(); } }",
     ] {
         let source = proof(&format!("normalize(); {closer}"));
         let error = verify_c_sources(&source, C).unwrap_err();
@@ -160,7 +160,7 @@ fn proposition_closers_name_the_pending_closing_goal() {
             error.message().contains("joint returned resources"),
             "{error}"
         );
-        assert!(error.message().contains("known()"), "{error}");
+        assert!(error.message().contains("close()"), "{error}");
     }
 }
 
@@ -177,7 +177,7 @@ fn footprint_refusal_names_the_goal_and_the_solver_that_failed() {
             "the implicit solver could not prove the write footprint obligation",
         ),
         (
-            "normalize(); known(); known(); known();",
+            "normalize(); close(); close(); close();",
             "this tactic could not prove the write footprint obligation",
         ),
     ] {

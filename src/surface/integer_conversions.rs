@@ -99,7 +99,7 @@ theorem rounded(x: Integer) {
         have (2 * 2) + 1 == 5 by { normalize(); }
         have x * 2 <= (2 * 2) + 1 by {
             rewrite((2 * 2) + 1, 5);
-            known();
+            close();
         }
         apply(integer::round_down_le(x, 2, 2, 1));
     }
@@ -611,7 +611,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
             "Outer::Wrapped(Box::Wrapped(to_integer(x + 1)))",
         ] {
             let source = format!(
-                "spec enum Box {{ Wrapped(Integer) }} spec enum Outer {{ Wrapped(Box) }} theorem wrapped(x: int32) {{ ensures {value} == {value} by solve(); }}"
+                "spec enum Box {{ Wrapped(Integer) }} spec enum Outer {{ Wrapped(Box) }} theorem wrapped(x: int32) {{ ensures {value} == {value} by close(); }}"
             );
             assert!(verify_c_sources(&source, &[]).is_err(), "{source}");
             let bounded = source.replace("{ ensures", "{ requires defined(x + 1); ensures");
@@ -664,14 +664,14 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
             ("uint128", "0", "340282366920938463463374607431768211455"),
         ] {
             let source = format!(
-                "theorem round_trip(z: Integer) {{ requires z >= {lower}; requires z <= {upper}; ensures to_integer(to_{target}(z)) == z by {{ solve(); }} }}"
+                "theorem round_trip(z: Integer) {{ requires z >= {lower}; requires z <= {upper}; ensures to_integer(to_{target}(z)) == z by {{ close(); }} }}"
             );
             verify_c_sources(&source, &[]).unwrap_or_else(|e| panic!("{}\n{source}", e.message()));
             let expanded =
                 expand_c_claim_source_by_label(&source, &[], "round_trip.ensures_0").unwrap();
             assert!(!expanded.contains("integer_cast_identity"), "{expanded}");
             assert!(!expanded.contains("normalize("), "{expanded}");
-            assert!(expanded.contains("known();"), "{expanded}");
+            assert!(expanded.contains("close();"), "{expanded}");
             crate::surface::proof::without_implicit_solve(|| verify_c_sources(&expanded, &[]))
                 .unwrap();
             for missing in [
@@ -692,7 +692,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
             "to_integer(x) + to_integer(x + 1)",
         ] {
             let source = format!(
-                "theorem compose(x: int32) {{ ensures {expression} == {expression} by solve(); }}"
+                "theorem compose(x: int32) {{ ensures {expression} == {expression} by close(); }}"
             );
             assert!(verify_c_sources(&source, &[]).is_err(), "{source}");
             let bounded = source.replace("{ ensures", "{ requires defined(x + 1); ensures");
@@ -704,7 +704,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
     fn forward_conversion_conditionals_preserve_the_argument_domain() {
         let expression = "if c == 0 { x + 1 } else { y + 1 }";
         let source = format!(
-            "theorem branch(c: int32, x: int32, y: int32) {{ requires defined({expression}); ensures to_integer({expression}) == to_integer({expression}) by solve(); }}"
+            "theorem branch(c: int32, x: int32, y: int32) {{ requires defined({expression}); ensures to_integer({expression}) == to_integer({expression}) by close(); }}"
         );
         verify_c_sources(&source, &[]).unwrap();
         let invalid = source.replace(&format!("requires defined({expression});"), "");
@@ -723,7 +723,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
             "let b: Integer = to_integer(x + 1); let a: Integer = b + 0;",
         ] {
             let source =
-                format!("theorem alias(x: int32) {{ {alias} ensures a == a by solve(); }}");
+                format!("theorem alias(x: int32) {{ {alias} ensures a == a by close(); }}");
             assert!(verify_c_sources(&source, &[]).is_err(), "{source}");
             let bounded = source.replace("{ let", "{ requires defined(x + 1); let");
             verify_c_sources(&bounded, &[]).unwrap();
@@ -748,14 +748,14 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
     fn forward_conversion_keeps_intermediate_overflow_obligations() {
         // `defined((x + 1) + 1)` claims the outer addition; the inner one is
         // its own conjunct.
-        let source = "theorem nested(x: int32) { requires defined(x + 1) and defined((x + 1) + 1); ensures to_integer((x + 1) + 1) == to_integer((x + 1) + 1) by solve(); }";
+        let source = "theorem nested(x: int32) { requires defined(x + 1) and defined((x + 1) + 1); ensures to_integer((x + 1) + 1) == to_integer((x + 1) + 1) by close(); }";
         verify_c_sources(source, &[]).unwrap();
         let missing = source.replace(
             "requires defined(x + 1) and defined((x + 1) + 1);",
             "requires defined(x + 1);",
         );
         assert!(verify_c_sources(&missing, &[]).is_err());
-        let cancelled = "theorem cancelled(x: int32) { ensures to_integer((x + 1) - 1) == to_integer((x + 1) - 1) by solve(); }";
+        let cancelled = "theorem cancelled(x: int32) { ensures to_integer((x + 1) - 1) == to_integer((x + 1) - 1) by close(); }";
         assert!(verify_c_sources(cancelled, &[]).is_err());
         let bounded = cancelled.replace(
             "{ ensures",
@@ -766,7 +766,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
 
     #[test]
     fn forward_conversion_requires_symbolic_argument_definedness() {
-        for proof in ["normalize()", "solve()"] {
+        for proof in ["normalize()", "close()"] {
             let source = format!(
                 "theorem forward(x: int32) {{ ensures to_integer(x + 1) == to_integer(x + 1) by {{ {proof}; }} }}"
             );
@@ -774,7 +774,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
             let bounded = source.replace("{ ensures", "{ requires defined(x + 1); ensures");
             verify_c_sources(&bounded, &[])
                 .unwrap_or_else(|error| panic!("{}\n{bounded}", error.message()));
-            if proof == "solve()" {
+            if proof == "close()" {
                 let expanded =
                     expand_c_claim_source_by_label(&bounded, &[], "forward.ensures_0").unwrap();
                 verify_c_sources(&expanded, &[]).unwrap();
@@ -942,7 +942,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
     #[test]
     fn symbolic_integer_datatype_matches_are_exhaustive_and_checked() {
         let source = "spec enum Box<T> { Empty, Wrapped(T), }\n            function project(value: Box<Integer>) -> Integer { match value { Box::Empty => to_integer(0), Box::Wrapped(inner) => inner, } }\n\
-            theorem symbolic(value: Box<Integer>) { ensures project(value) == project(value) by solve(); }";
+            theorem symbolic(value: Box<Integer>) { ensures project(value) == project(value) by close(); }";
         verify_c_sources(source, &[]).unwrap();
         let expanded = expand_c_claim_source_by_label(source, &[], "symbolic.ensures_0").unwrap();
         verify_c_sources(&expanded, &[]).unwrap();
@@ -953,17 +953,18 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
         let source = r#"
             spec enum Box { Empty, Wrapped(Integer), }
             function project(value: Box) -> Integer { match value { Box::Empty => to_integer(0), Box::Wrapped(inner) => inner, } }
-            theorem known() { ensures project(Box::Wrapped(to_integer(7))) == to_integer(7) by solve(); }
+            theorem constructor_is_known() { ensures project(Box::Wrapped(to_integer(7))) == to_integer(7) by close(); }
         "#;
         verify_c_sources(source, &[]).unwrap();
-        let expanded = expand_c_claim_source_by_label(source, &[], "known.ensures_0").unwrap();
+        let expanded =
+            expand_c_claim_source_by_label(source, &[], "constructor_is_known.ensures_0").unwrap();
         verify_c_sources(&expanded, &[]).unwrap();
     }
 
     #[test]
     fn deferred_integer_function_c_arguments_keep_mandatory_definedness() {
         let unguarded = "function f(x: int32) -> Integer { to_integer(x) }\n\
-            theorem call(x: int32) { ensures f(x + 1) == f(x + 1) by solve(); }";
+            theorem call(x: int32) { ensures f(x + 1) == f(x + 1) by close(); }";
         assert!(verify_c_sources(unguarded, &[]).is_err());
 
         let guarded = unguarded.replace("{ ensures", "{ requires defined(x + 1); ensures");
@@ -972,7 +973,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
         verify_c_sources(&expanded, &[]).unwrap();
 
         let mixed = "function mix(left: int32, right: int32) -> Integer { to_integer(left) }\n\
-            theorem call(left: int32, right: int32) { requires defined(left + 1); requires defined(right + 1); ensures mix(left + 1, right + 1) == mix(left + 1, right + 1) by solve(); }";
+            theorem call(left: int32, right: int32) { requires defined(left + 1); requires defined(right + 1); ensures mix(left + 1, right + 1) == mix(left + 1, right + 1) by close(); }";
         verify_c_sources(mixed, &[]).unwrap();
         for missing in [
             "requires defined(left + 1); ",
@@ -985,7 +986,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
 
     #[test]
     fn deferred_integer_function_argument_domains_cover_division_and_branches() {
-        for proof in ["solve()", "normalize()"] {
+        for proof in ["close()", "normalize()"] {
             let division = format!(
                 "function f(x: int32) -> Integer {{ to_integer(x) }}\n\
                  theorem call(x: int32) {{ ensures f(-2147483648 / x) == f(-2147483648 / x) by {{ {proof}; }} }}"
@@ -1017,7 +1018,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
         let source = "spec enum Box { Empty, Wrapped(int32), }\n\
             function pack(x: int32) -> Box { Box::Wrapped(x) }\n\
             function f(value: Box) -> Integer { 0 }\n\
-            theorem call(x: int32) { ensures f(pack(x + 1)) == f(pack(x + 1)) by solve(); }";
+            theorem call(x: int32) { ensures f(pack(x + 1)) == f(pack(x + 1)) by close(); }";
         assert!(verify_c_sources(source, &[]).is_err());
         let guarded = source.replace("{ ensures", "{ requires defined(x + 1); ensures");
         verify_c_sources(&guarded, &[]).unwrap();
@@ -1028,26 +1029,26 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
     #[test]
     fn integer_conversion_proofs_expand_and_recheck() {
         for source in [
-            "theorem conversion(x: int32) { ensures to_integer(x) == to_integer(x) by solve(); }",
-            "theorem conversion() { ensures to_integer(to_uint64(18446744073709551615)) == 18446744073709551615 by solve(); }",
+            "theorem conversion(x: int32) { ensures to_integer(x) == to_integer(x) by close(); }",
+            "theorem conversion() { ensures to_integer(to_uint64(18446744073709551615)) == 18446744073709551615 by close(); }",
         ] {
             verify_c_sources(source, &[]).unwrap();
             let expanded =
                 expand_c_claim_source_by_label(source, &[], "conversion.ensures_0").unwrap();
             verify_c_sources(&expanded, &[])
                 .unwrap_or_else(|error| panic!("{}\n{expanded}", error.message()));
-            assert!(!expanded.contains("by solve()"), "{expanded}");
+            assert!(!expanded.contains("by close()"), "{expanded}");
         }
     }
 
     #[test]
     fn wide_integer_observations_and_checked_conversions_expand_and_recheck() {
         for source in [
-            "theorem observe(x: int128) { ensures to_integer(x) == to_integer(x) by solve(); }",
-            "theorem observe(x: uint128) { ensures to_integer(x) == to_integer(x) by solve(); }",
-            "theorem observe() { ensures to_integer(to_int128(-170141183460469231731687303715884105728)) == -170141183460469231731687303715884105728 by solve(); }",
-            "theorem observe() { ensures to_integer(to_int128(170141183460469231731687303715884105727)) == 170141183460469231731687303715884105727 by solve(); }",
-            "theorem observe() { ensures to_integer(to_uint128(340282366920938463463374607431768211455)) == 340282366920938463463374607431768211455 by solve(); }",
+            "theorem observe(x: int128) { ensures to_integer(x) == to_integer(x) by close(); }",
+            "theorem observe(x: uint128) { ensures to_integer(x) == to_integer(x) by close(); }",
+            "theorem observe() { ensures to_integer(to_int128(-170141183460469231731687303715884105728)) == -170141183460469231731687303715884105728 by close(); }",
+            "theorem observe() { ensures to_integer(to_int128(170141183460469231731687303715884105727)) == 170141183460469231731687303715884105727 by close(); }",
+            "theorem observe() { ensures to_integer(to_uint128(340282366920938463463374607431768211455)) == 340282366920938463463374607431768211455 by close(); }",
         ] {
             verify_c_sources(source, &[])
                 .unwrap_or_else(|error| panic!("{}\n{source}", error.message()));
@@ -1063,7 +1064,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
             ("uint128", "340282366920938463463374607431768211456"),
         ] {
             let source = format!(
-                "theorem bad() {{ ensures to_integer(to_{target}({value})) == {value} by solve(); }}"
+                "theorem bad() {{ ensures to_integer(to_{target}({value})) == {value} by close(); }}"
             );
             assert!(verify_c_sources(&source, &[]).is_err(), "{source}");
         }
@@ -1085,7 +1086,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
                 (String::new(), false),
             ] {
                 let source = format!(
-                    "theorem observe(z: Integer) {{ {requirements} ensures to_integer(to_{target}(z)) == to_integer(to_{target}(z)) by solve(); }}"
+                    "theorem observe(z: Integer) {{ {requirements} ensures to_integer(to_{target}(z)) == to_integer(to_{target}(z)) by close(); }}"
                 );
                 assert_eq!(verify_c_sources(&source, &[]).is_ok(), valid, "{source}");
             }
@@ -1106,7 +1107,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
         ] {
             for value in [lower, upper] {
                 let source = format!(
-                    "theorem bad() {{ ensures to_{target}({value}) == to_{target}({value}) by solve(); }}"
+                    "theorem bad() {{ ensures to_{target}({value}) == to_{target}({value}) by close(); }}"
                 );
                 assert!(
                     verify_c_sources(&source, &[]).is_err(),
@@ -1129,7 +1130,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
             ("uint64", "0", "18446744073709551615"),
         ] {
             let source = format!(
-                "theorem conversion(z: Integer) {{ requires z >= {lower}; requires z <= {upper}; ensures to_{target}(z) == to_{target}(z) by solve(); }}"
+                "theorem conversion(z: Integer) {{ requires z >= {lower}; requires z <= {upper}; ensures to_{target}(z) == to_{target}(z) by close(); }}"
             );
             verify_c_sources(&source, &[]).unwrap_or_else(|error| {
                 panic!(
@@ -1142,7 +1143,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
 
     #[test]
     fn to_integer_of_an_integer_is_that_integer() {
-        let source = "theorem same(z: Integer) { ensures to_integer(z) == z by solve(); }";
+        let source = "theorem same(z: Integer) { ensures to_integer(z) == z by close(); }";
         verify_c_sources(source, &[]).unwrap();
     }
 
@@ -1168,7 +1169,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
                     .map(|requirement| format!(" requires {requirement};"))
                     .collect::<String>();
                 let source = format!(
-                    "theorem conversion(z: Integer) {{{requires} ensures to_{target}(z) == to_{target}(z) by solve(); }}"
+                    "theorem conversion(z: Integer) {{{requires} ensures to_{target}(z) == to_{target}(z) by close(); }}"
                 );
                 assert!(
                     verify_c_sources(&source, &[]).is_err(),
@@ -1180,9 +1181,9 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
 
     #[test]
     fn wrapped_symbolic_conversions_keep_bounds_through_proofs_and_expansion() {
-        let bounded = "theorem wrapped(z: Integer) { requires z >= -2147483648; requires z <= 2147483647; ensures to_int32(z) + 0 == to_int32(z) by solve(); }";
+        let bounded = "theorem wrapped(z: Integer) { requires z >= -2147483648; requires z <= 2147483647; ensures to_int32(z) + 0 == to_int32(z) by close(); }";
         verify_c_sources(bounded, &[]).unwrap();
-        let normalized = bounded.replace("by solve(); }", "by { normalize(); } }");
+        let normalized = bounded.replace("by close(); }", "by { normalize(); } }");
         verify_c_sources(&normalized, &[]).unwrap();
         let expanded = expand_c_claim_source_by_label(bounded, &[], "wrapped.ensures_0").unwrap();
         verify_c_sources(&expanded, &[]).unwrap();
@@ -1192,11 +1193,11 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
             assert!(verify_c_sources(&invalid, &[]).is_err(), "{invalid}");
         }
 
-        let prior_have = "theorem prior(z: Integer) { requires z >= -2147483648; requires z <= 2147483647; let x: int32 = to_int32(z); ensures x + 0 == x by solve(); }";
+        let prior_have = "theorem prior(z: Integer) { requires z >= -2147483648; requires z <= 2147483647; let x: int32 = to_int32(z); ensures x + 0 == x by close(); }";
         verify_c_sources(prior_have, &[]).unwrap();
-        let aliases = "theorem aliases(z: Integer) { requires z >= -2147483648; requires z <= 2147483647; let a: int32 = to_int32(z); let b: int32 = a + 0; ensures b == a by solve(); }";
+        let aliases = "theorem aliases(z: Integer) { requires z >= -2147483648; requires z <= 2147483647; let a: int32 = to_int32(z); let b: int32 = a + 0; ensures b == a by close(); }";
         verify_c_sources(aliases, &[]).unwrap();
-        let no_bounds = "theorem aliases(z: Integer) { let a: int32 = to_int32(z); let b: int32 = a + 0; ensures b == a by solve(); }";
+        let no_bounds = "theorem aliases(z: Integer) { let a: int32 = to_int32(z); let b: int32 = a + 0; ensures b == a by close(); }";
         assert!(verify_c_sources(no_bounds, &[]).is_err());
     }
 
@@ -1215,7 +1216,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
                 "to_integer(2147483647 + 1) == to_integer(2147483647 + 1)",
             ),
         ] {
-            let source = format!("theorem bad({parameters}) {{ ensures {claim} by solve(); }}");
+            let source = format!("theorem bad({parameters}) {{ ensures {claim} by close(); }}");
             assert!(
                 verify_c_sources(&source, &[]).is_err(),
                 "invalid conversion accepted: {source}"
@@ -1248,7 +1249,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
             (u32::MAX, 0x8000_0000, 0x7fff_ffff),
         ] {
             let concrete = format!(
-                "import click::integer; theorem boundary() {{ ensures to_integer({left}u32 - {right}u32) == {difference} by {{ apply(integer::uint32_subtract_to_integer({left}u32, {right}u32)); solve(); }} }}"
+                "import click::integer; theorem boundary() {{ ensures to_integer({left}u32 - {right}u32) == {difference} by {{ apply(integer::uint32_subtract_to_integer({left}u32, {right}u32)); close(); }} }}"
             );
             verify_c_sources(&concrete, &[]).unwrap();
         }
@@ -1259,7 +1260,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
     #[test]
     fn uint32_subtract_bridge_verifies_executed_c_difference() {
         let c = "unsigned int difference(unsigned int left, unsigned int right) { return left - right; }";
-        let source = "import click::integer; verifying \"difference.c\"; uint32 difference(uint32 left, uint32 right) { requires right <= left; ensures to_integer(result) == to_integer(left) - to_integer(right); } by { step_until(function.exit); apply(integer::uint32_subtract_to_integer(left, right)); solve(); }";
+        let source = "import click::integer; verifying \"difference.c\"; uint32 difference(uint32 left, uint32 right) { requires right <= left; ensures to_integer(result) == to_integer(left) - to_integer(right); } by { step_until(function.exit); apply(integer::uint32_subtract_to_integer(left, right)); close(); }";
         verify_c_sources(source, &[("difference.c", c)]).unwrap();
         let expanded =
             expand_c_claim_source_by_label(source, &[("difference.c", c)], "difference.contract")
@@ -1362,7 +1363,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
                 "uint32 op(uint32 left, uint32 right) {{ return left {op} right; }} uint32 caller(uint32 left, uint32 right) {{ return op(left, right); }}"
             );
             let source = format!(
-                "import click::integer; verifying \"op.c\"; uint32 op(uint32 left, uint32 right) {{ requires {guard}; ensures {goal}; }} by {{ apply({name}(left, right)); step_until(function.exit); solve(); }} uint32 caller(uint32 left, uint32 right) {{ requires {guard}; ensures {goal}; }}"
+                "import click::integer; verifying \"op.c\"; uint32 op(uint32 left, uint32 right) {{ requires {guard}; ensures {goal}; }} by {{ apply({name}(left, right)); step_until(function.exit); close(); }} uint32 caller(uint32 left, uint32 right) {{ requires {guard}; ensures {goal}; }}"
             );
             verify_c_sources(&source, &[("op.c", &c)])
                 .unwrap_or_else(|error| panic!("{}\n{source}", error.message()));
@@ -1481,7 +1482,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
                 "to_integer(result)",
             );
             let source = format!(
-                "import click::integer; verifying \"op.c\"; uint64 op(uint64 left, uint64 right) {{ requires {guard}; ensures {result_goal}; }} by {{ apply({name}(left, right)); step_until(function.exit); solve(); }} uint64 caller(uint64 left, uint64 right) {{ requires {guard}; ensures {result_goal}; }}"
+                "import click::integer; verifying \"op.c\"; uint64 op(uint64 left, uint64 right) {{ requires {guard}; ensures {result_goal}; }} by {{ apply({name}(left, right)); step_until(function.exit); close(); }} uint64 caller(uint64 left, uint64 right) {{ requires {guard}; ensures {result_goal}; }}"
             );
             verify_c_sources(&source, &[("op.c", &c)])
                 .unwrap_or_else(|e| panic!("{name}: {}", e.message()));
@@ -1534,7 +1535,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
     fn contract_scalar_casts_check_all_supported_widths_and_recheck_expansion() {
         for ty in ["int32", "uint32", "int64", "uint64", "int128", "uint128"] {
             let source = format!(
-                "theorem cast(x: {ty}) {{ ensures x as {ty} == x by {{ have x as {ty} == x by solve(); known(); }} }}"
+                "theorem cast(x: {ty}) {{ ensures x as {ty} == x by {{ have x as {ty} == x by close(); close(); }} }}"
             );
             verify_c_sources(&source, &[]).unwrap();
             let expanded = expand_c_claim_source_by_label(&source, &[], "cast.ensures_0").unwrap();
@@ -1734,7 +1735,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
             let expanded = expand_c_claim_source_by_label(source, &[], label).unwrap();
             verify_c_sources(&expanded, &[]).unwrap();
         }
-        let guarded = "import click::integer; theorem lower(x: int64, d: Integer) { requires defined(x + 1i64); requires d != 0; requires 1 <= d; requires -100 * d <= to_integer(x) + 1; ensures -100 <= truncating_quotient(to_integer(x + 1i64), d) by { have to_integer(x + 1i64) == to_integer(x) + 1; have -100 * d <= to_integer(x + 1i64) by { rewrite(to_integer(x + 1i64), to_integer(x) + 1); known(); } apply(integer::positive_divisor_quotient_lower(to_integer(x + 1i64), d, -100)); } }";
+        let guarded = "import click::integer; theorem lower(x: int64, d: Integer) { requires defined(x + 1i64); requires d != 0; requires 1 <= d; requires -100 * d <= to_integer(x) + 1; ensures -100 <= truncating_quotient(to_integer(x + 1i64), d) by { have to_integer(x + 1i64) == to_integer(x) + 1; have -100 * d <= to_integer(x + 1i64) by { rewrite(to_integer(x + 1i64), to_integer(x) + 1); close(); } apply(integer::positive_divisor_quotient_lower(to_integer(x + 1i64), d, -100)); } }";
         verify_c_sources(guarded, &[]).unwrap();
         for bad in [
             guarded.replace("requires defined(x + 1i64);", ""),
@@ -2033,7 +2034,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
                 }
             }
             replay(&format!(
-                "theorem bridge(x: {ty}) {{ ensures to_integer(x) <= {max} by solve(); }}"
+                "theorem bridge(x: {ty}) {{ ensures to_integer(x) <= {max} by close(); }}"
             ));
         }
         for (ty, min, max) in [
@@ -2065,7 +2066,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
             "theorem bridge(x: int32) { requires -101 <= x; requires x <= 100; ensures -26 <= to_integer(x >> 2) by { close() using { -101 <= x; x <= 100; }; } }",
             "theorem bridge(x: uint64) { requires x <= 100u64; ensures to_integer(x << 2u64) <= 400 by { close() using { x <= 100u64; }; } }",
             "theorem bridge(x: uint64) { requires x <= 101u64; ensures to_integer(x >> 2u64) <= 25 by { close() using { x <= 101u64; }; } }",
-            "theorem bridge(x: int32) { ensures (x & 255) <= 255 by solve(); }",
+            "theorem bridge(x: int32) { ensures (x & 255) <= 255 by close(); }",
             "theorem bridge(x: int32) { requires 0 <= x; requires x <= 100; ensures (x & 255) <= 100 by { close() using { 0 <= x; x <= 100; }; } }",
             "theorem bridge(x: int32) { requires 0 <= x; ensures (x & 255) <= x by { close() using { 0 <= x; }; } }",
             "theorem bridge(x: uint64) { requires x <= 100u64; ensures (x & 255u64) <= 100u64 by { close() using { x <= 100u64; }; } }",
@@ -2073,7 +2074,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
             "theorem bridge(x: Integer, y: Integer) { requires x < y; requires x <= 100; ensures (if x < y { x + 1 } else { y }) <= 101 by { close() using { x < y; x <= 100; }; } }",
             "theorem bridge(x: int32, y: int32) { requires x < y; ensures (if x < y { x } else { y }) == x by { close() using { x < y; }; } }",
             "theorem bridge(x: Integer, y: Integer) { requires not x < y; ensures (if x < y { x } else { y }) == y by { close() using { not x < y; }; } }",
-            "theorem bridge(x: int32) { ensures to_integer(255 & x) <= 255 by solve(); }",
+            "theorem bridge(x: int32) { ensures to_integer(255 & x) <= 255 by close(); }",
             "theorem bridge(x: uint64) { requires x <= 100u64; ensures to_integer(x << 0) <= 100 by { close() using { x <= 100u64; }; } }",
             "theorem bridge(x: uint64) { requires x <= 1u64; ensures to_integer(x << 63) <= 9223372036854775808 by { close() using { x <= 1u64; }; } }",
             "theorem bridge(x: uint64) { requires x <= 18446744073709551615u64; ensures to_integer(x >> 63) <= 1 by { close() using { x <= 18446744073709551615u64; }; } }",

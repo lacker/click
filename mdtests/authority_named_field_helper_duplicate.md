@@ -19,8 +19,8 @@ int32 run() { ensures result == 0; } by {
     fold(authority(ticket(&pool)));
     let first = fold(ticket(&pool), { serial: 1 });
     step(preserve, { left: first, right: first });
-    have first.serial == 1 by solve();
-    have count(ticket(&pool)) == 1 by solve();
+    have first.serial == 1 by close();
+    have count(ticket(&pool)) == 1 by close();
     unfold(first);
     unfold(authority(ticket(&pool)));
 }

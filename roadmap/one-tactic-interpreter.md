@@ -29,16 +29,16 @@ maintainability, not a known wrong verdict.
 - After execution, claims are goals on the outcome `Proof`
   (`OutcomeClaimGoals`), and an opened claim proof is refreshed from it
   before each closer.
-- `known` and the normalizing closers (`normalize`, `normalize using`,
+- The direct check in `close()` and the normalizing closers (`normalize`, `normalize using`,
   `both`) close the main claim
-  through one arm of `finish_ordered_proof`, and `solve` and `close() using`
+  through one arm of `finish_ordered_proof`, and the fallback search in `close()` and `close() using` run
   through `close_post_execution_claims_with_solve`
   (`src/surface/proof/driver/claims.rs`). `finish_ordered_proof` is about
   2,800 lines, down from 3,900.
 - Expansion records the `certificate_since` delta of each checked step
   after execution. The records that keep a written spelling have no checked
   step to print:
-  - an `known` that closes a resource claim is an exact resource check;
+  - a direct `close()` on a resource claim is an exact resource check;
   - a closer on a divergent path closes its claims vacuously;
   - `apply using` keeps its written spelling;
   - a `with` scope's deferred close proof is rebuilt from that close's
@@ -70,10 +70,10 @@ These still interpret written tactics on their own:
   `Transport` variant disappears with transport retirement
   ([smart tactics](smart-tactics.md#transport-retirement), chunk 32).
 
-`solve` in an execution arm is refused before the function exit, while a
-`maintain` body has its own `solve` handler.
+`close()` in an execution arm is refused before the function exit, while a
+`maintain` body has its own `close()` handler.
 
-The largest remaining piece is the grouped `solve` closer in
+The largest remaining piece is the grouped closure search in
 `close_post_execution_claims_with_solve`. It focuses a grouped proof's claims
 together on each outcome path, closes ownership claims by exact resource
 checks, falls back to each claim on its own, and keeps the bookkeeping that
@@ -101,7 +101,7 @@ frontier `match` driver, on the facts every outcome path shares.
 
 Add mdtests that write the same tactic in each context where the language
 admits it and expect the same verdict and the same expansion: a written
-`transport`, a nested `have` whose body misses, and `solve`, at the linear
+`transport`, a nested `have` whose body misses, and `close()`, at the linear
 frontier, in a focused arm, in a `with` scope, in a pure theorem script and
 after execution. Each remaining difference becomes either an agreeing pair or
 a documented refusal with a diagnostic that names the context. Keep every
@@ -115,7 +115,7 @@ existing expansion round-trip regression.
   `SourceContext`.
 - `PostExecutionTactic` is removed, or each remaining variant is justified
   in this file.
-- The grouped `solve` closer focuses claims through the same claim
+- The grouped closure search focuses claims through the same claim
   path as the single-step closers, and `finish_ordered_proof` shrinks to the
   context-specific setup and teardown.
 - `docs/reference/tactics/index.md` states any remaining context-specific

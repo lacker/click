@@ -96,7 +96,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                     if k < (j - 1) {
                         have k < at(region(4).entry, j);
                         instantiate(forall (__click_q0: int32) { at(region(6).entry, 0) <= at(region(6).entry, __click_q0) and at(region(6).entry, 0) <= at(region(6).entry, __click_q0) and at(region(6).entry, __click_q0) < at(region(6).entry, j) implies at(region(6).entry, p[__click_q0]) <= at(region(6).entry, tmp) }, k);
-                        have at(region(4).entry, j) != k by { solve(); }
+                        have at(region(4).entry, j) != k by { close(); }
                         have at(region(4).entry, separate(memory(p[j]), memory(p[k]))) by {
                             apply(click::separation::separate_elements(p, at(region(4).entry, j), k));
                         }
@@ -106,7 +106,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                         have at(statement(3).statement(0).statement(1).exit, p[k]) == at(statement(3).statement(0).statement(1).entry, p[k]) by {
                             preserve(memory(p[k]), statement(3).statement(0).statement(1));
                         }
-                        have j != k by { solve(); }
+                        have j != k by { close(); }
                         have separate(memory(p[j]), memory(p[k])) by {
                             apply(click::separation::separate_elements(p, j, k));
                         }
@@ -116,11 +116,11 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                         have at(statement(3).statement(0).statement(2).exit, p[k]) == at(statement(3).statement(0).statement(2).entry, p[k]) by {
                             preserve(memory(p[k]), statement(3).statement(0).statement(2));
                         }
-                        known();
+                        close();
                     } else {
                         have k == (j - 1);
                         have to_integer(k) == to_integer(at(region(4).entry, j));
-                        have j != k by { solve(); }
+                        have j != k by { close(); }
                         have separate(memory(p[j]), memory(p[k])) by {
                             apply(click::separation::separate_elements(p, j, k));
                         }
@@ -134,7 +134,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                         have at(statement(3).statement(0).statement(1).exit, p[k])
                             == at(statement(3).statement(0).statement(1).entry, p[j + 1]) by {
                             rewrite(k, at(region(4).entry, j));
-                            known();
+                            close();
                         }
                         have p[k] == at(statement(3).statement(0).statement(1).entry, p[j + 1]) by {
                             close() using {
@@ -142,7 +142,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                                 at(statement(3).statement(0).statement(2).exit, p[k]) == at(statement(3).statement(0).statement(2).entry, p[k]);
                             };
                         }
-                        have p[j] == at(region(7).entry, tmp) by { known(); }
+                        have p[j] == at(region(7).entry, tmp) by { close(); }
                         close() using {
                             k == at(region(4).entry, j);
                             p[k] == at(statement(3).statement(0).statement(1).entry, p[j + 1]);
@@ -167,7 +167,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                                 not at(region(9).entry, p[(j + 1)]) < at(region(9).entry, p[j]);
                             };
                         }
-                        known();
+                        close();
                     } else {
                         have k == (j - 1);
                         have to_integer(k) == to_integer(at(region(4).entry, j));
@@ -181,7 +181,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
             }
         }
     }
-    have j == 2 by solve();
+    have j == 2 by close();
     have p[j] == p[2] by { normalize() using { j == 2; }; }
     mark first_pass_done;
     step();
@@ -203,18 +203,18 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
             }
             have forall (k: int32) { 0 <= k and 0 <= k and k < 2 implies p[k] <= p[2] } by {
                 intro(); intro();
-                have at(first_pass_done, k < j) by solve();
+                have at(first_pass_done, k < j) by close();
                 instantiate(at(first_pass_done, forall (m: int32) {
                     0 <= m and 0 <= m and m < j implies p[m] <= p[j]
                 }), k);
-                have separate(memory(j), memory(p[k])) by known();
+                have separate(memory(j), memory(p[k])) by close();
                 have separate(statement(4).footprint, memory(p[k])) by {
                     normalize() using { separate(memory(j), memory(p[k])); };
                 }
                 have p[k] == at(first_pass_done, p[k]) by {
                     preserve(memory(p[k]), statement(4));
                 }
-                have separate(memory(j), memory(p[2])) by known();
+                have separate(memory(j), memory(p[2])) by close();
                 have separate(statement(4).footprint, memory(p[2])) by {
                     normalize() using { separate(memory(j), memory(p[2])); };
                 }
@@ -243,11 +243,11 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                 }
                 have p[0] <= p[2] by {
                     instantiate(forall (k: int32) { 0 <= k and 0 <= k and k < 2 implies p[k] <= p[2] }, 0);
-                    known();
+                    close();
                 }
                 have p[1] <= p[2] by {
                     instantiate(forall (k: int32) { 0 <= k and 0 <= k and k < 2 implies p[k] <= p[2] }, 1);
-                    known();
+                    close();
                 }
                 mark before_swap;
                 step();
@@ -255,7 +255,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                 step();
                 step();
                 step();
-                have at(before_swap, j) != 2 by { solve(); }
+                have at(before_swap, j) != 2 by { close(); }
                 have at(before_swap, separate(memory(p[j]), memory(p[2]))) by {
                     apply(click::separation::separate_elements(p, at(before_swap, j), 2));
                 }
@@ -265,7 +265,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                 have at(statement(5).statement(0).statement(1).exit, p[2]) == at(statement(5).statement(0).statement(1).entry, p[2]) by {
                     preserve(memory(p[2]), statement(5).statement(0).statement(1));
                 }
-                have j != 2 by { solve(); }
+                have j != 2 by { close(); }
                 have separate(memory(p[j]), memory(p[2])) by {
                     apply(click::separation::separate_elements(p, j, 2));
                 }
@@ -275,7 +275,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                 have at(statement(5).statement(0).statement(2).exit, p[2]) == at(statement(5).statement(0).statement(2).entry, p[2]) by {
                     preserve(memory(p[2]), statement(5).statement(0).statement(2));
                 }
-                have j != 0 by { solve(); }
+                have j != 0 by { close(); }
                 have separate(memory(p[j]), memory(p[0])) by {
                     apply(click::separation::separate_elements(p, j, 0));
                 }
@@ -288,12 +288,12 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                 have at(statement(5).statement(0).statement(1).exit, p[0]) == at(before_swap, p[1]) by {
                     normalize() using { at(before_swap, j) == 0; };
                 }
-                have p[0] == at(before_swap, p[1]) by { known(); }
+                have p[0] == at(before_swap, p[1]) by { close(); }
                 have at(statement(5).statement(0).statement(2).exit, p[1]) == at(before_swap, p[0]) by {
                     normalize() using { at(before_swap, j) == 0; };
                 }
-                have p[1] == at(before_swap, p[0]) by { known(); }
-                have p[2] == at(before_swap, p[2]) by { known(); }
+                have p[1] == at(before_swap, p[0]) by { close(); }
+                have p[2] == at(before_swap, p[2]) by { close(); }
                 have p[0] <= p[2] by { close() using { p[0] == at(before_swap, p[1]); p[2] == at(before_swap, p[2]); at(before_swap, p[1] <= p[2]); }; }
                 have p[1] <= p[2] by { close() using { p[1] == at(before_swap, p[0]); p[2] == at(before_swap, p[2]); at(before_swap, p[0] <= p[2]); }; }
                 have forall (k: int32) { 0 <= k and 0 <= k and k < 2 implies p[k] <= p[2] } by {
@@ -303,7 +303,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                     rewrite(at(region(17).entry, j), at(region(17).entry, 0));
                     normalize();
                 }
-                have p[0] < p[1] by { known(); }
+                have p[0] < p[1] by { close(); }
                 have p[0] <= p[1] by {
                     close() using {
                         p[0] < p[1];
@@ -311,11 +311,11 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                 }
                 have forall (k: int32) { 0 <= k and 0 <= k and k < j implies p[k] <= p[j] } by {
                     intro(); intro();
-                    have k == 0 by solve();
+                    have k == 0 by close();
                     have p[j] == p[1] by { normalize() using { j == 1; }; }
                     rewrite(k, 0);
                     rewrite(p[j], p[1]);
-                    known();
+                    close();
                 }
             } else {
                 have j == 0 by {
@@ -327,11 +327,11 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                 }
                 have p[0] <= p[2] by {
                     instantiate(forall (k: int32) { 0 <= k and 0 <= k and k < 2 implies p[k] <= p[2] }, 0);
-                    known();
+                    close();
                 }
                 have p[1] <= p[2] by {
                     instantiate(forall (k: int32) { 0 <= k and 0 <= k and k < 2 implies p[k] <= p[2] }, 1);
-                    known();
+                    close();
                 }
                 mark before_swap;
                 step();
@@ -341,7 +341,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                     rewrite(at(region(17).entry, j), at(region(17).entry, 0));
                     normalize();
                 }
-                have not p[1] < p[0] by { known(); }
+                have not p[1] < p[0] by { close(); }
                 have p[0] <= p[1] by {
                     have p[0] <= p[1] by {
                         close() using {
@@ -359,30 +359,30 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                 }
                 have forall (k: int32) { 0 <= k and 0 <= k and k < j implies p[k] <= p[j] } by {
                     intro(); intro();
-                    have k == 0 by solve();
+                    have k == 0 by close();
                     have p[j] == p[1] by { normalize() using { j == 1; }; }
                     rewrite(k, 0);
                     rewrite(p[j], p[1]);
-                    known();
+                    close();
                 }
             }
         }
     }
-    have j == 1 by solve();
+    have j == 1 by close();
     have p[j] == p[1] by { normalize() using { j == 1; }; }
     have p[0] <= p[1] by {
-        have 0 < j by solve();
+        have 0 < j by close();
         instantiate(forall (k: int32) { 0 <= k and 0 <= k and k < j implies p[k] <= p[j] }, 0);
         rewrite(p[1], p[j]);
-        known();
+        close();
     }
     have p[1] <= p[2] by {
         instantiate(forall (k: int32) { 0 <= k and 0 <= k and k < 2 implies p[k] <= p[2] }, 1);
-        known();
+        close();
     }
     have p[0] <= p[2] by {
         instantiate(forall (k: int32) { 0 <= k and 0 <= k and k < 2 implies p[k] <= p[2] }, 0);
-        known();
+        close();
     }
     step_until(function.exit);
     have sorted(p, 3) by {
@@ -390,7 +390,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
         unfold(sorted_range(p, 0, 3));
         enumerate();
     }
-    known();
+    close();
 }
 ```
 

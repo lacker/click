@@ -14,7 +14,7 @@ int32 read(int32* p) {
     step();
     release_view(*p);
     step_until(function.exit);
-    solve();
+    close();
 }
 ```
 

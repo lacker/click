@@ -26,7 +26,7 @@ void keep(struct pair* p) {
     unfold(link(0));
     unfold(identity(&p->first));
     unfold(link(&p->first));
-    solve();
+    close();
 }
 ```
 

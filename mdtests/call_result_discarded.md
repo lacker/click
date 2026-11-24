@@ -36,7 +36,7 @@ int classify(int x) {
                 unfold(classified(x));
                 normalize() using { x == 0; };
             }
-            solve();
+            close();
         }
         false => {}
     }
@@ -45,7 +45,7 @@ int classify(int x) {
         unfold(classified(x));
         normalize() using { not(x == 0); };
     }
-    solve();
+    close();
 }
 
 int ignore_class(int x) {

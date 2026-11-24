@@ -19,7 +19,7 @@ int32 peek(const struct node* p, const struct node* q) {
 }
 ```
 
-```click
+```click checked-only
 verifying "const_parameter_other.c";
 
 function same(a: void*, b: void*) -> int32 {
@@ -38,11 +38,11 @@ int32 peek(const struct node* p, const struct node* q) {
 } by {
     unfold(x);
     step();
-    have same(q, q) == 1 by known();
+    have same(q, q) == 1 by close();
     let x = fold(here(p), { tag: 0 });
     step();
     step();
-    solve();
+    close();
 }
 ```
 

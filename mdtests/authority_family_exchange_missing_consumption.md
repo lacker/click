@@ -43,8 +43,8 @@ int32 lifecycle(struct payload* first, struct payload* second) {
     fold(capacity(&pool));
     fold(item(&pool, second));
     step();
-    have count(capacity(&pool)) == 1 by solve();
-    have count(item(&pool, _)) == 2 by solve();
+    have count(capacity(&pool)) == 1 by close();
+    have count(item(&pool, _)) == 2 by close();
     with(item(&pool, first)) { with(item(&pool, second)) { step(); step(); } }
     unfold(capacity(&pool));
     unfold(item(&pool, first));

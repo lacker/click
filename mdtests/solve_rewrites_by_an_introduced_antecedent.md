@@ -16,7 +16,7 @@ theorem black_under_an_antecedent(v: Walk, d: Integer, rest: Walk) {
     ensures v == Walk::At(d, rest) implies black(v) == 1 by {
         intro();
         have black(v) == 1;
-        known();
+        close();
     }
 }
 ```

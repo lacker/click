@@ -39,7 +39,7 @@ int32 run() {
 } by {
     step();
     step();
-    branch { true => { step(); solve(); } false => {} }
+    branch { true => { step(); close(); } false => {} }
     step();
     fold(authority(reference(obj)));
     let control = fold(control(obj), { refs: 0 });
@@ -51,7 +51,7 @@ int32 run() {
     unfold(authority(reference(obj)));
     step();
     step();
-    solve();
+    close();
 }
 ```
 

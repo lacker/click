@@ -19,14 +19,14 @@ int32 once(int32 i, int32 x) {
     loop {
         decreases i;
         invariant i >= 0;
-        initialize by { known(); }
+        initialize by { close(); }
         maintain by {
             step();
             have i >= 0 by { normalize(); }
         }
     }
     step();
-    known();
+    close();
 }
 "#;
     let work = [2, 16, 64].map(|size| {

@@ -7,14 +7,14 @@ introduced under the same written name.
 theorem retained_citation(n: int32) {
     requires 0 <= n;
     ensures 0 <= n by {
-        have 0 <= n by known();
-        known();
+        have 0 <= n by close();
+        close();
     }
 }
 theorem shadowed_citation(n: int32) {
     requires 0 <= n;
     ensures forall (n: int32) { 0 <= n } by {
-        have 0 <= n by known();
+        have 0 <= n by close();
         intro();
         normalize() using { 0 <= n; };
     }

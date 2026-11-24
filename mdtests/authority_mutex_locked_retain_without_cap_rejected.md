@@ -45,7 +45,7 @@ void object_retain(struct object *obj) {
     let restored = fold(control(obj), { refs: refs + 1 });
     step(pthread_mutex_unlock, { access: access, guard: guard, state: restored });
     step();
-    solve();
+    close();
 }
 ```
 

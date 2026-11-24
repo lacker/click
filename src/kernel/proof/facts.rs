@@ -3624,7 +3624,7 @@ mod integer_equality_fact_index_tests {
             Proposition::condition_is(ConditionTerm::address_equal(read.clone(), target), true);
         let goal = Proposition::condition_is(
             ConditionTerm::equal(
-                MachineTerm::MemoryLoad(
+                MachineTerm::read_named(
                     ProgramPoint::at(&(crate::kernel::intern_memory(SymbolicMemory::new()))),
                     Box::new(read.offset_by_bytes(4)),
                     crate::kernel::LoadKind::Int32,

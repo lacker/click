@@ -72,7 +72,7 @@ int32 probe_contract(struct job *j) {
 
         initialize by {
             have j->lo <= i and i <= j->hi by {
-                all { j->lo <= i => { normalize(); } i <= j->hi => { known(); } }
+                all { j->lo <= i => { normalize(); } i <= j->hi => { close(); } }
             }
             have forall (k: int32) { j->lo <= k and k < i implies j->p[k] == j->v } by {
                 intro();
@@ -82,14 +82,14 @@ int32 probe_contract(struct job *j) {
         }
         maintain by {
             mark before_write;
-            have separate(memory(*j), memory(j->p[j->lo..j->hi])) by { known(); }
+            have separate(memory(*j), memory(j->p[j->lo..j->hi])) by { close(); }
             have contains(memory(j->p[j->lo..j->hi]), memory(j->p[i])) by {
                 apply(separation::contains_element(j->p, j->lo, j->hi, i));
             }
             apply(separation::contains_refl(memory(*j)));
             apply(separation::separate_restrict(memory(*j), memory(j->p[j->lo..j->hi]),
                 memory(*j), memory(j->p[i])));
-            step() by { known(); }
+            step() by { close(); }
 
             have separate(statement(2).statement(0).footprint, at(before_write, memory(*j))) by {
                 normalize() using {
@@ -121,7 +121,7 @@ int32 probe_contract(struct job *j) {
             have load<int32>(at(before_write, &j->v)) == at(before_write, load<int32>(&j->v)) by {
                 preserve(memory(at(before_write, &j->v)[0]), statement(2).statement(0));
             }
-            have j->v == at(before_write, j->v) by { known(); }
+            have j->v == at(before_write, j->v) by { close(); }
 
             have forall (k: int32) { j->lo <= k and k <= i implies j->p[k] == j->v } by {
                 intro();
@@ -132,7 +132,7 @@ int32 probe_contract(struct job *j) {
                     }), k);
                     have at(region(3).entry, j->lo) <= k and k < at(before_write, i) by {
                         rewrite(at(region(3).entry, j->lo), j->lo);
-                        known();
+                        close();
                     }
                     apply(at(region(3).entry, j->lo) <= k and k < at(before_write, i) implies
                         at(before_write, j->p[k]) == at(before_write, j->v));
@@ -150,61 +150,61 @@ int32 probe_contract(struct job *j) {
                     }
                     rewrite(j->p, at(before_write, j->p));
                     rewrite(j->v, at(before_write, j->v));
-                    known();
+                    close();
                 } else {
                     have k == i;
                     rewrite(k, i);
-                    solve();
+                    close();
                 }
             }
 
             step();
             have at(before_write, i) < j->hi by {
                 rewrite(j->hi, at(before_write, j->hi));
-                known();
+                close();
             }
             have at(region(4).entry, i) < 2147483647 by {
                 apply(integer::int32_less_than_less_equal_transitive(at(region(4).entry, i), j->hi, 2147483647));
             }
             apply(integer::int32_increment_below_max_is_defined(at(region(4).entry, i)));
             have to_integer(i) == to_integer(at(before_write, i)) + 1 by {
-                have to_integer(i) == to_integer(at(region(4).entry, i) + 1) by { known(); }
+                have to_integer(i) == to_integer(at(region(4).entry, i) + 1) by { close(); }
                 apply(integer::int32_add_to_integer(at(region(4).entry, i), 1));
-                known();
+                close();
             }
             have forall (k: int32) { j->lo <= k and k < i implies j->p[k] == j->v } by {
                 intro();
                 intro();
                 have k <= at(region(4).entry, i) by {
-                    have to_integer(k) < to_integer(i) by { known(); }
+                    have to_integer(k) < to_integer(i) by { close(); }
                     apply(integer::lt_le_predecessor(to_integer(k), to_integer(i)));
                     have to_integer(at(region(4).entry, i)) == to_integer(i) - 1 by {
                         rewrite(to_integer(i), to_integer(at(before_write, i)) + 1);
-                        known();
+                        close();
                     }
                     have to_integer(k) <= to_integer(at(region(4).entry, i)) by {
                         rewrite(to_integer(at(region(4).entry, i)), to_integer(i) - 1);
-                        known();
+                        close();
                     }
                     apply(integer::int32_to_integer_less_equal_implies_less_equal(k, at(region(4).entry, i)));
                 }
                 instantiate(at(region(4).entry, forall (k: int32) {
                     j->lo <= k and k <= i implies j->p[k] == j->v
                 }), k);
-                have at(region(4).entry, j->lo) <= k and k <= at(region(4).entry, i) by { known(); }
+                have at(region(4).entry, j->lo) <= k and k <= at(region(4).entry, i) by { close(); }
                 apply(at(region(4).entry, j->lo) <= k and k <= at(region(4).entry, i) implies
                     at(region(4).entry, j->p[k]) == at(region(4).entry, j->v));
-                known();
+                close();
             }
             have j->lo <= i by {
-                have at(region(4).entry, j->lo) <= at(region(4).entry, i) by { known(); }
+                have at(region(4).entry, j->lo) <= at(region(4).entry, i) by { close(); }
                 apply(integer::int32_increment_lower_bound(at(region(4).entry, i), at(region(4).entry, j->lo), j->hi));
-                have to_integer(j->lo) <= to_integer(i) by { known(); }
+                have to_integer(j->lo) <= to_integer(i) by { close(); }
                 apply(integer::int32_to_integer_less_equal_implies_less_equal(j->lo, i));
             }
             have i <= j->hi by {
                 apply(integer::int32_increment_upper_bound(at(region(4).entry, i), j->hi));
-                have to_integer(i) <= to_integer(j->hi) by { known(); }
+                have to_integer(i) <= to_integer(j->hi) by { close(); }
                 apply(integer::int32_to_integer_less_equal_implies_less_equal(i, j->hi));
             }
             have 0 <= to_integer(j->hi) - to_integer(i) by {
@@ -213,14 +213,14 @@ int32 probe_contract(struct job *j) {
             have to_integer(j->hi) - to_integer(i) < at(before_write, to_integer(j->hi) - to_integer(i)) by {
                 rewrite(to_integer(i), to_integer(at(before_write, i)) + 1);
                 rewrite(at(before_write, j->hi), j->hi);
-                known();
+                close();
             }
-            solve();
+            close();
         }
     }
     have i == j->hi by {
-        have i <= j->hi by { known(); }
-        have not (i < j->hi) by { known(); }
+        have i <= j->hi by { close(); }
+        have not (i < j->hi) by { close(); }
         apply(integer::int32_less_equal_and_not_less_than_implies_equal(i, j->hi));
     }
     have forall (k: int32) { j->lo <= k and k < j->hi implies j->p[k] == j->v } by {
@@ -229,13 +229,13 @@ int32 probe_contract(struct job *j) {
         instantiate(forall (k: int32) { j->lo <= k and k < i implies j->p[k] == j->v }, k);
         have j->lo <= k and k < i by {
             rewrite(i, j->hi);
-            known();
+            close();
         }
         apply(j->lo <= k and k < i implies j->p[k] == j->v);
-        known();
+        close();
     }
     step();
-    known();
+    close();
 }
 ```
 

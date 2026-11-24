@@ -47,7 +47,7 @@ void clear(struct region* region) {
         owns w: arena_clear_window(arena->data, arena->occupied, arena->capacity, region->start, region->end);
         invariant w.next == i;
         invariant separate(memory(*region), memory(arena->occupied[0..arena->capacity]));
-        initialize by solve();
+        initialize by close();
         maintain by {
             let { next: m } = unfold(w);
             have m == i;

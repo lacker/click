@@ -29,7 +29,7 @@ void set_next_to_self(struct node* n) {
 } by {
     step();
     step();
-    solve();
+    close();
 }
 ```
 

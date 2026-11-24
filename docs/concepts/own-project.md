@@ -299,7 +299,7 @@ uint64 label_fit(uint64 length) {
 } by {
     if length >= 32u64 {
         step_until(function.exit);
-        have result <= length by solve();
+        have result <= length by close();
     } else {
         step_until(function.exit);
     }
@@ -351,7 +351,7 @@ uint64 label_fit(uint64 length) {
 } by {
     if length >= 32u64 {
         step_until(function.exit);
-        have result <= length by solve();
+        have result <= length by close();
     } else {
         step_until(function.exit);
     }

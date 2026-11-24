@@ -8,7 +8,7 @@ conjunct. A guarded universal whose conclusion is a conjunction entails the
 universal of any one conjunct under the same binder and guards, so the implicit closer
 closes the goal from the indexed source fact with `intro()` for the binder
 and its range guard, `instantiate` at the introduced variable, and
-`known()`.
+`close()`.
 
 ```c filename=fill.c
 #include <string.h>

@@ -39,7 +39,7 @@ int32 red_bit(int32 n) {
     have red_bit_value() == 0 by {
         unfold(red_bit_value());
         rewrite(color_bit(Color::Red), 0);
-        known();
+        close();
     }
 }
 ```

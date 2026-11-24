@@ -130,7 +130,7 @@ theorem length_nonnegative<T>(xs: List<T>) {
         match xs {
             List::Nil => {
                 unfold(length(List<T>::Nil));
-                solve();
+                close();
             }
             List::Cons(value, rest) => {
                 apply(ih(rest));
@@ -177,7 +177,7 @@ template<class T> void Stack<T>::push(T value) {
             let state = fold(nodes<T>(this->head), { items: List::Cons(value, List<T>::Nil), tail: tail });
             unfold(length(List::Cons(value, List<T>::Nil)));
             have to_integer(old(this->count) + 1u64) == to_integer(old(this->count)) + to_integer(1u64);
-            solve();
+            close();
         },
         List::Cons(top, below) => {
             // Keep the old list packaged while constructing its new head.
@@ -188,7 +188,7 @@ template<class T> void Stack<T>::push(T value) {
             let state = fold(nodes<T>(this->head), { items: List::Cons(value, List::Cons(top, below)), tail: prior });
             unfold(length(List::Cons(value, List::Cons(top, below))));
             have to_integer(old(this->count) + 1u64) == to_integer(old(this->count)) + to_integer(1u64);
-            solve();
+            close();
         },
     }
 }
@@ -228,7 +228,7 @@ template<class T> bool Stack<T>::pop(T& out) {
                         length(List::Cons(value, List<T>::Nil)) == length(List<T>::Nil) + 1;
                         length(List<T>::Nil) == 0;
                     };
-                    solve();
+                    close();
                 },
                 List::Cons(next_value, next_items) => {
                     let { tail: next } = unfold(tail);
@@ -239,7 +239,7 @@ template<class T> bool Stack<T>::pop(T& out) {
                         to_integer(old(this->count)) == length(List::Cons(value, List::Cons(next_value, next_items)));
                         length(List::Cons(value, List::Cons(next_value, next_items))) == length(List::Cons(next_value, next_items)) + 1;
                     };
-                    solve();
+                    close();
                 },
             }
         },
@@ -256,7 +256,7 @@ template<class T> Stack<T>::~Stack() {
         owns list: nodes<T>(this->head);
         decreases length(list.items);
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             match list.items {
                 List::Nil => { contradiction(list.items == List<T>::Nil); },
@@ -264,7 +264,7 @@ template<class T> Stack<T>::~Stack() {
                     let { tail: tail } = unfold(list);
                     unfold(length(List::Cons(value, rest)));
                     apply(length_nonnegative(rest));
-                    have 0 <= length(tail.items) by solve();
+                    have 0 <= length(tail.items) by close();
                     have length(tail.items) < length(List::Cons(value, rest)) by close() using {
                         length(List::Cons(value, rest)) == length(rest) + 1;
                         tail.items == rest;
@@ -279,11 +279,11 @@ template<class T> Stack<T>::~Stack() {
                     have this->head->next == at(before_node, this->head->next) by {
                         preserve(memory(this->head->next), region(1));
                     }
-                    have node == this->head by { known(); }
+                    have node == this->head by { close(); }
                     step();
-                    have this->head == at(before_node, this->head->next) by { known(); }
+                    have this->head == at(before_node, this->head->next) by { close(); }
                     // Delete affects the whole typed node, not just its first scalar cell.
-                    have at(region(1).exit, separate(memory(*this->head), memory(this->head))) by { known(); }
+                    have at(region(1).exit, separate(memory(*this->head), memory(this->head))) by { close(); }
                     mark before_delete;
                     step();
                     have separate(region(3).footprint, memory(this->head)) by {
@@ -292,14 +292,14 @@ template<class T> Stack<T>::~Stack() {
                     have this->head == at(before_delete, this->head) by {
                         preserve(memory(this->head), region(3));
                     }
-                    have this->head == at(before_node, this->head->next) by { known(); }
+                    have this->head == at(before_node, this->head->next) by { close(); }
                 },
             }
         }
     }
     unfold(list);
     step();
-    solve();
+    close();
 }
 int round_trip(Container<int>& container, int x) {
     requires to_integer(size(container)) == length(items(container));
@@ -317,7 +317,7 @@ int caller(Stack<int>& stack, int x) {
     let { object_resource(): packed } = step(Stack__int__click_pack__Container__int, { state: state });
     step_until(function.exit);
     unfold(first_or(List<int>::Cons(x, old(state.items)), 0));
-    solve();
+    close();
 }
 int local_round_trip(int x) {
     ensures result == x;
@@ -329,7 +329,7 @@ int local_round_trip(int x) {
     let { object_resource(): packed } = step(Stack__int__click_pack__Container__int, { state: state });
     step_until(function.exit);
     unfold(first_or(List<int32>::Cons(x, List<int32>::Nil), 0));
-    solve();
+    close();
 }
 unsigned long pushed_size(Container<int>& container, int x) {
     requires to_integer(size(container)) == length(items(container));
@@ -338,7 +338,7 @@ unsigned long pushed_size(Container<int>& container, int x) {
 } by {
     step_until(function.exit);
     unfold(length(List<int32>::Cons(x, old(items(container)))));
-    solve();
+    close();
 }
 ```
 

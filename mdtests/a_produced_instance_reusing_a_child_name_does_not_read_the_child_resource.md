@@ -50,9 +50,9 @@ void f(int32* q, int32* p2) {
     let { k: x, u: ru } = unfold(r);
     let r = fold(root(q), { u: ru, k: x });
     let { first: x } = step(mk);
-    have x.v == 42 by { solve(); }
+    have x.v == 42 by { close(); }
     step();
-    solve();
+    close();
 }
 ```
 

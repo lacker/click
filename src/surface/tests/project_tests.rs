@@ -167,13 +167,13 @@ int32 count_to(int32 n) {
         invariant i >= 0;
         invariant i <= n;
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             step();
         }
     }
     step();
-    solve();
+    close();
 }
 "#;
     let sources = [("ranked.c", c_source)];
@@ -212,14 +212,14 @@ int32 callee(int32 x) {
     ensures result == x;
 } by {
     step_until(function.exit);
-    solve();
+    close();
 }
 
 int32 caller(int32 x) {
     ensures result == x;
 } by {
     step_until(function.exit);
-    solve();
+    close();
 }
 "#;
     let sources = [("callee.c", callee_c), ("caller.c", caller_c)];
@@ -370,13 +370,13 @@ verifying "first.c";
 verifying "later.c";
 verifying "caller.c";
 
-int32 first(int32 x) { ensures result == x; } by solve();
-int32 later(int32 x) { ensures result == x; } by solve();
+int32 first(int32 x) { ensures result == x; } by close();
+int32 later(int32 x) { ensures result == x; } by close();
 int32 caller(int32 x) { ensures result == x + x; } by {
     step();
     step();
     step_until(function.exit);
-    solve();
+    close();
 }
 "#;
     let source_map = sources.iter().copied().collect::<BTreeMap<_, _>>();
@@ -476,9 +476,9 @@ int32 box_init(struct box* owner, int32 data[], int32 value) {
     ensures owner->value == 0;
 } by {
     step_until(function.exit);
-    have separate(memory(*owner), memory(owner->data[0..1])) by solve();
+    have separate(memory(*owner), memory(owner->data[0..1])) by close();
     fold(owned_box(owner));
-    solve();
+    close();
 }
 
 int32 box_read(struct box* owner) {
@@ -494,11 +494,11 @@ int32 box_set(struct box* owner, int32 value) {
     ensures owner->data[old(owner->value)] == value;
 } by {
     unfold(owned_box(owner));
-    have owner->value < 2147483647 by solve();
+    have owner->value < 2147483647 by close();
     step_until(function.exit);
-    have separate(memory(*owner), memory(owner->data[0..1])) by solve();
+    have separate(memory(*owner), memory(owner->data[0..1])) by close();
     fold(owned_box(owner));
-    solve();
+    close();
 }
 
 int32 box_pipeline(struct box* owner, int32 data[], int32 value) {
@@ -509,16 +509,16 @@ int32 box_pipeline(struct box* owner, int32 data[], int32 value) {
     ensures result == value;
 } by {
     step_until(region(3).entry);
-    have owner->data == data by solve();
-    have owner->value == 0 by solve();
+    have owner->data == data by close();
+    have owner->value == 0 by close();
     step();
     have owner->data[at(region(3).entry, owner->value)] == value by {
-        known();
+        close();
     }
-    have owner->data[0] == value by solve();
+    have owner->data[0] == value by close();
     step();
     step_until(function.exit);
-    solve();
+    close();
 }
 "#;
 
@@ -598,7 +598,7 @@ int32 box_init(struct box* owner, int32 data[], int32 value) {
 } by {
     step_until(function.exit);
     fold(owned_box(owner));
-    solve();
+    close();
 }
 
 int32 box_touch(struct box* owner) {
@@ -608,7 +608,7 @@ int32 box_touch(struct box* owner) {
     unfold(owned_box(owner));
     step_until(function.exit);
     fold(owned_box(owner));
-    solve();
+    close();
 }
 
 int32 box_pipeline(struct box* owner, int32 data[]) {
@@ -628,7 +628,7 @@ int32 box_pipeline(struct box* owner, int32 data[]) {
         }
     }
     step();
-    solve();
+    close();
 }
 "#;
     let sources = [
@@ -705,7 +705,7 @@ int32 zero(struct counter* owner) {
 } by {
     step_until(function.exit);
     fold(counter(owner));
-    solve();
+    close();
 }
 
 int32 increment(struct counter* owner) {
@@ -717,7 +717,7 @@ int32 increment(struct counter* owner) {
     unfold(counter(owner));
     step_until(function.exit);
     fold(counter(owner));
-    solve();
+    close();
 }
 
 int32 pipeline(struct counter* owner) {
@@ -727,9 +727,9 @@ int32 pipeline(struct counter* owner) {
     ensures owner->value == 1;
 } by {
     step_until(region(3).entry);
-    have owner->value == 1 by solve();
+    have owner->value == 1 by close();
     step();
-    solve();
+    close();
 }
 "#;
     let sources = [
@@ -743,7 +743,7 @@ int32 pipeline(struct counter* owner) {
     verified.expect("the original smart proof should verify");
 
     let frontier_have = click_source
-        .find("have owner->value == 1 by solve()")
+        .find("have owner->value == 1 by close()")
         .unwrap();
     let have_position = expansion::position_at_offset(click_source, frontier_have);
     let have_expanded = expand_c_tactic_source_at(
@@ -753,7 +753,7 @@ int32 pipeline(struct counter* owner) {
         have_position.column,
     )
     .expect("the mixed-state frontier-local fact should expand");
-    assert!(!have_expanded.contains("have owner->value == 1 by solve()"));
+    assert!(!have_expanded.contains("have owner->value == 1 by close()"));
     // Value-only proofs can now cite the current logical read directly;
     // only validity transport needs the historical read's source anchor.
     verify_c_sources(&have_expanded, &sources)
@@ -875,7 +875,7 @@ int32 buffer_init(struct buffer* owner, int32 data[], int32 capacity) {
 } by {
     step_until(function.exit);
     fold(empty_buffer(owner));
-    solve();
+    close();
 }
 
 int32 buffer_push(struct buffer* owner, int32 value) {
@@ -890,7 +890,7 @@ int32 buffer_push(struct buffer* owner, int32 value) {
     unfold(buffer_storage(owner));
     step_until(function.exit);
     fold(buffer_storage(owner));
-    solve();
+    close();
 }
 
 int32 buffer_pipeline(
@@ -906,13 +906,13 @@ int32 buffer_pipeline(
     produces nonempty_buffer(owner) by {
         step_until(region(2).entry);
         unfold(empty_buffer(owner));
-        have 0 <= owner->len by solve();
-        have owner->len <= owner->cap by solve();
-        have viewable(owner->data[0..owner->len]) by solve();
+        have 0 <= owner->len by close();
+        have owner->len <= owner->cap by close();
+        have viewable(owner->data[0..owner->len]) by close();
         fold(buffer_storage(owner));
         step_until(region(3).entry);
         unfold(buffer_storage(owner));
-        have owner->len == 1 by solve();
+        have owner->len == 1 by close();
         have 1 <= owner->len by {
             rewrite(owner->len, 1);
             normalize();
@@ -970,7 +970,7 @@ int32 caller(int32 x) {
 } by {
     step_until(region(1).entry);
     step_until(function.exit);
-    solve();
+    close();
 }
 "#;
     let sources = [("callee.c", callee_c), ("caller.c", caller_c)];
@@ -1036,7 +1036,7 @@ int32 identity(int32 x) throws int32 {
 "#;
     let rewritten = source.replace(
         "\n}\n",
-        "\n} by { step(); have result == x by { normalize(); } known(); }\n",
+        "\n} by { step(); have result == x by { normalize(); } close(); }\n",
     );
     let position = expansion::position_at_offset(&rewritten, rewritten.find("step();").unwrap());
     let (session, _) = ProgramVerificationSession::new(
@@ -1103,18 +1103,18 @@ int32 callee(int32 x) {
     ensures result == x;
 } by {
     step_until(function.exit);
-    solve();
+    close();
 }
 
 int32 caller(int32 x) {
     ensures result == x;
 } by {
     step_until(function.exit);
-    solve();
+    close();
 }
 "#;
     let sources = [("callee.c", callee_c), ("caller.c", caller_c)];
-    let caller_solve = click_source.rfind("solve();").unwrap();
+    let caller_solve = click_source.rfind("close();").unwrap();
     let position = expansion::position_at_offset(click_source, caller_solve);
     let expanded =
         expand_c_tactic_source_at(click_source, &sources, position.line, position.column)
@@ -1135,7 +1135,7 @@ int32 caller(int32 x) {
             .all(|theorem| theorem.function_block.signature().name() == "caller")
     );
 
-    let broken_target = expanded.replacen("known();", "enumerate();", 1);
+    let broken_target = expanded.replacen("close();", "enumerate();", 1);
     session
         .verify_at(
             &broken_target,
@@ -1191,7 +1191,7 @@ theorem one_is_one(x: int32) {
     requires x == 1;
 
     ensures x == 1 by {
-        solve();
+        close();
     }
 }
 
@@ -1199,12 +1199,12 @@ int32 same(int32 x) {
     ensures result == x;
 } by {
     step_until(function.exit);
-    solve();
+    close();
 }
 "#;
     let sources = [("same.c", c_source)];
     let position = c_tactic_source_position(click_source, &sources, "same.contract", 0).unwrap();
-    let theorem_offset = click_source.find("solve();").unwrap();
+    let theorem_offset = click_source.find("close();").unwrap();
     let theorem_position = expansion::position_at_offset(click_source, theorem_offset);
     let (session, _) =
         ProgramVerificationSession::new(click_source, &sources).expect("baseline should verify");
@@ -1289,13 +1289,13 @@ int32 caller(int32 x) {
 } by {
     loop {
         invariant 0 == 0;
-        initialize by solve();
+        initialize by close();
         maintain by {
             step();
         }
     }
     step();
-    solve();
+    close();
 }
 "#;
     let caller_contract = r#"int32 caller(int32 x) {
@@ -1305,7 +1305,7 @@ int32 caller(int32 x) {
     step();
     step();
     step();
-    solve();
+    close();
 }
 "#;
     let both = format!("verifying \"wait.c\";\n\n{wait_contract}\n{caller_contract}");
@@ -1346,13 +1346,13 @@ int32 wait_for_zero(int32 x) diverges {
 } by {
     loop diverges {
         invariant 0 == 0;
-        initialize by solve();
+        initialize by close();
         maintain by {
             step();
         }
     }
     step();
-    solve();
+    close();
 }
 
 int32 caller(int32 x) {
@@ -1362,7 +1362,7 @@ int32 caller(int32 x) {
     step();
     step();
     step();
-    solve();
+    close();
 }
 "#;
     let sources = [("wait.c", c_source)];
@@ -1446,7 +1446,7 @@ int32 drain(int32 n) {
     loop {
         decreases n;
         invariant n >= 0;
-        initialize by solve();
+        initialize by close();
         maintain by {
             have 0 <= to_integer(n - 1) by {
                 close() using { n > 0; }
@@ -1457,7 +1457,7 @@ int32 drain(int32 n) {
         }
     }
     step();
-    solve();
+    close();
 }
 "#;
     let (session, _) = ProgramVerificationSession::new(click_source, &[("drain.c", c_source)])
@@ -1577,7 +1577,7 @@ fn unfolding_composite_rejects_concretely_overlapping_owned_children() {
         } by {
             unfold(overlapping(data));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
 
@@ -1616,7 +1616,7 @@ fn unfolding_composite_accepts_propositionally_equal_arguments() {
             unfold(cell(right));
             step_until(function.exit);
             fold(cell(left));
-            solve();
+            close();
         }
     "#;
 
@@ -1644,12 +1644,12 @@ verifying "leaf.c";
 verifying "middle.c";
 verifying "top.c";
 verifying "unrelated.c";
-int32 leaf(int32 x) { ensures result == x; } by solve();
+int32 leaf(int32 x) { ensures result == x; } by close();
 int32 middle(int32 x) { ensures result == x; }
 int32 top(int32 x) { ensures result == x; }
 int32 unrelated(int32 x) { ensures result == x; }
 "#;
-    let changed = baseline.replacen("} by solve();", "}", 1);
+    let changed = baseline.replacen("} by close();", "}", 1);
     let selection = c_incremental_selection(&changed, &sources, baseline, &sources).unwrap();
     assert_eq!(selection.selected_functions, ["leaf", "middle", "top"]);
     assert_eq!(selection.reused_functions, ["unrelated"]);
@@ -1686,8 +1686,8 @@ fn incremental_selection_rebuilds_all_functions_for_shared_logic_changes() {
 verifying "first.c";
 verifying "second.c";
 predicate allowed(x: int32) { x == x }
-int32 first(int32 x) { ensures result == x; } by solve();
-int32 second(int32 x) { ensures result == x; } by solve();
+int32 first(int32 x) { ensures result == x; } by close();
+int32 second(int32 x) { ensures result == x; } by close();
 "#;
     let changed = baseline.replace("x == x", "x == 0");
     let selection = c_incremental_selection(&changed, &sources, baseline, &sources).unwrap();
@@ -1746,7 +1746,7 @@ fn incremental_selection_rebuilds_all_functions_for_algebraic_type_changes() {
     let baseline = r#"
 verifying "first.c";
 spec enum Flag { Off, On }
-int32 first(int32 x) { ensures result == x; } by solve();
+int32 first(int32 x) { ensures result == x; } by close();
 "#;
     let changed = baseline.replace("Off, On", "Off, On, Unset");
     let selection = c_incremental_selection(&changed, &sources, baseline, &sources).unwrap();
@@ -1770,8 +1770,8 @@ fn incremental_selection_rechecks_functions_when_an_imported_header_changes() {
     let click_source = r#"
 verifying "m.c";
 verifying "other.c";
-int32 read_cap() { ensures result == 0; } by solve();
-int32 unrelated() { ensures result == 0; } by solve();
+int32 read_cap() { ensures result == 0; } by close();
+int32 unrelated() { ensures result == 0; } by close();
 "#;
 
     let selection = c_incremental_selection(
@@ -2046,7 +2046,7 @@ fn earlier_units_then_combine(earlier: usize, reverse: bool) -> (String, String)
     have combined->start == first->start;
     have combined->end == first->end;
     step_until(function.exit);
-    solve();
+    close();
 }
 ",
     );
@@ -2116,11 +2116,11 @@ fn execute_until_assignment_checks_real_stores_and_rejects_bad_frontiers() {
     let proof = r#"verifying "assignment.c";
 int32 f() {ensures result==4;} by {
     step_until(assignment(x, 0).entry); step();
-    have x==3 by {solve();}
+    have x==3 by {close();}
     step_until(assignment(x, 1).entry);
-    have x==3 by {solve();}
-    step(); have x==4 by {solve();}
-    step_until(function.exit); solve();
+    have x==3 by {close();}
+    step(); have x==4 by {close();}
+    step_until(function.exit); close();
 }"#;
     verify_c_sources(proof, &[("assignment.c", source)]).unwrap();
     for (from, to, diagnostic) in [
@@ -2150,14 +2150,14 @@ fn execute_until_assignment_stops_before_call_results_and_respects_paths() {
     let proof = r#"verifying "assignment.c";
 int32 id(int32 n) {ensures result==n; }
 int32 f() {ensures result==4;} by {
-    step_until(assignment(x, 0).entry); step(); have x==3 by {solve();}
-    step_until(assignment(x, 1).entry); have x==3 by {solve();}
-    step(); step_until(function.exit); solve();
+    step_until(assignment(x, 0).entry); step(); have x==3 by {close();}
+    step_until(assignment(x, 1).entry); have x==3 by {close();}
+    step(); step_until(function.exit); close();
 }"#;
     verify_c_sources(proof, &[("assignment.c", source)]).unwrap();
     let exited = proof.replace(
-        "step(); step_until(function.exit); solve();",
-        "step(); step_until(function.exit); step_until(assignment(x, 1).entry); solve();",
+        "step(); step_until(function.exit); close();",
+        "step(); step_until(function.exit); step_until(assignment(x, 1).entry); close();",
     );
     let error = verify_c_sources(&exited, &[("assignment.c", source)]).unwrap_err();
     assert!(error.message().contains("assignment(x, 1)"), "{error:?}");
@@ -2167,7 +2167,7 @@ int32 f() {ensures result==4;} by {
         "int32 f(int32 n) {int32 x; if(0==1) {x=1;} else {x=2;} return x;}",
     ] {
         let proof = r#"verifying "assignment.c";
-int32 f(int32 n) {ensures result==1; } by {step_until(assignment(x, 0).entry); step(); step_until(function.exit); solve();}"#;
+int32 f(int32 n) {ensures result==1; } by {step_until(assignment(x, 0).entry); step(); step_until(function.exit); close();}"#;
         assert!(verify_c_sources(proof, &[("assignment.c", source)]).is_err());
     }
     let retained_states = proof.replace("have x==3", "have at(assignment(x, 0).entry, x==3)");
@@ -2181,7 +2181,7 @@ fn execute_until_read_checks_access_and_retains_real_loaded_bounds() {
         "int32 f(const uint8* p) {int32 x;int32 other;other=1;x=(int32)*p;other=2;return x;}";
     let proof = r#"verifying "read.c";
 int32 f(const uint8* p) {views p[0..1]; ensures 0<=result and result<=255;} by {
-    step_until(read(0).entry); step(); have 0<=x and x<=255 by {solve();} step_until(function.exit); solve();
+    step_until(read(0).entry); step(); have 0<=x and x<=255 by {close();} step_until(function.exit); close();
 }"#;
     verify_c_sources(proof, &[("read.c", source)]).unwrap();
     for (from, to) in [
@@ -2209,13 +2209,13 @@ int32 f(const uint8* p) {views p[0..1]; ensures result==0;} by {
     step_until(read(0).entry);
     let { result: value } = step();
     mark loaded;
-    have 0<=value as int32 and 255>=value as int32 by {solve();}
-    have value==load<uint8>(p) by {solve();}
+    have 0<=value as int32 and 255>=value as int32 by {close();}
+    have value==load<uint8>(p) by {close();}
     step();
-    have x==0 by {solve();}
-    have value==at(loaded, x) by {solve();}
-    have 0<=value as int32 and 255>=value as int32 by {solve();}
-    step_until(function.exit); solve();
+    have x==0 by {close();}
+    have value==at(loaded, x) by {close();}
+    have 0<=value as int32 and 255>=value as int32 by {close();}
+    step_until(function.exit); close();
 }"#;
     verify_c_sources(proof, &[("read.c", source)]).unwrap();
     for invalid in [

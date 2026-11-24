@@ -25,11 +25,11 @@ int32 branch_value(int32 flag) {
     branch {
         true => {
             step_until(function.exit);
-            have result == 1 by solve();
+            have result == 1 by close();
         }
         false => {
             step_until(function.exit);
-            have result == 1 by solve();
+            have result == 1 by close();
         }
     }
 }

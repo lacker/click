@@ -11,7 +11,7 @@ theorem rejected(xs: TestList<int32>) {
         let ih = induct(xs);
         match xs {
             TestList::Nil => {
-                solve();
+                close();
             }
         }
     }

@@ -39,14 +39,14 @@ int32 drain_to_zero(int32 value) {
     loop {
         decreases value;
         invariant value >= 0;
-        initialize by solve();
+        initialize by close();
         maintain by {
             have 0 <= to_integer(value - 1);
             step();
         }
     }
     step();
-    solve();
+    close();
 }
 
 int32 run(int32 n) {

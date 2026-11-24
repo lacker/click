@@ -40,22 +40,22 @@ theorem lift(callback: int32 (*)(int32*, int32))
             have cell[0] == item by { apply(result != 0 implies cell[0] == item); }
             if item == 0 {
                 if item != 0 {
-                    have cell[0] == 123 by solve();
+                    have cell[0] == 123 by close();
                 } else {
-                    have cell[0] != 0 by solve();
+                    have cell[0] != 0 by close();
                 }
             } else {
-                have cell[0] != 0 by solve();
+                have cell[0] != 0 by close();
             }
             if item == 1 {
-                have cell[0] == 1 by solve();
+                have cell[0] == 1 by close();
             } else {
-                have cell[0] != 1 by solve();
+                have cell[0] != 1 by close();
             }
-            fold(Cell(cell)); solve();
+            fold(Cell(cell)); close();
         } else {
             have cell[0] == old(cell[0]) by { apply(result == 0 implies cell[0] == old(cell[0])); }
-            fold(Cell(cell)); solve();
+            fold(Cell(cell)); close();
         }
     }
 }
@@ -72,10 +72,10 @@ int32 check_update(int32 (*callback)(int32*, int32), int32* cell, int32 value) {
     step(Buffered);
     unfold(Cell(cell));
     if program::status != 0 {
-        have cell[0] == value by solve();
+        have cell[0] == value by close();
         step_until(function.exit); fold(Cell(cell));
     } else {
-        have cell[0] == program::before by solve();
+        have cell[0] == program::before by close();
         step_until(function.exit); fold(Cell(cell));
     }
 }

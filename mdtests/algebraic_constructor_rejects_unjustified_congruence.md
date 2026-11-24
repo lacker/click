@@ -10,7 +10,7 @@ spec enum Maybe<T> {
 }
 
 theorem unjustified_congruence(left: int32, right: int32) {
-    ensures Maybe<int32>::Some(left) == Maybe<int32>::Some(right) by solve();
+    ensures Maybe<int32>::Some(left) == Maybe<int32>::Some(right) by close();
 }
 ```
 

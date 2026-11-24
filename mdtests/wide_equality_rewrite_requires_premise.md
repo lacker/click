@@ -4,7 +4,7 @@
 theorem missing_equality(x: uint64, y: uint64) {
     ensures x + 3u64 == y + 3u64 by {
         rewrite(x, y);
-        solve();
+        close();
     }
 }
 ```

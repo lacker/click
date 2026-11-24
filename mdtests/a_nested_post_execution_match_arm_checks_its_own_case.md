@@ -24,12 +24,12 @@ int read(int* p) {
     step_until(function.exit);
     if (result > 0) {
         match old(c.model) {
-            Tri::Zero => { solve(); },
-            Tri::One => { solve(); },
+            Tri::Zero => { close(); },
+            Tri::One => { close(); },
             Tri::Other(value) => { have old(c.model) == Tri::Zero; },
         }
     } else {
-        solve();
+        close();
     }
 }
 ```

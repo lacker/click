@@ -10,7 +10,7 @@ theorem reduced_bound(value: uint32, divisor: uint32) {
  requires value < divisor;
  ensures value < 65521u32 by {
   rewrite(65521u32, divisor);
-  known();
+  close();
  }
 }
 ```

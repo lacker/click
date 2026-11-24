@@ -51,7 +51,7 @@ void countdown(int32 n) {
         decreases chain_len(c.model) - 5;
         invariant n >= 0;
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             match c.model {
                 Chain::Nil => { contradiction(c.model == Chain::Nil); },
@@ -59,7 +59,7 @@ void countdown(int32 n) {
                     have chain_len(c.model) == chain_len(rest_model) + 1 by {
                         rewrite(c.model, Chain::Link(rest_model));
                         unfold(chain_len(Chain::Link(rest_model)));
-                        known();
+                        close();
                     }
                     have chain_len(rest_model) - 5 < chain_len(c.model) - 5 by {
                         close() using {
@@ -75,7 +75,7 @@ void countdown(int32 n) {
     have n == 0;
     unfold(c);
     step();
-    solve();
+    close();
 }
 ```
 

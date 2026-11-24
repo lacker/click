@@ -316,7 +316,7 @@ existential goal with `witness(expression);`. To open an already established
 existential fact, write `let k = obtain(exists (x: int32) { ... });`. Use a tuple of output
 names for multiple witnesses. A predicate requirement can be unfolded first.
 
-`solve` and the implicit closer do not synthesize witnesses. `obtain` requires the exact
+`close()` and the implicit closer do not synthesize witnesses. `obtain` requires the exact
 existential to be available; use `have` to establish it if necessary. Concrete
 `.any` ranges still unroll to finite disjunctions.
 
@@ -341,9 +341,9 @@ Pointer-writing loops do not implicitly preserve memory. Use invariants and
 proof needs apart. Symbolic loops need invariants
 for arithmetic bounds, memory safety, and postconditions.
 
-## `solve` is a bounded search, not a general solver
+## Proof search in `close()` is bounded
 
-`solve` is a smart tactic: a bounded, deterministic
+The search inside `close()` is a bounded, deterministic
 search over the ambient pure facts and a fixed set of proof rules, including
 equality rewriting, case splits on relevant disjunctions, and evidence for
 supported linear comparisons. A miss means the search found no proof within its budget, not that the claim is false.

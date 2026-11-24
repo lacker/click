@@ -678,10 +678,10 @@ bool money_nonnegative(const int64& nValue) {
 } by {
     if nValue >= 0i64 {
         step_until(function.exit);
-        solve();
+        close();
     } else {
         step_until(function.exit);
-        solve();
+        close();
     }
 }
 ```
@@ -1325,7 +1325,7 @@ matching-width call captures. Contracts write these types as `int128` and
 these proof conversions remain distinct from C++ modulo casts. Identities,
 cast round trips, full signed/unsigned endpoints, modular calls with framed
 narrow memory, expansion, and retained audit have regression coverage.
-Bounded `solve` recognizes direct observer equalities; it does not currently
+Bounded `close()` recognizes direct observer equalities; it does not currently
 chain two Integer observer equalities through nested calls.
 
 The `wide-division` fixture adds signed and unsigned 128-bit `/` and `%`.

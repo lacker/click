@@ -12,12 +12,12 @@ verifying "known_closes_a_mirrored_disequality.c";
 
 theorem machine(x: int32, y: int32) {
     requires x != y;
-    ensures y != x by { known(); }
+    ensures y != x by { close(); }
 }
 
 theorem exact(x: int32, y: int32) {
     requires to_integer(x) != to_integer(y);
-    ensures to_integer(y) != to_integer(x) by { known(); }
+    ensures to_integer(y) != to_integer(x) by { close(); }
 }
 ```
 

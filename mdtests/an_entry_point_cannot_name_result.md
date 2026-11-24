@@ -14,8 +14,8 @@ int h(int x) {
     ensures result == 5;
 } by {
     step_until(function.exit);
-    have at(function.entry, result == 5) by { solve(); }
-    known();
+    have at(function.entry, result == 5) by { close(); }
+    close();
 }
 ```
 

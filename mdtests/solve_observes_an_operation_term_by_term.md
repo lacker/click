@@ -13,7 +13,7 @@ theorem signed_observation(total: int32, b: int32) {
     requires b <= 255;
     ensures to_integer(total + b) <= 255255 by {
         have to_integer(total + b) <= 255255;
-        known();
+        close();
     }
 }
 
@@ -22,7 +22,7 @@ theorem unsigned_observation(i: uint64, n: uint64) {
     requires n <= 1000u64;
     ensures to_integer(i + 1u64) <= 1000 by {
         have to_integer(i + 1u64) <= 1000;
-        known();
+        close();
     }
 }
 ```

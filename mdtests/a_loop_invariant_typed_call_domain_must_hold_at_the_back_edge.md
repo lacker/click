@@ -30,7 +30,7 @@ struct node* settle(struct node* p, struct node* q, int32 n) {
     loop {
         decreases n;
         invariant is_node(p) == 1;
-        initialize by solve();
+        initialize by close();
         maintain by { step(); step(); }
     }
 }

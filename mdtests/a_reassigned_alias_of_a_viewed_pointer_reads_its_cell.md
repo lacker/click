@@ -8,7 +8,7 @@ read of `q[0]` is a load through the newer value.
 The proof applies a checked alias-read theorem while `q` names the value
 from the second call. The theorem names both pointers and the viewable cell,
 and its proof rewrites the alias to `p`. This establishes a fact the return
-can reuse with `known()`.
+can reuse with `close()`.
 
 The range is variable-length on purpose: nothing seeds a cell for `p[0]`, so
 the proof has to go through the loads' addresses. The sibling below, whose
@@ -41,7 +41,7 @@ theorem aliased_cell_read(p: int32*, q: const int32*) {
     requires viewable(p[0..1]);
     ensures q[0] == p[0] by {
         rewrite(q, p);
-        known();
+        close();
     }
 }
 
@@ -56,7 +56,7 @@ int read_twice(int *p, int n) {
             apply(aliased_cell_read(p, q));
         }
         step_until(function.exit);
-        known();
+        close();
     }
 }
 ```

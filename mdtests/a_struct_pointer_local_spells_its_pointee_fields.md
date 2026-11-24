@@ -27,7 +27,7 @@ int read_second(void *argument) {
     step();
     step();
     have 1 < box->second by {
-        known();
+        close();
     }
 }
 ```

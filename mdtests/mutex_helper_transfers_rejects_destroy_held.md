@@ -21,7 +21,7 @@ void acquire(struct holder *p) {
 } by {
     step();
     step();
-    solve();
+    close();
 }
 void run(struct holder *p) {
     owns p->mu;
@@ -31,7 +31,7 @@ void run(struct holder *p) {
     let { guard: acquired } = step(acquire, { access: lifetime });
     step(pthread_mutex_destroy, { lifetime: lifetime });
     step();
-    solve();
+    close();
 }
 ```
 

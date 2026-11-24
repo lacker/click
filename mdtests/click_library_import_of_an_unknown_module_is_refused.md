@@ -8,7 +8,7 @@ own position and the message lists the modules that exist.
 import click::strings;
 
 theorem unused(x: int32) {
-    ensures x == x by solve();
+    ensures x == x by close();
 }
 ```
 

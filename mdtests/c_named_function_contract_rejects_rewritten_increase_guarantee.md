@@ -48,7 +48,7 @@ void apply_step(void (*step)(int32*), int32* cell) {
 theorem proposed_increment_contract() {
     ensures Decrease(&increment) by {
         unfold(Decrease(&increment));
-        solve();
+        close();
     }
 }
 

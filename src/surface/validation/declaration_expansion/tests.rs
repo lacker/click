@@ -232,7 +232,7 @@ fn check_isolated_program(value: i32, expected: i32) {
         verifying "answer.c";
         predicate wanted(x: int32) {{ x == {expected} }}
         int32 answer() {{
-            ensures wanted(result) by {{ step_until(function.exit); unfold(wanted(result)); solve(); }}
+            ensures wanted(result) by {{ step_until(function.exit); unfold(wanted(result)); close(); }}
         }}
         "#
     );
@@ -401,7 +401,7 @@ fn certification_checks_only_the_cited_library_theorem() {
                 apply(integer::int32_remainder_to_integer(value, bound));
             }
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let proved = proved_theorems_during(|| {

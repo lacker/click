@@ -62,7 +62,7 @@ void keep(struct buffer* buffer) {
     unfold(suffix);
     step_until(function.exit);
     let suffix = fold(suffix_after_prefix(buffer), { start: old(suffix.start) });
-    solve();
+    close();
 }
 
 void claim(int32* data, int32 capacity, int32 start) {
@@ -89,7 +89,7 @@ void claim(int32* data, int32 capacity, int32 start) {
         instantiate(forall (k: int32) {
             old(before.start) <= k and k < capacity implies data[k] == 0
         }, k);
-        known();
+        close();
     }
     let after = fold(zero_suffix(data, capacity), { start: old(before.start) + 1 });
 }

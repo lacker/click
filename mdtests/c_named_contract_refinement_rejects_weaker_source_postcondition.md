@@ -20,7 +20,7 @@ theorem at_least_input_is_identity(
     ensures Identity(callback) by {
         unfold(AtLeastInput(callback));
         unfold(Identity(callback));
-        solve();
+        close();
     }
 }
 ```

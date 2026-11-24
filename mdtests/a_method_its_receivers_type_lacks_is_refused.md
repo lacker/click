@@ -8,7 +8,7 @@ import click::rust::slice;
 
 theorem no_such_method(s: Slice<uint8>) {
     ensures s.size() == slice::len(s) by {
-        solve();
+        close();
     }
 }
 ```

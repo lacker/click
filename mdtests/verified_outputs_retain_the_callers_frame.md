@@ -29,7 +29,7 @@ int32 caller(int32* p, int32* q) {
     consumes cell(p);
     owns *q;
     ensures result == 0;
-} by { step_until(function.exit); solve(); }
+} by { step_until(function.exit); close(); }
 ```
 
 ```expect

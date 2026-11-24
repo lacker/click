@@ -27,7 +27,7 @@ void keep(struct holder *holder) {
 } by {
     step(inner);
     step();
-    solve();
+    close();
 }
 int32 run(struct holder *holder) {
     owns holder->mu;
@@ -38,7 +38,7 @@ int32 run(struct holder *holder) {
     step(keep);
     step();
     step();
-    solve();
+    close();
 }
 ```
 

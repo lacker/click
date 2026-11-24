@@ -38,14 +38,14 @@ int32 lexicographic(int32 a, int32 b) {
     ensures result == 0;
 } by {
     if a > 0 {
-        have defined(a - 1) by { solve(); }
-        have to_integer(a - 1) == to_integer(a) - 1 by { solve(); }
-        have to_integer(a - 1) + to_integer(b) < to_integer(a) + to_integer(b) by { solve(); }
+        have defined(a - 1) by { close(); }
+        have to_integer(a - 1) == to_integer(a) - 1 by { close(); }
+        have to_integer(a - 1) + to_integer(b) < to_integer(a) + to_integer(b) by { close(); }
         step_until(function.exit);
-        solve();
+        close();
     } else {
         step_until(function.exit);
-        solve();
+        close();
     }
 }
 ```

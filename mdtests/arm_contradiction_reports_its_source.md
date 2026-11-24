@@ -31,7 +31,7 @@ int32 peek(struct node* p) {
     owns x: cell_at(p);
     ensures result == 0;
 } by {
-    have p == p by known();
+    have p == p by close();
     match x.model {
         Cell::Missing => {
         },

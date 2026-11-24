@@ -28,16 +28,16 @@ int32 probe(struct Outer* p, int32 value) {
     ensures p->first == old(p->first);
 } by {
     step(); step(); step();
-    have at(call(0).exit, call(0).result) == &p->child.value by { known(); }
+    have at(call(0).exit, call(0).result) == &p->child.value by { close(); }
     fold(cell(q));
     unfold(cell(q));
     have at(call(0).exit, call(0).result)[0] == p->child.value by {
         rewrite(at(call(0).exit, call(0).result), &p->child.value);
-        known();
+        close();
     }
     have separate(memory(q[0]), memory(p->first)) by {
         rewrite(q, &p->child.value);
-        known();
+        close();
     }
     step();
 }

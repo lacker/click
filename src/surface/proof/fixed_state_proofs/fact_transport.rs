@@ -845,7 +845,7 @@ fn describe_unreachable_fact_transport(
              follow from the source and the listed premises alone, and it does not: check that \
              they cover the target (for a range, that its index is inside the range); if the two \
              sides read the same memory, the target is not a transport but an ordinary goal — \
-             prove it with the rule that decides it, such as `solve()` or a theorem application",
+             prove it with the rule that decides it, such as `close()` or a theorem application",
         );
         return rendered;
     }

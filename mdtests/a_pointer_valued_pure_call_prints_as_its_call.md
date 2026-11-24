@@ -27,7 +27,7 @@ uint8 first(const uint8* p, uint64 n) {
 } by {
     have opaque_first(p, n) == p + 1;
     step_until(function.exit);
-    solve();
+    close();
 }
 ```
 

@@ -38,7 +38,7 @@ int32 loop_rejects_stale_address_escaped_local(int32 n) {
         invariant i >= 0 and i <= n;
     }
     step();
-    solve();
+    close();
 }
 ```
 

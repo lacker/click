@@ -18,16 +18,16 @@ resource box() { field model: Model; }
 void attach(struct child* kid) {
     produces held: box();
     ensures held.model == Model::At(kid as (void *));
-} by { step_until(function.exit); let held = fold(box(), {model: Model::At(kid as (void *))}); solve(); }
+} by { step_until(function.exit); let held = fold(box(), {model: Model::At(kid as (void *))}); close(); }
 void caller(struct child* kid) { ensures true; } by {
     let {held: held} = step(attach);
-    have held.model != Model::Empty by solve();
-    step(); solve();
+    have held.model != Model::Empty by close();
+    step(); close();
 }
 
 theorem excludes(p: void*, m: Model) {
     requires m == Model::At(p);
-    ensures m != Model::Empty by solve();
+    ensures m != Model::Empty by close();
 }
 ```
 

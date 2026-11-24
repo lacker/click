@@ -37,7 +37,7 @@ int32 walk(int32 *a, int32 n) {
         invariant viewable(a[0..i]);
     }
     step();
-    solve();
+    close();
 }
 ```
 

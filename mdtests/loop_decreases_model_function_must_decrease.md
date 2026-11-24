@@ -50,7 +50,7 @@ void spin(int32 n) {
         decreases chain_len(c.model);
         invariant n >= 0;
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             step();
         }
@@ -58,7 +58,7 @@ void spin(int32 n) {
     have n == 0;
     unfold(c);
     step();
-    solve();
+    close();
 }
 ```
 

@@ -2432,7 +2432,7 @@ void arena_free(struct region* region) {
             }
             mark opened;
             have contains(memory(*arena), memory(arena->occupied)) by {
-                known();
+                close();
             }
             have separate(memory(arena->occupied), memory(arena->occupied[i])) by {
                 apply(selected_array_cell(memory(*arena), memory(arena->occupied), arena->occupied, arena->capacity, i));
@@ -2442,7 +2442,7 @@ void arena_free(struct region* region) {
                 close();
             }
             have contains(memory(*arena), memory(arena->data)) by {
-                known();
+                close();
             }
             have separate(memory(arena->data), memory(arena->occupied[i])) by {
                 apply(selected_array_cell(memory(*arena), memory(arena->data), arena->occupied, arena->capacity, i));
@@ -2452,7 +2452,7 @@ void arena_free(struct region* region) {
                 close();
             }
             have contains(memory(*region), memory(region->arena)) by {
-                known();
+                close();
             }
             have separate(memory(region->arena), memory(arena->occupied[i])) by {
                 apply(selected_array_cell(memory(*region), memory(region->arena), arena->occupied, arena->capacity, i));
@@ -2461,24 +2461,24 @@ void arena_free(struct region* region) {
                 rewrite(at(clear_occupied.entry, arena->occupied), arena->occupied);
                 close();
             }
-            have contains(memory(*region), memory(region->start)) by { known(); }
+            have contains(memory(*region), memory(region->start)) by { close(); }
             have separate(memory(region->start), memory(arena->occupied[i])) by {
                 apply(selected_array_cell(memory(*region), memory(region->start), arena->occupied, arena->capacity, i));
             }
-            have contains(memory(*region), memory(region->end)) by { known(); }
+            have contains(memory(*region), memory(region->end)) by { close(); }
             have separate(memory(region->end), memory(arena->occupied[i])) by {
                 apply(selected_array_cell(memory(*region), memory(region->end), arena->occupied, arena->capacity, i));
             }
-            have contains(memory(*arena), memory(arena->capacity)) by { known(); }
+            have contains(memory(*arena), memory(arena->capacity)) by { close(); }
             have separate(memory(arena->capacity), memory(arena->occupied[i])) by {
                 apply(selected_array_cell(memory(*arena), memory(arena->capacity), arena->occupied, arena->capacity, i));
             }
             step();
-            have at(opened, separate(loop(0).statement(0).footprint, memory(region->start))) by { known(); }
+            have at(opened, separate(loop(0).statement(0).footprint, memory(region->start))) by { close(); }
             have region->start == at(opened, region->start) by {
                 preserve(at(opened, memory(region->start)), loop(0).statement(0));
             }
-            have at(opened, separate(loop(0).statement(0).footprint, memory(region->end))) by { known(); }
+            have at(opened, separate(loop(0).statement(0).footprint, memory(region->end))) by { close(); }
             have region->end == at(opened, region->end) by {
                 preserve(at(opened, memory(region->end)), loop(0).statement(0));
             }
@@ -2500,7 +2500,7 @@ void arena_free(struct region* region) {
             have arena->data == at(opened, arena->data) by {
                 preserve(memory(arena->data), statement(4).statement(0));
             }
-            have at(opened, separate(loop(0).statement(0).footprint, memory(arena->capacity))) by { known(); }
+            have at(opened, separate(loop(0).statement(0).footprint, memory(arena->capacity))) by { close(); }
             have arena->capacity == at(opened, arena->capacity) by {
                 preserve(at(opened, memory(arena->capacity)), loop(0).statement(0));
             }
@@ -2547,7 +2547,7 @@ void arena_free(struct region* region) {
                         apply(separation::separate_elements(at(opened, arena->occupied), at(opened, i), k));
                     }
                     have separate(loop(0).statement(0).footprint, memory(at(opened, arena->occupied)[k])) by {
-                        known();
+                        close();
                     }
                     have at(loop(0).statement(0).exit, (let saved: int32* = at(opened, arena->occupied); saved[k]))
                         == at(loop(0).statement(0).entry, (let saved: int32* = at(opened, arena->occupied); saved[k])) by {
@@ -2582,7 +2582,7 @@ void arena_free(struct region* region) {
                     apply(separation::separate_elements(at(opened, arena->occupied), at(opened, i), k));
                 }
                 have separate(loop(0).statement(0).footprint, memory(at(opened, arena->occupied)[k])) by {
-                    known();
+                    close();
                 }
                 have at(loop(0).statement(0).exit, (let saved: int32* = at(opened, arena->occupied); saved[k]))
                     == at(loop(0).statement(0).entry, (let saved: int32* = at(opened, arena->occupied); saved[k])) by {
@@ -2615,7 +2615,7 @@ void arena_free(struct region* region) {
                     apply(separation::separate_elements(at(opened, arena->occupied), at(opened, i), k));
                 }
                 have separate(loop(0).statement(0).footprint, memory(at(opened, arena->occupied)[k])) by {
-                    known();
+                    close();
                 }
                 have at(loop(0).statement(0).exit, (let saved: int32* = at(opened, arena->occupied); saved[k]))
                     == at(loop(0).statement(0).entry, (let saved: int32* = at(opened, arena->occupied); saved[k])) by {
@@ -2666,11 +2666,11 @@ void arena_free(struct region* region) {
                 close();
             }
             have region->arena == at(opened, region->arena) by {
-                have separate(loop(0).statement(1).footprint, memory(region->arena)) by { known(); }
+                have separate(loop(0).statement(1).footprint, memory(region->arena)) by { close(); }
                 have region->arena == at(cleared, region->arena) by {
                     preserve(memory(region->arena), loop(0).statement(1));
                 }
-                known();
+                close();
             }
             have region->arena == old(region->arena) by {
                 close();
@@ -2855,7 +2855,7 @@ void arena_free(struct region* region) {
         }
         have at(cleared, region->start) <= at(cleared, k) and at(cleared, k) < at(cleared, region->end);
         instantiate(forall (j: int32) { at(cleared, region->start) <= at(cleared, j) and at(cleared, j) < at(cleared, region->end) implies at(cleared, arena->occupied[j]) == at(cleared, 0) }, k);
-        have contains(memory(*arena), memory(arena->live_regions)) by { known(); }
+        have contains(memory(*arena), memory(arena->live_regions)) by { close(); }
         have separate(memory(arena->live_regions), memory(arena->occupied[k])) by {
             apply(selected_array_cell(memory(*arena), memory(arena->live_regions), arena->occupied, arena->capacity, k));
         }
@@ -2881,7 +2881,7 @@ void arena_free(struct region* region) {
         }
         have at(cleared, 0) <= at(cleared, k) and at(cleared, k) < at(cleared, region->start);
         instantiate(forall (j: int32) { at(cleared, 0) <= at(cleared, j) and at(cleared, j) < at(cleared, region->start) implies at(cleared, arena->occupied[j]) == old(region->arena->occupied[j]) }, k);
-        have contains(memory(*arena), memory(arena->live_regions)) by { known(); }
+        have contains(memory(*arena), memory(arena->live_regions)) by { close(); }
         have separate(memory(arena->live_regions), memory(arena->occupied[k])) by {
             apply(selected_array_cell(memory(*arena), memory(arena->live_regions), arena->occupied, arena->capacity, k));
         }
@@ -2904,7 +2904,7 @@ void arena_free(struct region* region) {
         }
         have at(cleared, region->end) <= at(cleared, k) and at(cleared, k) < at(cleared, arena->capacity);
         instantiate(forall (j: int32) { at(cleared, region->end) <= at(cleared, j) and at(cleared, j) < at(cleared, arena->capacity) implies at(cleared, arena->occupied[j]) == old(region->arena->occupied[j]) }, k);
-        have contains(memory(*arena), memory(arena->live_regions)) by { known(); }
+        have contains(memory(*arena), memory(arena->live_regions)) by { close(); }
         have separate(memory(arena->live_regions), memory(arena->occupied[k])) by {
             apply(selected_array_cell(memory(*arena), memory(arena->live_regions), arena->occupied, arena->capacity, k));
         }

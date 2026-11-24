@@ -23,11 +23,11 @@ int32 run(int32 *out, const int32 *input, int32 choice) {
     } {
         true => {
             step();
-            have separate(memory((out as (uint8 *))[0..4]), memory(input[0..1])) by { solve(); }
+            have separate(memory((out as (uint8 *))[0..4]), memory(input[0..1])) by { close(); }
         }
         false => {
             step();
-            have separate(memory((out as (uint8 *))[0..4]), memory(input[0..1])) by { solve(); }
+            have separate(memory((out as (uint8 *))[0..4]), memory(input[0..1])) by { close(); }
         }
     }
     step();

@@ -38,7 +38,7 @@ void lifecycle(int32* counter) {
     fold(3 of member(counter));
     fold(control(counter));
     step();
-    have count(member(counter)) == 2 by solve();
+    have count(member(counter)) == 2 by close();
     unfold(control(counter));
     unfold(3 of member(counter));
 }

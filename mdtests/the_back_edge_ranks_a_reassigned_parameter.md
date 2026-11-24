@@ -33,7 +33,7 @@ int32 drain_to_zero(int32 n) {
         invariant n <= at(drain.entry, n);
         maintain by {
             have 0 <= to_integer(n - 1);
-            have n <= at(drain.entry, n) by known();
+            have n <= at(drain.entry, n) by close();
             have to_integer(n - 1) <= to_integer(at(drain.entry, n)) by {
                 close() using { n >= 0; n <= at(drain.entry, n); };
             }
@@ -41,7 +41,7 @@ int32 drain_to_zero(int32 n) {
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

@@ -26,7 +26,7 @@ void keep(int32* p, int32* q, int32* r) {
         transport(at(statement(0).entry, (*q == 7 and *r > 0) implies (*q > 0 implies *r == 8)), (*q == 7 and *r > 0) implies (*q > 0 implies *r == 8));
     }
     step();
-    known();
+    close();
 }
 ```
 

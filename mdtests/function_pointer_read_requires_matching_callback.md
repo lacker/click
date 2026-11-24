@@ -15,20 +15,20 @@ void symbolic(int *p, const struct callbacks *cb) { cb->call(p); }
 ```click
 verifying "callbacks.c";
 contract void Invoke(int32* p) { ensures true; }
-void target(int32* p) { ensures true; } by { step_until(function.exit); solve(); }
+void target(int32* p) { ensures true; } by { step_until(function.exit); close(); }
 theorem target_has_contract()
 executes target(int32* p) {
-    ensures Invoke(&target) by { step_until(function.exit); solve(); }
+    ensures Invoke(&target) by { step_until(function.exit); close(); }
 }
 void symbolic(int32* p, const struct callbacks* cb) {
     requires cb == &table;
     views cb->call;
     ensures true;
 } by {
-    have cb == &table by { known(); }
+    have cb == &table by { close(); }
     apply(target_has_contract());
     step(Invoke);
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }
 ```
 

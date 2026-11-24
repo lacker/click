@@ -20,8 +20,8 @@ int32 caller(int32 a, int32 b) {
     requires a > 0;
     requires b <= 0;
     ensures 1 == 1 by {
-        have a > 0 or b > 0 by solve();
-        step(); step(); solve();
+        have a > 0 or b > 0 by close();
+        step(); step(); close();
     }
 }
 ```

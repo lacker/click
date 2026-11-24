@@ -15,9 +15,9 @@ verifying "branch_float_cast.c";
 int32 positive(double d) {
     ensures result >= 0;
 } by {
-    branch { true => { step(); solve(); } false => {} }
+    branch { true => { step(); close(); } false => {} }
     step();
-    solve();
+    close();
 }
 ```
 

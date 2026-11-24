@@ -93,7 +93,7 @@ void child_retain(struct child* obj) {
     fold(child_ref(obj));
     fold(child_control(obj));
     step_until(function.exit);
-    solve();
+    close();
 }
 
 void child_release(struct child* obj) {
@@ -109,7 +109,7 @@ void child_release(struct child* obj) {
     step();
     fold(child_control(obj));
     step_until(function.exit);
-    solve();
+    close();
 }
 
 void parent_attach(struct parent* p, struct child* kid) {
@@ -126,7 +126,7 @@ void parent_attach(struct parent* p, struct child* kid) {
     step();
     let link = fold(parent(p), { link: ParentLink::Linked(kid) });
     step_until(function.exit);
-    solve();
+    close();
 }
 
 int32 parent_read_payload(struct parent* p) {
@@ -146,7 +146,7 @@ int32 parent_read_payload(struct parent* p) {
             unfold(link);
             with(child_control(p->kid)) { step_until(function.exit); }
             let link = fold(parent(p), { link: ParentLink::Linked(p->kid) });
-            solve();
+            close();
         },
     }
 }
@@ -174,10 +174,10 @@ void parent_detach(struct parent* p) {
             step();
             step();
             step();
-            have old(p->kid) == kid by { known(); }
-            have kid->payload == old(p->kid->payload) by { known(); }
+            have old(p->kid) == kid by { close(); }
+            have kid->payload == old(p->kid->payload) by { close(); }
             with(child_control(kid)) {
-                have separate(memory(p->kid), memory(*kid)) by { known(); }
+                have separate(memory(p->kid), memory(*kid)) by { close(); }
                 have contains(memory(*kid), memory(kid->payload)) by { normalize(); }
                 apply(separation::contains_refl(memory(p->kid)));
                 apply(separation::separate_restrict(
@@ -194,12 +194,12 @@ void parent_detach(struct parent* p) {
                 }
                 have kid->payload == old(p->kid->payload) by {
                     rewrite(kid->payload, at(before_clear, kid->payload));
-                    known();
+                    close();
                 }
             }
             let out = fold(parent(p), { link: ParentLink::Empty });
             step_until(function.exit);
-            solve();
+            close();
         },
     }
 }
@@ -221,7 +221,7 @@ int32 caller(struct parent* first, struct parent* second, struct child* kid) {
     mark before_read;
     step(parent_read_payload, { link: second_link });
     // The read returns a linked parent, which the following detach consumes.
-    have second_link.link == ParentLink::Linked(at(before_read, second->kid)) by { known(); }
+    have second_link.link == ParentLink::Linked(at(before_read, second->kid)) by { close(); }
     have second_link.link != ParentLink::Empty by {
         rewrite(second_link.link, ParentLink::Linked(at(before_read, second->kid)));
         normalize();
@@ -229,19 +229,19 @@ int32 caller(struct parent* first, struct parent* second, struct child* kid) {
     step();
     have second->kid == kid;
     have observed == kid->payload;
-    have observed == second->kid->payload by { rewrite(second->kid, kid); solve(); }
+    have observed == second->kid->payload by { rewrite(second->kid, kid); close(); }
     mark detaching;
     let { out: second_out } = step(parent_detach, { link: second_link });
-    have at(detaching, second->kid) == kid by known();
+    have at(detaching, second->kid) == kid by close();
     have at(detaching, second->kid)->payload == at(detaching, second->kid->payload);
-    have observed == at(detaching, second->kid->payload) by known();
+    have observed == at(detaching, second->kid->payload) by close();
     have kid == at(detaching, second->kid) by { close() using { at(detaching, second->kid) == kid; }; }
     have kid->payload == at(detaching, second->kid->payload) by {
         rewrite(kid, at(detaching, second->kid));
-        known();
+        close();
     }
     step();
-    solve();
+    close();
 }
 ```
 

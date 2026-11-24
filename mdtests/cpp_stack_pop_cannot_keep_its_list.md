@@ -79,7 +79,7 @@ theorem length_nonnegative(xs: List<int32>) {
         match xs {
             List::Nil => {
                 unfold(length(List<int32>::Nil));
-                solve();
+                close();
             }
             List::Cons(value, rest) => {
                 apply(ih(rest));
@@ -129,7 +129,7 @@ void Stack<int>::push(int value) {
         to_integer(old(this->count)) == length(old(before.items));
         length(List::Cons(value, old(before.items))) == length(old(before.items)) + 1;
     };
-    solve();
+    close();
 }
 
 bool Stack<int>::pop(int& out) {
@@ -166,13 +166,13 @@ bool Stack<int>::pop(int& out) {
                     unfold(tail);
                     let after = fold(nodes(this->head), { items: List<int32>::Nil });
                     unfold(length(List<int32>::Nil));
-                    have length(tail_items) == 0 by solve();
+                    have length(tail_items) == 0 by close();
                     have to_integer(old(this->count)) == 1 by close() using {
                         to_integer(old(this->count)) == length(List::Cons(value, tail_items));
                         length(List::Cons(value, tail_items)) == length(tail_items) + 1;
                         length(tail_items) == 0;
                     };
-                    solve();
+                    close();
                 },
                 List::Cons(next_value, next_items) => {
                     let { tail: next } = unfold(tail);
@@ -186,7 +186,7 @@ bool Stack<int>::pop(int& out) {
                         to_integer(old(this->count) - 1u64) == to_integer(old(this->count)) - to_integer(1u64);
                         to_integer(old(this->count)) == length(tail_items) + 1;
                     };
-                    solve();
+                    close();
                 },
             }
         },

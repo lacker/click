@@ -41,17 +41,17 @@ verifying "guarded_resource_mutex_flow.c";
 void inner(struct counter *counter) {
     owns mutex_guard(&counter->mu);
 } by {
-    have held(&counter->mu) by solve();
+    have held(&counter->mu) by close();
 }
 
 void keep(struct counter *counter) {
     owns mutex_guard(&counter->mu);
 } by {
-    have held(&counter->mu) by solve();
+    have held(&counter->mu) by close();
     step(inner);
-    have held(&counter->mu) by solve();
+    have held(&counter->mu) by close();
     step();
-    solve();
+    close();
 }
 
 int32 read_counter(struct counter *counter) {
@@ -69,7 +69,7 @@ int32 read_counter(struct counter *counter) {
     step();
     step();
     step();
-    solve();
+    close();
 }
 ```
 

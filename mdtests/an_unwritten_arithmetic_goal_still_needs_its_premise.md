@@ -41,7 +41,7 @@ void f(int32* q) {
         Chain::Link(at, v, rest) => {
             have chain_size(Chain::Link(at, v, rest)) == 1 + chain_size(rest) by {
                 unfold(chain_size(Chain::Link(at, v, rest)));
-                known();
+                close();
             }
             have weight(wrap(at, v, rest)) == chain_size(rest) + 2 by {
                 unfold(wrap(at, v, rest));

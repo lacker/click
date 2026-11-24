@@ -47,7 +47,7 @@ void bump_n(struct cell* p, int32 n) {
         invariant i <= n;
         invariant d.count == old(c.count) + i;
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             unfold(d);
             step();
@@ -55,7 +55,7 @@ void bump_n(struct cell* p, int32 n) {
             let d = fold(counter(p), { count: old(c.count) + i });
         }
     }
-    have i == n by solve();
+    have i == n by close();
 }
 ```
 

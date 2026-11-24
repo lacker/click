@@ -2,13 +2,13 @@
 
 ```click
 theorem identity(n: Integer) {
-    ensures n == n by solve();
+    ensures n == n by close();
 }
 
 theorem implicit_machine_argument(a: uint32) {
     ensures 0 == 0 by {
         apply(identity(a));
-        solve();
+        close();
     }
 }
 ```

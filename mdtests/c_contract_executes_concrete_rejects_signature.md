@@ -27,13 +27,13 @@ void increment(int32 state) {
     unfold(first);
     step_until(function.exit);
     let first = fold(Counter(), { model: Mark::Set, revision: 1 });
-    solve();
+    close();
 }
 
 theorem increment_is_exact() executes increment(int32* state) {
     ensures Exact(&increment) as { cell: c } by {
         step(increment, { first: c });
-        solve();
+        close();
     }
 }
 ```

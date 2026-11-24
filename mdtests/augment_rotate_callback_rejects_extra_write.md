@@ -70,19 +70,19 @@ void clobber(struct node* old, struct node* new) {
 } by {
     // The borrowed shape exposes both child links and their combined span.
     observe(shape(new));
-    have separate(memory(old->left), shape(new)) by { known(); }
+    have separate(memory(old->left), shape(new)) by { close(); }
     apply(click::separation::contains_refl(memory(old->left)));
     apply(click::separation::separate_restrict(memory(old->left), shape(new), memory(old->left), memory(new->left)));
     apply(click::separation::separate_restrict(memory(old->left), shape(new), memory(old->left), memory(new->right)));
     apply(click::separation::separate_star(memory(new->left), memory(new->right), memory(old->left)));
     apply(click::separation::contains_joined_ranges(new as (int32 *), 0, 2, 4));
-    have contains(memory(new->left) * memory(new->right), memory((new as (int32 *))[0..4])) by { known(); }
+    have contains(memory(new->left) * memory(new->right), memory((new as (int32 *))[0..4])) by { close(); }
     apply(click::separation::separate_restrict(memory(new->left) * memory(new->right), memory(old->left), memory((new as (int32 *))[0..4]), memory(old->left)));
     apply(click::separation::separate_star(memory((new as (int32 *))[0..4]), memory(new->left), memory(old->left)));
     apply(click::separation::separate_star(memory((new as (int32 *))[0..4]) * memory(new->left), memory(new->right), memory(old->left)));
     apply(click::separation::separate_symm(memory((new as (int32 *))[0..4]) * memory(new->left) * memory(new->right), memory(old->left)));
     step_until(function.exit);
-    solve();
+    close();
 }
 
 struct node* rotate_left(
@@ -111,9 +111,9 @@ struct node* rotate_left(
     // Carry the untouched link reads across each store before folding.
     step_until(statement(2).entry);
     have defined(node->left) by { normalize(); }
-    have separate(memory(node->left), memory(node->right)) by { known(); }
+    have separate(memory(node->left), memory(node->right)) by { close(); }
     have defined(pivot->right) by { normalize(); }
-    have separate(memory(pivot->right), memory(node->right)) by { known(); }
+    have separate(memory(pivot->right), memory(node->right)) by { close(); }
     mark before_right;
     step_until(statement(3).entry);
     have separate(statement(2).footprint, memory(node->left)) by {
@@ -125,12 +125,12 @@ struct node* rotate_left(
     }
     have defined(pivot->right) by { preserve(memory(pivot->right), statement(2)); }
 
-    have separate(memory(node->left), memory(pivot->left)) by { known(); }
+    have separate(memory(node->left), memory(pivot->left)) by { close(); }
     have defined(node->right) by { normalize(); }
     have node->right == middle by { normalize(); }
-    have separate(memory(node->right), memory(pivot->left)) by { known(); }
+    have separate(memory(node->right), memory(pivot->left)) by { close(); }
     have defined(pivot->right) by { normalize(); }
-    have separate(memory(pivot->right), memory(pivot->left)) by { known(); }
+    have separate(memory(pivot->right), memory(pivot->left)) by { close(); }
     mark before_left;
     step_until(statement(4).entry);
     have separate(statement(3).footprint, memory(node->left)) by {
@@ -144,7 +144,7 @@ struct node* rotate_left(
     have node->right == at(before_left, node->right) by { preserve(memory(node->right), statement(3)); }
     have node->right == middle by {
         rewrite(node->right, at(before_left, node->right));
-        known();
+        close();
     }
     have pivot->left == node by { normalize(); }
     have separate(statement(3).footprint, memory(pivot->right)) by {
@@ -156,7 +156,7 @@ struct node* rotate_left(
     fold(shape(pivot));
     step();
     step();
-    solve();
+    close();
 }
 
 struct node* rotate_clobber(struct node* node) {
@@ -177,7 +177,7 @@ struct node* rotate_clobber(struct node* node) {
     ensures 0 <= result->augmented;
     ensures result->augmented <= 1000;
 } by {
-    have AugmentRotate(&clobber) by { solve(); }
+    have AugmentRotate(&clobber) by { close(); }
     step_until(function.exit);
 }
 ```

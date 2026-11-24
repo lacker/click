@@ -25,7 +25,7 @@ int32 read_cell(int32* p) {
         fold(c);
     }
     step_until(function.exit);
-    solve();
+    close();
 }
 
 int32 read_at_return(int32* p) {
@@ -36,7 +36,7 @@ int32 read_at_return(int32* p) {
         step_until(function.exit);
         fold(c);
     }
-    solve();
+    close();
 }
 ```
 

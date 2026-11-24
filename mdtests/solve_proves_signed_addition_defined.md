@@ -12,7 +12,7 @@ theorem addition_defined(total: int32, b: int32) {
     requires b <= 255;
     ensures defined(total + b) by {
         have defined(total + b);
-        known();
+        close();
     }
 }
 ```

@@ -19,7 +19,7 @@ function count(t: Tree) -> int32 decreases t {
 }
 
 theorem unknown_child(v: int32, l: Tree, r: Tree) {
-    ensures count(Tree::Node(v, l, r)) == 1 by solve();
+    ensures count(Tree::Node(v, l, r)) == 1 by close();
 }
 ```
 

@@ -74,7 +74,7 @@ void release_run(int32* data, int32* occupied, int32 capacity, int32 start, int3
         invariant start <= i;
         decreases i - start;
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             let { next: n } = unfold(w);
             have n == i;
@@ -102,13 +102,13 @@ void release_run(int32* data, int32* occupied, int32 capacity, int32 start, int3
                     have to_integer(i + 1) <= to_integer(k);
                     have n <= k by {
                         rewrite(n, at(opened, i));
-                        known();
+                        close();
                     }
                     have at(opened, occupied[k]) == 0 by {
                         instantiate(forall (k: int32) {
                             n <= k and k < end implies at(opened, occupied[k]) == 0
                         }, k);
-                        known();
+                        close();
                     }
                     have 0 < k;
                     have 0 <= k;
@@ -130,18 +130,18 @@ void release_run(int32* data, int32* occupied, int32 capacity, int32 start, int3
                     have occupied[k] == at(loop(0).statement(1).entry, occupied[k]) by {
                         preserve(memory(occupied[k]), loop(0).statement(1));
                     }
-                    known();
+                    close();
                 } else {
                     have i == k;
                     have k == i;
                     rewrite(k, i);
-                    known();
+                    close();
                 }
             }
-            have at(opened, i) <= end by known();
+            have at(opened, i) <= end by close();
             have i <= end by {
                 have to_integer(at(opened, i) - 1) <= to_integer(end);
-                known();
+                close();
             }
             fold(arena_window(data, occupied, capacity, start, end)[i]);
             let w = fold(arena_window(data, occupied, capacity, start, end), { next: i });
@@ -165,7 +165,7 @@ void release_run(int32* data, int32* occupied, int32 capacity, int32 start, int3
     have w.next == start by {
         rewrite(w.next, i);
         rewrite(i, start);
-        known();
+        close();
     }
 }
 ```

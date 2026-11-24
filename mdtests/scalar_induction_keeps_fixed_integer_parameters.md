@@ -17,15 +17,15 @@ theorem carry_seed_returns_the_same_integer(n: int32, seed: Integer) {
         let ih = induct(n);
         if n <= 0 {
             unfold(carry_seed(n, seed));
-            solve();
+            close();
         } else {
-            have 0 < n by solve();
+            have 0 < n by close();
             have 0 <= to_integer(n - 1) by close() using { 0 < n; };
             have to_integer(n - 1) < 2147483647 by close() using { 0 < n; };
             have to_integer(n - 1) < to_integer(n);
             apply(ih(n - 1));
             unfold(carry_seed(n, seed));
-            solve();
+            close();
         }
     }
 }

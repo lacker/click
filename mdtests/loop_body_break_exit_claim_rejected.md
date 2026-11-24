@@ -35,13 +35,13 @@ int32 break_once_claim(int32 n) {
     loop {
         invariant i >= 0;
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             step();
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

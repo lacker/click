@@ -30,10 +30,10 @@ void mark(int32 *a, int32 n, int32 i, int32 j, int32 k) {
     ensures a[i] == 1 and a[j] == 2 and a[k] == 3;
 } by {
     step_until(function.exit);
-    have a[i] == 1 by known();
-    have a[j] == 2 by known();
-    have a[k] == 3 by known();
-    known();
+    have a[i] == 1 by close();
+    have a[j] == 2 by close();
+    have a[k] == 3 by close();
+    close();
 }
 ```
 

@@ -5,7 +5,7 @@ theorem same_measure(n: uint64) {
     ensures n == n by {
         let ih = induct(n);
         apply(ih(n));
-        solve();
+        close();
     }
 }
 ```

@@ -175,7 +175,7 @@ fn native_construction_return_contracts_forward_hidden_storage() {
             .find(|theorem| theorem.function_block.signature().name() == name)
             .unwrap();
         expanded = expanded.replacen(
-            "by { step_until(function.exit); solve(); }",
+            "by { step_until(function.exit); close(); }",
             &theorem.expanded_proof_source().unwrap(),
             1,
         );
@@ -205,7 +205,7 @@ struct Node factory(int32 input) {
     )
     .unwrap();
     let expanded = source.replacen(
-        "by { step_until(function.exit); solve(); }",
+        "by { step_until(function.exit); close(); }",
         &verified[0].expanded_proof_source().unwrap(),
         1,
     );

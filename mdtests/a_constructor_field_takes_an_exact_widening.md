@@ -26,7 +26,7 @@ function wrap_let(x: int32) -> Seq<int64> {
 theorem wrapped(x: int32) {
     ensures wrap(x) == Seq<int64>::Cons(x, Seq<int64>::Nil) by {
         unfold(wrap(x));
-        solve();
+        close();
     }
 }
 ```

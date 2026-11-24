@@ -917,7 +917,7 @@ fn expand_loop_phase_claim(
             ))
         })?
         .to_vec();
-    // A phase with nothing to prove is checked by `known();`, as its
+    // A phase with nothing to prove is checked by `close();`, as its
     // expansion by location writes it: a `by` block holds at least one tactic.
     let tactics = if tactics.is_empty() && phase != "otherwise" {
         vec![ProofTactic::Known]
@@ -1672,13 +1672,13 @@ fn expand_c_tactic_source_at_context(
     let (span, replacement) = selected.replacement(click_source, &file, &replacement_tactics)?;
     // A tactic that contributed no step is removed, but a `by { ... }` block
     // must hold at least one tactic. When it is the only tactic of its
-    // block, the block keeps `known();`, the step a phase with nothing
+    // block, the block keeps `close();`, the step a phase with nothing
     // to prove is checked by.
     let replacement = if replacement.is_empty()
         && click_source[..span.start].trim_end().ends_with('{')
         && click_source[span.end..].trim_start().starts_with('}')
     {
-        printing::known_call().to_string()
+        printing::CLOSE_CALL.to_string()
     } else {
         replacement
     };
@@ -3785,7 +3785,7 @@ fn expand_selected_tactics_context(
             ),
             TacticSourceEdit::Append(at) => (at..at, appended_tail(&tactics)),
             TacticSourceEdit::PartialProofClause(span) if tactics.is_empty() => {
-                (span, format!("by {{ {} }}", printing::known_call()))
+                (span, format!("by {{ {} }}", printing::CLOSE_CALL))
             }
             TacticSourceEdit::PartialProofClause(span) => (
                 span,
@@ -3820,7 +3820,7 @@ fn expand_selected_tactics_context(
             && source[..span.start].trim_end().ends_with('{')
             && source[span.end..].trim_start().starts_with('}')
         {
-            printing::known_call().to_string()
+            printing::CLOSE_CALL.to_string()
         } else {
             replacement
         };
@@ -3881,7 +3881,7 @@ fn expand_selected_tactics_context(
         }
     }
     for offset in empty_blocks.into_iter().rev() {
-        let filler = format!(" {} ", printing::known_call());
+        let filler = format!(" {} ", printing::CLOSE_CALL);
         rewritten.insert_str(offset, &filler);
         for span in &mut replacement_spans {
             if span.start >= offset {
@@ -3935,7 +3935,7 @@ impl LocatedSourceTactic {
             // A whole phase can contribute no steps, but its written block
             // must still contain a checked tactic.
             TacticSourceEdit::PartialProofClause(span) if replacement_tactics.is_empty() => {
-                (span, format!("by {{ {} }}", printing::known_call()))
+                (span, format!("by {{ {} }}", printing::CLOSE_CALL))
             }
             TacticSourceEdit::PartialProofClause(span) => (span, certificate()?),
             TacticSourceEdit::WholeProof(edit) => {
@@ -5686,7 +5686,7 @@ struct FlatSourceTactic<'t> {
 #[derive(Clone, Copy)]
 enum FlatTactic<'t> {
     Written(&'t ProofTactic),
-    /// A frontier-local loop phase proved by one smart tactic (`by solve()`).
+    /// A frontier-local loop phase proved by one smart tactic (`by close()`).
     Phase(SmartTactic, usize),
 }
 

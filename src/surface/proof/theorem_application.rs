@@ -1552,7 +1552,7 @@ mod observed_integer_argument_tests {
         let source = r#"
             theorem equal_arguments(a: Integer, b: Integer) {
                 requires a == b;
-                ensures a == b by { known(); }
+                ensures a == b by { close(); }
             }
             theorem reverse_requirement(a: Integer, b: Integer) {
                 requires b == a;
@@ -1613,11 +1613,11 @@ mod observed_integer_argument_tests {
     #[test]
     fn pure_argument_obligations_reuse_ambient_evaluation_evidence() {
         let source = r#"
-            theorem identity(value: int32) { ensures value == value by known(); }
+            theorem identity(value: int32) { ensures value == value by close(); }
             theorem use_argument(x: int32) {
                 requires 0 <= x;
                 requires x < 10;
-                ensures x == x by { apply(identity(x + 1)); known(); }
+                ensures x == x by { apply(identity(x + 1)); close(); }
             }
         "#;
         verify_c_sources(source, &[]).unwrap();
@@ -1632,10 +1632,10 @@ mod observed_integer_argument_tests {
     #[test]
     fn machine_theorem_arguments_retain_domains_in_selected_expansion() {
         let source = r#"
-            theorem reflexive(z: int32) { ensures z == z by solve(); }
+            theorem reflexive(z: int32) { ensures z == z by close(); }
             theorem observed(x: int32) {
                 requires defined(x + 1);
-                ensures x == x by { apply(reflexive(x + 1)); solve(); }
+                ensures x == x by { apply(reflexive(x + 1)); close(); }
             }
         "#;
         verify_c_sources(source, &[]).unwrap();
@@ -1658,7 +1658,7 @@ mod observed_integer_argument_tests {
 
     #[test]
     fn integer_theorem_observed_arguments_preserve_types_guards_and_expansion() {
-        let prefix = "theorem reflexive(z: Integer) { ensures z == z by solve(); } ";
+        let prefix = "theorem reflexive(z: Integer) { ensures z == z by close(); } ";
         for (ty, expression, guard) in [
             ("int32", "x + 1", "defined(x + 1)"),
             ("int64", "x + 1i64", "defined(x + 1i64)"),
@@ -1701,7 +1701,7 @@ mod observed_integer_argument_tests {
             "to_integer(x / -1)",
         ] {
             let source = format!(
-                "{prefix} theorem refused(x: int32) {{ ensures x == x by {{ apply(reflexive({argument})); solve(); }} }}"
+                "{prefix} theorem refused(x: int32) {{ ensures x == x by {{ apply(reflexive({argument})); close(); }} }}"
             );
             let Err(error) = verify_c_sources(&source, &[]) else {
                 panic!("invalid argument accepted: {argument}");
@@ -1729,10 +1729,10 @@ theorem nested_count(value: int32) {
         unfold(count(Count::At(value - 1)));
         have to_integer(value - 1) == to_integer(value) - 1;
         have to_integer(count(Count::At(value - 1))) == to_integer(value) - 1 by {
-            rewrite(count(Count::At(value - 1)), value - 1); known();
+            rewrite(count(Count::At(value - 1)), value - 1); close();
         }
         apply(count_less(value, Count::At(value - 1)));
-        known();
+        close();
     }
 }
 "#;
@@ -1782,7 +1782,7 @@ theorem nested_count(value: int32) {
                 theorem guarded(x: int32, y: int32) {{
                     requires defined(x + y);
                     requires to_integer(count_value({argument})) == 0;
-                    ensures to_integer(count_value({argument})) <= 0 by {{ apply(known_count({argument})); known(); }}
+                    ensures to_integer(count_value({argument})) <= 0 by {{ apply(known_count({argument})); close(); }}
                 }}
             "#
             );
@@ -1811,7 +1811,7 @@ theorem nested_count(value: int32) {
     #[test]
     fn integer_theorem_arguments_capture_current_entry_state_and_result_values() {
         let parsed = crate::surface::parser::parse_file_items(
-            "theorem reflexive(z: Integer) { ensures z == z by solve(); }",
+            "theorem reflexive(z: Integer) { ensures z == z by close(); }",
         )
         .unwrap();
         let theorem = &parsed.theorem_definitions()[0];

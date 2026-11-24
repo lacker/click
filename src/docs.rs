@@ -287,8 +287,7 @@ pub fn lookup(name: &str) -> Result<String, String> {
     // The parser refuses these older spellings; their docs are the
     // replacement's.
     let name = match name {
-        "assumption" => "known",
-        "arithmetic" => "close",
+        "assumption" | "arithmetic" | "known" | "solve" => "close",
         "execute_until" => "step_until",
         "auto" | "execute" => "implicit",
         name => name,
@@ -560,16 +559,16 @@ mod tests {
     fn a_written_tactic_selects_its_class() {
         let class = |written| written_tactic_class(written).map(|(_, class)| class);
         assert_eq!(class("normalize();"), Some(TacticClass::Simple));
-        assert_eq!(class("solve();"), Some(TacticClass::Smart));
+        assert_eq!(class("close();"), Some(TacticClass::Smart));
         assert_eq!(class("apply(t(x));"), Some(TacticClass::Simple));
         assert_eq!(
             class("apply(a == b implies c == d);"),
             Some(TacticClass::Simple)
         );
         assert_eq!(class("step();"), Some(TacticClass::Simple));
-        assert_eq!(class("step() by { solve(); }"), Some(TacticClass::Control));
+        assert_eq!(class("step() by { close(); }"), Some(TacticClass::Control));
         assert_eq!(
-            class("have x == 1 by { solve(); }"),
+            class("have x == 1 by { close(); }"),
             Some(TacticClass::Control)
         );
         assert_eq!(class("frobnicate();"), None);
@@ -583,7 +582,7 @@ mod tests {
         assert!(!written_tactic_elides_argument(
             "apply(a == b implies c == d) using { a == b; };"
         ));
-        assert!(!written_tactic_elides_argument("solve();"));
+        assert!(!written_tactic_elides_argument("close();"));
         assert!(!written_tactic_elides_argument("close();"));
         assert!(!written_tactic_elides_argument(
             "close() using { a == b; };"

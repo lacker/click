@@ -19,7 +19,7 @@ theorem hypothesis_owes_the_range_span(v: int32[], lo: int32, hi: int32) {
     ensures 0 <= hi by {
         let ih = induct(hi);
         if hi <= lo {
-            known();
+            close();
         } else {
             have lo < hi;
             have 0 <= to_integer(hi - 1) by { close() using { 0 <= lo; lo < hi; }; }
@@ -30,7 +30,7 @@ theorem hypothesis_owes_the_range_span(v: int32[], lo: int32, hi: int32) {
             }
             have viewable(v[lo..hi - 1]);
             apply(ih(hi - 1));
-            known();
+            close();
         }
     }
 }

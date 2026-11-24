@@ -23,7 +23,7 @@ int drain(int n) {
         decreases n;
         invariant n >= 0;
     }
-    have at(loop(0).test().entry, n) == 0 by solve();
+    have at(loop(0).test().entry, n) == 0 by close();
 }
 ```
 

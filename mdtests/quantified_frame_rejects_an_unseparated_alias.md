@@ -20,7 +20,7 @@ void mark_other(int32 *a, int32 *b, int32 j, int32 n) {
     ensures forall (k: int32) { 0 <= k and k < n implies a[k] == old(a[k]) };
 } by {
     step();
-    have forall (k: int32) { 0 <= k and k < n implies a[k] == old(a[k]) } by { solve(); }
+    have forall (k: int32) { 0 <= k and k < n implies a[k] == old(a[k]) } by { close(); }
 }
 ```
 

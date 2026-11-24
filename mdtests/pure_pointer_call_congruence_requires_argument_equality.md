@@ -10,10 +10,10 @@ function handle_pointer(handle: Handle) -> int32* {
 }
 theorem pointer_alias(left: Handle, right: Handle, held: int32*) {
     requires held == handle_pointer(left);
-    ensures held == handle_pointer(right) by { known(); }
+    ensures held == handle_pointer(right) by { close(); }
 }
 ```
 
 ```expect
-fail: known
+fail: could not establish `held == handle_pointer(right)`
 ```

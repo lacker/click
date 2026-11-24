@@ -8,7 +8,7 @@ without meeting the file theorem's requirement `x == 5`.
 ```click
 theorem integer_range_fold_empty(x: Integer) {
     requires x == 5;
-    ensures x == 5 by known();
+    ensures x == 5 by close();
 }
 
 theorem uses(n: Integer) {

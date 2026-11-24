@@ -14,7 +14,7 @@ void init(struct buffer* owner, int32* data) {
     consumes *owner;
     produces buffer(owner);
     ensures owner->data == data;
-} by { step_until(function.exit); fold(buffer(owner)); solve(); }
+} by { step_until(function.exit); fold(buffer(owner)); close(); }
 void probe(struct buffer* owner, int32* data) {
     consumes *owner;
     produces buffer(owner);

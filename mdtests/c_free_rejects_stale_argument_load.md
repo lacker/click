@@ -28,10 +28,10 @@ int32 free_then_read(int32 data[], int32 count) {
 } by {
     unfold(allocated_int32s(data, count));
     step_until(function.exit);
-    solve();
+    close();
 }
 ```
 
 ```expect
-fail: checked outcome `solve` search did not retain a complete proof
+fail: checked outcome `close` search did not retain a complete proof
 ```

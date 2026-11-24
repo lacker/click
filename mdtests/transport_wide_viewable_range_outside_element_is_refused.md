@@ -25,16 +25,16 @@ uint64 f(uint8 bytes[], uint64 n) {
             intro();
             intro();
             have 0u64 <= k by { normalize(); }
-            have to_integer(k) < to_integer(n + 1u64) by { known(); }
+            have to_integer(k) < to_integer(n + 1u64) by { close(); }
             have contains(memory(bytes[0u64..n + 1u64]), memory(bytes[k])) by {
                 apply(click::separation::contains_element(bytes, 0u64, n + 1u64, k));
             }
-            known();
+            close();
         }
     }
 }
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: could not establish `to_integer(k) < to_integer((n + 1u64))`
 ```

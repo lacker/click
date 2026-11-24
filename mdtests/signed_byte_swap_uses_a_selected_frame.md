@@ -19,10 +19,10 @@ void swap(int8* p, uint64 n) {
     requires n <= 1000u64;
     ensures p[0] == old(p[n - 1]);
 } by {
-    have 0u64 < n - 1u64 by { solve(); }
+    have 0u64 < n - 1u64 by { close(); }
     step_until(function.exit);
     have p[0] == old(p[n - 1]) by {
-        known();
+        close();
     }
 }
 ```

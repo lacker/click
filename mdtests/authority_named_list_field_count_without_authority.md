@@ -26,22 +26,22 @@ void bump(int32* pool, int32* p) {
     owns member: ticket(pool, p);
     ensures member.model == old(member.model);
     ensures p[0] == 7;
-} by { unfold(member); step(); fold(member); step_until(function.exit); solve(); }
+} by { unfold(member); step(); fold(member); step_until(function.exit); close(); }
 int32 run() { ensures result == 0 or result == 9; } by {
     step(); step(); step(); step();
-    branch { true => { step_until(function.exit); solve(); } false => {} }
+    branch { true => { step_until(function.exit); close(); } false => {} }
     step(); step();
     fold(authority(ticket(&pool, _)));
     let first = fold(ticket(&pool, p), { model: List<int32>::Cons(1, List<int32>::Nil) });
     let second = fold(ticket(&pool, p + 1), { model: List<int32>::Cons(2, List<int32>::Nil) });
     fold(control(&pool));
     step(bump, { member: first });
-    have first.model == List<int32>::Cons(1, List<int32>::Nil) by solve();
-    have second.model == List<int32>::Cons(2, List<int32>::Nil) by solve();
-    have count(ticket(&pool, _)) == 2 by solve();
+    have first.model == List<int32>::Cons(1, List<int32>::Nil) by close();
+    have second.model == List<int32>::Cons(2, List<int32>::Nil) by close();
+    have count(ticket(&pool, _)) == 2 by close();
     unfold(first); unfold(second);
     unfold(authority(ticket(&pool, _)));
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }
 ```
 

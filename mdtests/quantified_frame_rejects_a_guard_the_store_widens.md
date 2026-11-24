@@ -22,7 +22,7 @@ void clear(int32 *v, int32 *w, int32 n, int32 i) {
     requires forall (k: int32) { 0 <= k and k < n and v[k] == 0 implies w[k] == 1 };
     ensures forall (k: int32) { 0 <= k and k < n and v[k] == 0 implies w[k] == 1 };
 } by {
-    have forall (k: int32) { 0 <= k and k < n and old(v[k]) == 0 implies old(w[k]) == 1 } by known();
+    have forall (k: int32) { 0 <= k and k < n and old(v[k]) == 0 implies old(w[k]) == 1 } by close();
     have contains(memory(v[0..n]), memory(v[i])) by {
         apply(click::separation::contains_element(v, 0, n, i));
     }
@@ -33,7 +33,7 @@ void clear(int32 *v, int32 *w, int32 n, int32 i) {
         apply(click::separation::separate_restrict(memory(v[0..n]), memory(w[0..n]), memory(v[i]), memory(w[0..n])));
     }
     step();
-    have forall (k: int32) { 0 <= k and k < n and v[k] == 0 implies w[k] == 1 } by { solve(); }
+    have forall (k: int32) { 0 <= k and k < n and v[k] == 0 implies w[k] == 1 } by { close(); }
 }
 ```
 

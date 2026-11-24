@@ -41,7 +41,7 @@ unsigned count(int n) {
         invariant c <= 5u32;
         invariant left >= 0;
     }
-    have at(loop(0).test().entry, left) >= 0 by solve();
+    have at(loop(0).test().entry, left) >= 0 by close();
 }
 ```
 

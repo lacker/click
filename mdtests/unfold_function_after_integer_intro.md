@@ -10,14 +10,14 @@ theorem unfold_an_introduced_integer(rest: Walk) {
     ensures forall (d: Integer) { black(Walk::At(d, rest)) == 1 } by {
         intro();
         unfold(black(Walk::At(d, rest)));
-        known();
+        close();
     }
 }
 theorem unfold_a_parameter(d: Integer, rest: Walk) {
     requires black(rest) == 1;
     ensures black(Walk::At(d, rest)) == 1 by {
         unfold(black(Walk::At(d, rest)));
-        known();
+        close();
     }
 }
 ```

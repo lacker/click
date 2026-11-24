@@ -21,10 +21,10 @@ void keep(struct node* p) {
     owns held: token(p);
     ensures held.model == old(held.model);
 } by {
-    have is_a<struct node>(p) by known();
+    have is_a<struct node>(p) by close();
     unfold(held);
     step();
-    have Ref::At(p) == Ref::At(p) by { solve(); }
+    have Ref::At(p) == Ref::At(p) by { close(); }
     let held = fold(token(p), { model: old(held.model) });
 }
 ```

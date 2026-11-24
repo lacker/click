@@ -6,7 +6,7 @@ theorem integer_exists_choose_scope(candidate: Integer) {
     ensures exists (k: Integer) { k == k } by {
         let candidate = obtain(exists (candidate: Integer) { candidate == candidate });
         witness(candidate);
-        known();
+        close();
     }
 }
 ```

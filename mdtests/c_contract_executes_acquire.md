@@ -41,11 +41,11 @@ theorem lift(acquire: int32* (*)()) executes acquire() {
             unfold(MaybeRaw(result));
             fold(Cell(result));
             fold(MaybeCell(result));
-            solve();
+            close();
         } else {
             unfold(MaybeRaw(result));
             fold(MaybeCell(result));
-            solve();
+            close();
         }
     }
 }
@@ -66,12 +66,12 @@ int32* read_acquired(int32* (*acquire)(), int32* value) {
         step_until(function.exit);
         fold(Cell(result));
         fold(MaybeCell(result));
-        solve();
+        close();
     } else {
         unfold(MaybeCell(program::cell));
         step_until(function.exit);
         fold(MaybeCell(result));
-        solve();
+        close();
     }
 }
 ```

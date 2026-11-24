@@ -7,7 +7,7 @@ Once the arm has unfolded `t` and folded the produced instance under another
 name, `t.model` names nothing at all in the arm's later states: `t` was
 consumed and never refolded.
 
-The closing `solve()` here proves `u.model == old(t.model)` from the arm's
+The closing `close()` here proves `u.model == old(t.model)` from the arm's
 equation. The proof verified, but its expansion cited the equation by the
 written spelling, and rechecking the certificate then failed to lower that
 `rewrite` with `the kernel lowering hit Paths`, so `click audit` disagreed
@@ -22,7 +22,7 @@ written with `owns t` and a refold under the same name never had the
 problem, because `t.model` then names the refolded instance and the lookup
 already re-lowered it.
 
-`src/surface/tests/expansion_tests.rs` expands the `solve()` site of this
+`src/surface/tests/expansion_tests.rs` expands the `close()` site of this
 fixture and reverifies the result; the mdtest gate checks verification only.
 
 ```c filename=consumed_arm.c
@@ -81,7 +81,7 @@ unsigned long peek(struct node* p) {
                 model: Tree::Node(id, color, left_model),
                 left: l
             });
-            solve();
+            close();
         },
     }
 }

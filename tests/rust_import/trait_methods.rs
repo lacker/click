@@ -98,7 +98,7 @@ fn charon_trait_method_implementations_refine_their_interface() {
             None,
             &[(
                 "        ensures scale < result and result <= 3001;\n    }\n}",
-                "        ensures scale < result and result <= 3001;\n    } by { solve(); }\n}",
+                "        ensures scale < result and result <= 3001;\n    } by { close(); }\n}",
             )][..],
             "external function contracts cannot carry proof or decreases clauses",
         ),

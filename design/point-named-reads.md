@@ -28,7 +28,7 @@ version is the same place the walk stops. On the gate harnesses (local branch
 | suffix version, skipped when the memory holds the cell | 14 of 59 | not run |
 
 Almost every failure is a frame step: "this value is unchanged across that
-store or call". Either `known` does not find a premise that prints like the
+store or call". Either the direct check in `close()` does not find a premise that prints like the
 goal, or the implicit tail exhausts its budget on that question.
 
 The cause is not the rule. Today a read can be named in three ways, and each

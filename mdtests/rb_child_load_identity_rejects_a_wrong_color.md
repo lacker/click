@@ -101,21 +101,21 @@ void reparent_left_child(struct rb_node* victim, struct rb_node* new_node,
             match l.model {
                 RbTree::Empty => { contradiction(l.model == RbTree::Empty); },
                 RbTree::Node(lid, lc, ll, lr) => {
-                    have separate(memory((new_node as (int32 *))[0..2]), memory(victim->rb_left)) by known();
-                    have separate(memory((new_node as (int32 *))[2..4]), memory(victim->rb_left)) by known();
-                    have separate(memory((new_node as (int32 *))[4..6]), memory(victim->rb_left)) by known();
+                    have separate(memory((new_node as (int32 *))[0..2]), memory(victim->rb_left)) by close();
+                    have separate(memory((new_node as (int32 *))[2..4]), memory(victim->rb_left)) by close();
+                    have separate(memory((new_node as (int32 *))[4..6]), memory(victim->rb_left)) by close();
                     step();
-                    have separate(statement(0).region(0).footprint, memory(victim->rb_left)) by known();
+                    have separate(statement(0).region(0).footprint, memory(victim->rb_left)) by close();
                     have victim->rb_left == at(statement(0).region(0).entry, victim->rb_left) by {
                         preserve(memory(victim->rb_left), statement(0).region(0));
                     }
                     step();
-                    have separate(statement(0).region(1).footprint, memory(victim->rb_left)) by known();
+                    have separate(statement(0).region(1).footprint, memory(victim->rb_left)) by close();
                     have victim->rb_left == at(statement(0).region(1).entry, victim->rb_left) by {
                         preserve(memory(victim->rb_left), statement(0).region(1));
                     }
                     step();
-                    have separate(statement(0).region(2).footprint, memory(victim->rb_left)) by known();
+                    have separate(statement(0).region(2).footprint, memory(victim->rb_left)) by close();
                     have victim->rb_left == at(statement(0).region(2).entry, victim->rb_left) by {
                         preserve(memory(victim->rb_left), statement(0).region(2));
                     }
@@ -126,11 +126,11 @@ void reparent_left_child(struct rb_node* victim, struct rb_node* new_node,
                         left: lleft, right: lright
                     }) {
                         requires (lid->__rb_parent_color & 1) == color_bit(Color::Black) by {
-                            have (lid->__rb_parent_color & 1) == color_bit(Color::Black) by known();
-                            known();
+                            have (lid->__rb_parent_color & 1) == color_bit(Color::Black) by close();
+                            close();
                         }
                     }
-                    solve();
+                    close();
                 },
             }
         },

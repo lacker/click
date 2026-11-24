@@ -5,7 +5,7 @@ Exact arithmetic does not wrap at a machine boundary.
 ```click quick-solve
 theorem integer_successor_false(z: Integer) {
     ensures z + 1 <= z by {
-        solve();
+        close();
     }
 }
 ```

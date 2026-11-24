@@ -29,7 +29,7 @@ void caller(struct node* p, int* viewed, int* other) {
     requires separate(list(p), memory(viewed[0]));
 } by {
     step() {
-        requires separate(list(p), memory(viewed[0])) by known();
+        requires separate(list(p), memory(viewed[0])) by close();
     }
 }
 ```

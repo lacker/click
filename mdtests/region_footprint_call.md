@@ -7,7 +7,7 @@ void beside_call(int *p, int *q, int *r) { change_both(p, q); }
 
 ```click
 verifying "call.c";
-void change_both(int *p, int *q) { owns *p; owns *q; } by { step(); step(); step(); known(); known(); known(); known(); known(); }
+void change_both(int *p, int *q) { owns *p; owns *q; } by { step(); step(); step(); close(); close(); close(); close(); close(); }
 void beside_call(int *p, int *q, int *r) {
     owns *p;
     owns *q;
@@ -17,8 +17,8 @@ void beside_call(int *p, int *q, int *r) {
     ensures *r == old(*r);
 } by {
     step() {
-        requires separate(memory(p[0..1]), memory(r[0..1])) by known();
-        requires separate(memory(q[0..1]), memory(r[0..1])) by known();
+        requires separate(memory(p[0..1]), memory(r[0..1])) by close();
+        requires separate(memory(q[0..1]), memory(r[0..1])) by close();
     }
     have separate(statement(0).footprint, memory(*r)) by {
         close() using {
@@ -30,8 +30,8 @@ void beside_call(int *p, int *q, int *r) {
         preserve(memory(*r), statement(0));
     }
     step();
-    known(); known(); known();
-    known(); known(); known();
+    close(); close(); close();
+    close(); close(); close();
 }
 ```
 

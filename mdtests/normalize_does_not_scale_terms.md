@@ -5,7 +5,7 @@ about the individual operands.
 
 ```click quick-solve
 theorem distributes_product(x: Integer, y: Integer, z: Integer) {
-    ensures (x + y) * z == x * z + y * z by { solve(); }
+    ensures (x + y) * z == x * z + y * z by { close(); }
 }
 ```
 

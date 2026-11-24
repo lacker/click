@@ -29,16 +29,16 @@ int32 inspect(const uint8* p, int32 n) {
    mark before_decrement;
    step();
    have separate(loop(0).statement(0).footprint, at(before_decrement, memory(p[0..n]))) by {
-    known();
+    close();
    }
    have viewable(at(before_decrement, memory(p[0..n]))) by {
     preserve(at(before_decrement, memory(p[0..n])), loop(0).statement(0));
    }
-   have 0 <= n by solve();
-   have n <= at(before_decrement, n) by solve();
+   have 0 <= n by close();
+   have n <= at(before_decrement, n) by close();
    apply(click::separation::contains_subrange(p, 0, at(before_decrement, n), 0, n));
    apply(click::separation::viewable_restrict(at(before_decrement, memory(p[0..n])), memory(p[0..n])));
-   solve();
+   close();
   }
  }
 }

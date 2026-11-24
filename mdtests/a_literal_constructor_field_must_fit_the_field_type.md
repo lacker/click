@@ -12,7 +12,7 @@ spec enum Seq<T> {
 
 theorem out_of_range() {
     ensures not (Seq<int8>::Cons(300, Seq<int8>::Nil) == Seq<int8>::Nil) by {
-        solve();
+        close();
     }
 }
 ```

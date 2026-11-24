@@ -8,7 +8,7 @@ theorem selected_order(x: int32, y: int32, z: int32, spare: uint64, other: uint6
     requires spare == other;
     requires x == y;
     requires y < z;
-    ensures x < z by solve();
+    ensures x < z by close();
 }
 ```
 

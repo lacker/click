@@ -51,11 +51,11 @@ impl MissedObligation {
 
 impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
     /// Closes the back-edge bundle as `close_invariants() by { ... }` with
-    /// `solve()` on each member. The bundle conjoins its members, balanced for
+    /// `close()` on each member. The bundle conjoins its members, balanced for
     /// wide bundles, and each member may open with a spine of guards from
     /// earlier declarations; that fixed structure is descended by checked
     /// `both` and `intro` steps, and every member below it is closed by
-    /// `solve()` and nothing else. Every step advances this same `Proof`, so
+    /// `close()` and nothing else. Every step advances this same `Proof`, so
     /// the retained certificate is the explicit proof `click expand` prints
     /// and re-verifies.
     pub(in crate::surface::proof) fn plan_invariant_bundle_closure(
@@ -83,7 +83,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
         Ok(result)
     }
 
-    /// One bundle member, closed by `solve()` as the member is spelled: a
+    /// One bundle member, closed by `close()` as the member is spelled: a
     /// declared invariant as written, read at the back edge, and a ranking
     /// member as its `decreases` clause writes it
     /// ([`ranking_descent_surface`]), as a function's exit closes each
@@ -230,7 +230,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
                         .iter()
                         .map(|requirement| {
                             spelling(requirement)
-                                .map(|spelled| format!("    requires {spelled} by solve();"))
+                                .map(|spelled| format!("    requires {spelled} by close();"))
                         })
                         .collect::<Result<Vec<_>, _>>()?
                         .join("\n");
@@ -788,7 +788,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
         }
         let mut search = attempt::search_scope("close invariants body");
         let checkpoint = root.checkpoint();
-        // A bare `close_invariants()` closes each member with `solve()`; an
+        // A bare `close_invariants()` closes each member with `close()`; an
         // explicit source body runs through the source driver exactly once.
         let _ = take_unclosed_bundle_member();
         // Catch every error here; `?` must not skip the obligation
@@ -1025,7 +1025,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
         let result = self.close_bundle_member_by_solve()?;
         if result.is_none() {
             // Keep one bounded, lazy diagnostic for the actual kernel leaf.
-            // It is recorded only after `solve()` has declined; it does not
+            // It is recorded only after `close()` has declined; it does not
             // turn a miss into an error.
             let diagnostic =
                 driver_proof.step_error("checked loop invariant bundle leaf remained open");

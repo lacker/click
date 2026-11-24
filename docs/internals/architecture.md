@@ -122,7 +122,7 @@ resource operations needed for that checking.
 `ProofDriver` interprets source and generated proof trees over the persistent
 `Proof`. It chooses explicit operations or `ProofSearch`, including implicit
 solving for obligations without written proof blocks. Omitted obligation proofs
-invoke the same solver as explicit `solve()`; only scheduling and source
+invoke the same solver as explicit `close()`; only scheduling and source
 attribution differ. `Proof::prepare_step`
 produces the existing candidate and obligations; the driver proves them at the
 original frontier and publishes the retained result through `finish_prepared_step`.

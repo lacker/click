@@ -38,7 +38,7 @@ void loop_owns_clause_frames_other_owned_memory(int32 p[], int32 q[], int32 n) {
         invariant i <= n;
     }
     step();
-    solve();
+    close();
 }
 ```
 

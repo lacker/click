@@ -794,7 +794,7 @@ Supported C surface includes:
   conversion is the operand. The conversion term itself never depends on what
   the proof knows; the identity is reasoning: `normalize using` the two
   bounds, a decision that decides them, and the `signed_int32` certificate
-  step `interval_narrowed_cast` (planned by `solve` and `close() using`) apply
+  step `interval_narrowed_cast` (planned by `close()` and `close() using`) apply
   it, and the conversion of a known constant folds to its residue. A fact
   equating a value with a conversion whose operand the context already places
   in range, such as a callee's guarantee about a narrowed argument, also
@@ -850,7 +850,7 @@ Supported C surface includes:
   `mdtests/c_numeric_character_escapes.md`
 - signed `+`, `-`, `*`, `/`, and `%`; in a proof, `defined(a + b)` or
   `defined(a - b)` over `int32` follows from ordinary Integer range bounds.
-  `solve` expands the range argument and checks the resulting domain
+  `close()` expands the range argument and checks the resulting domain
 - `uint32` `+` and `-` with 32-bit modular results
 - `uint32` `*`, `/`, and `%` with modular multiplication, unsigned division
   and remainder, and division-by-zero undefined behavior
@@ -863,7 +863,7 @@ Supported C surface includes:
   values is defined by their source ranges alone, and constant `int64` order
   facts on the operands discharge the obligation for other operands. In a
   proof, `defined(a + b)` or `defined(a - b)` over `int64` follows from the
-  same range argument; `solve` expands it to ordinary steps
+  same range argument; `close()` expands it to ordinary steps
 - a sum of two `uint32` values widened to `int64` can be bounded using
   explicit operand bounds and ordinary Integer addition laws.
   Narrow unsigned casts retain their source range for subsequent statements
@@ -2059,7 +2059,7 @@ extern int32 first(int32 count, ...args) {
 At the call `first(2, a, b)`, with `int a` and `unsigned int b`, `args` is
 `List::Cons(VarArg::Int(a), List::Cons(VarArg::UInt(b), List::Nil))`. A
 precondition over the list is proved like any other; one that evaluates a
-`match` over the list is proved with `solve()` in a `have` before the step,
+`match` over the list is proved with `close()` in a `have` before the step,
 or with `unfold` when the function is recursive
 (`mdtests/a_variadic_contract_reads_its_variable_arguments.md`). A call
 whose list breaks the precondition is refused with the list spelled out
@@ -2103,7 +2103,7 @@ but a format other than a string literal also needs the stream's write shown
 separate from the caller's view of it, which the abstract `stream` resource
 cannot yet state; a string literal's storage is separate by construction, so
 in practice the format is a literal. For a literal
-format, `solve` evaluates the three functions one level at a time, so a
+format, `close()` evaluates the three functions one level at a time, so a
 caller's proof states the output it expects with no written steps
 (`mdtests/printf_and_fprintf_share_the_streams_write_history.md`,
 `mdtests/fprintf_ignores_arguments_its_format_does_not_convert.md`). A
@@ -2268,14 +2268,14 @@ function: `requires Adds(f, { amount: k });`. A call through `f` then binds
 with `amount` fixed to `3`. An unknown, missing, or repeated name is refused.
 A refinement theorem may conclude a contract with value parameters, fixing
 them as an attachment does: `ensures Adds(&add3, { amount: 3 }) by {
-unfold(Adds(&add3, { amount: 3 })); solve(); }`, whose `unfold(Adds(&add3, { amount: 3 }))` opens the obligation with
+unfold(Adds(&add3, { amount: 3 })); close(); }`, whose `unfold(Adds(&add3, { amount: 3 }))` opens the obligation with
 `amount` bound to `3`. An abstract refinement fixes the values of both its
 source fact and its conclusion, `requires Adds(f, { amount: 3 }); ensures
 Shifts(f, { offset: 3 })`. See
 `mdtests/named_contract_value_parameter_refinement_theorem.md` and
 `mdtests/named_contract_value_parameter_contract_refinement_theorem.md`. An
 execution theorem fixes them the same way, `theorem t() executes add3(int32
-x) { ensures Adds(&add3, { amount: 3 }) by { step(); solve(); } }` or, from a
+x) { ensures Adds(&add3, { amount: 3 }) by { step(); close(); } }` or, from a
 source fact, `requires Adds(f, { amount: 3 }); ensures Shifts(f, { offset: 3
 })`: its one checked call is proved with the target's value parameters at
 the conclusion's values
@@ -2316,7 +2316,7 @@ the complete modeled function-pointer signature.
 For a callback read through an initialized constant table, a checked equality
 such as `cb == &table` and permission to read the slot establish its target.
 After applying the target's
-contract theorem, `have Invoke(cb->call) by { known(); }` records that
+contract theorem, `have Invoke(cb->call) by { close(); }` records that
 contract for the read pointer. The captured state and complete callback
 signature must match.
 
@@ -2362,7 +2362,7 @@ contract with resource handles are in
 [Automatic formation at `&f`](index.md#automatic-formation-at-f).
 
 A refinement outside that route is stated as a closed pure theorem, whose proof
-spells the step with `all`, `known`, `intro`, `have`, `rewrite`, or
+spells the step with `all`, `close()`, `intro`, `have`, `rewrite`, or
 `contradiction`, and `click expand` prints the spelling. `apply` the theorem
 before the call that needs the contract.
 
@@ -2407,7 +2407,7 @@ The same proof may explicitly open stateful predicates used by either
 interface. After the contract itself is open, `unfold(predicate(args))` opens the
 selected application in the local comparison. This remains an explicit proof step: direct function
 pointer formation does not unfold a predicate whose opaque interface differs,
-and naming an unrelated predicate grants no authority. Ordinary `solve` may
+and naming an unrelated predicate grants no authority. Ordinary `close()` may
 select a needed predicate unfolding and record it in its certificate. The
 unfolded body uses the same symbolic entry and post-call memories as ordinary scalar refinement,
 including `old` arguments. Predicate unfolding composes with written `if`

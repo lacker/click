@@ -11,7 +11,7 @@ affected: C and Click both read `x << 1 == y` as `(x << 1) == y`.
 theorem low_bit(x: uint32) {
     requires x == 2u32;
     ensures x & 1u32 == 0u32 by {
-        solve();
+        close();
     }
 }
 ```

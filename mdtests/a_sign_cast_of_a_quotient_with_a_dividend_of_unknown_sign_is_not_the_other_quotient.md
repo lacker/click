@@ -19,10 +19,10 @@ int unsigned_quotient_read_signed(uint32 n, uint32 d) {
     requires 0 < d as int32;
     ensures result == 1;
 } by {
-    have (d as int32) != 0 by solve();
-    have d != 0u32 by solve();
+    have (d as int32) != 0 by close();
+    have d != 0u32 by close();
     step_until(function.exit);
-    solve();
+    close();
 }
 ```
 

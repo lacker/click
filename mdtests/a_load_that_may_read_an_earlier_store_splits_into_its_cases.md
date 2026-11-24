@@ -59,12 +59,12 @@ int32 stepped(int32 u) {
         step();
         step();
         step();
-        solve();
+        close();
     } else {
         step();
         step();
         step();
-        solve();
+        close();
     }
 }
 ```

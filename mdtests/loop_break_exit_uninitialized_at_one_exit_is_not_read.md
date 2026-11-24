@@ -43,7 +43,7 @@ int32 late(int32 flag) {
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

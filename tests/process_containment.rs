@@ -74,7 +74,7 @@ fn cli_watchdog_stops_a_verifier_that_does_not_poll() {
 fn audit_run_deadline_prints_summary_and_resume() {
     let directory = tempfile::tempdir().unwrap();
     let source = (0..5000)
-        .map(|index| format!("theorem identity_{index}() {{ ensures 0 == 0 by solve(); }}\n"))
+        .map(|index| format!("theorem identity_{index}() {{ ensures 0 == 0 by close(); }}\n"))
         .collect::<String>();
     std::fs::write(directory.path().join("unit.click"), source).unwrap();
 
@@ -116,7 +116,7 @@ fn audit_watchdog_keeps_its_configured_phase_bound() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(
         directory.path().join("unit.click"),
-        "theorem identity() { ensures 0 == 0 by solve(); }\n",
+        "theorem identity() { ensures 0 == 0 by close(); }\n",
     )
     .unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_click"));

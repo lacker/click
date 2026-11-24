@@ -39,12 +39,12 @@ void user(int32* p) {
 } by {
     let { y: y } = identity(p, { x: x });
     match y.model {
-        Model::Empty => { have old(x.model) == Model::Empty by { solve(); } step_until(function.exit); solve(); },
-        Model::Node(v) => { have old(x.model) == Model::Node(0) by { known(); } step_until(function.exit); solve(); },
+        Model::Empty => { have old(x.model) == Model::Empty by { close(); } step_until(function.exit); close(); },
+        Model::Node(v) => { have old(x.model) == Model::Node(0) by { close(); } step_until(function.exit); close(); },
     }
 }
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: could not establish `old(x.model) == Model::Node(0)`
 ```

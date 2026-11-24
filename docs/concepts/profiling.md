@@ -18,7 +18,8 @@ candidate.
 The implicit tail that ends every script, an omitted proof included, is smart
 work charged to the smart budget at the site after the script's last tactic.
 Profile rows name the tail, its execution and its closer, `implicit tail`,
-and a written `solve()` or `close() using` `solve`. The
+and a written `close()` or `close() using` `close`. A bare closer charges
+its initial check as simple work and any fallback search as smart work. The
 implicit closer that proves a simple tactic's open requirement, such as a bare
 `step()`'s obligation or a bare `fold`'s body fact, is reported as its own
 smart row named `implicit closer` at that tactic's site and charged to the

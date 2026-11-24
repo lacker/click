@@ -46,7 +46,7 @@ int32 loop_token_lifetime_join(int32* p) {
     }
     step();
     step();
-    solve();
+    close();
 }
 ```
 

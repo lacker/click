@@ -3,15 +3,15 @@
 This page is the reference inventory of the tactics in Click's specification
 language. A tactic is either **smart**, **simple**, or **control**:
 
-- Smart tactics search. Written forms include `close()`, `close() using`,
-  and `step_until`, which steps to a target and proves what
+- Smart tactics search. They include the fallback search in `close()`,
+  `close() using`, and `step_until`, which steps to a target and proves what
   each step needs. Smart tactics also include the implicit closer, which
   ends proofs including loop `maintain` scripts and finishes a `step()` or
   `fold`, and forms whose search fills an elided argument:
   `apply(fact)`, `apply(ih(m))`, and a bare `transport(P, Q)`. They
   are the tactics that `click profile` may recommend expanding. The parser
-  refuses the removed forms `auto()`, `arithmetic()`,
-  `execute()` and `execute_until` and names each replacement.
+  refuses retired forms such as `known()` and `solve()` and names their
+  replacement, `close()`.
 - Simple tactics request one deterministic checked operation without heuristic
   planning or search. They may use indexed ambient context when that context is
   an input to the operation, as it is for `step()`. They are the leaves emitted
@@ -52,7 +52,7 @@ remains supported.
 - `branch { true => { ... } false => { ... } }`: prove each arm of the C `if` at the
   frontier. See [Execution](#execution).
 - `loop { ... }`: prove a C loop from its invariants, which the back edge
-  closes member by member with `solve()`. See [Execution](#execution) and
+  closes member by member with `close()`. See [Execution](#execution) and
   [Resources and transport](#resources-and-transport).
 - `close()`: close the first open goal. Use `close() using { ... }` to
   close it from the listed premises. See [Automation and search](#automation-and-search)
@@ -101,7 +101,7 @@ when the default misses or when a proof must not search.
   default: it rewrites the goal with an equality at the current state.
   `transport(P, Q)` carries a fact stated at an earlier state to the current
   one when `step` did not carry it; its `using` form, which lists the frame
-  evidence, is expansion output. `solve` tries both within its bounds.
+  evidence, is expansion output. `close()` tries both within its bounds.
   A full pointer-value equality also rewrites displaced copies such as `p + i`,
   retaining their selected bounds. An equality of `address(p)` and `address(q)`
   supplies numeric addresses without transferring object identity or bounds.
@@ -128,13 +128,12 @@ Every proof script ends with an implicit tail, and an omitted proof clause is
 that tail alone. The tail runs the C the script leaves, splitting at each C
 branch the facts do not decide into paths that each run to function exit,
 and then closes every open claim on every path with the implicit closer, per
-claim or once for a grouped proof. A written `solve()` closes the first open goal and runs no C, so
-`by solve();` restates the omitted proof only where no C is left to run, as
+claim or once for a grouped proof. A written `close()` closes the first open goal and runs no C, so
+`by close();` restates the omitted proof only where no C is left to run, as
 for a pure theorem or a `have`; with C left it is refused, since its goals
 exist only at function exit. The implicit closer tries direct logical closure on each open claim,
-then `solve`'s search. On a
-returned path that holds the body of a resource the contract produces but
-not the resource, it first folds it, as a written `fold(R(...))` after the C
+then bounded proof search. On a returned path that holds the body of a resource
+the contract produces, it first tries to fold the body, as `fold(R(...))` after the C
 would; a fold that does not check leaves the path as it was
 (`mdtests/an_omitted_proof_folds_the_resource_its_contract_produces.md`). A proof
 script that ends with a claim still open closes it the same way, so a script
@@ -142,9 +141,9 @@ needs no final closer and no final step to function exit. The body of a `with` s
 the exception: the scope closes where its body ends, before the tail runs, so
 a body that must reach the function's return steps there itself with
 `step_until(function.exit)`. On a stated fact,
-`have P by solve();`, there is no C to execute.
+`have P by close();`, there is no C to execute.
 
-On an arithmetic goal that its indexed derivations miss, `solve` runs
+On an arithmetic goal that its indexed derivations miss, `close()` runs
 arithmetic from premises it selects itself: the facts connected to the goal,
 and the type ranges of the machine values they observe. It also carries
 connected machine orders to `Integer`, proves a machine order through its
@@ -152,20 +151,20 @@ connected machine orders to `Integer`, proves a machine order through its
 the bounds of the exact result (see
 [intermediate facts](#intermediate-facts)). A loop bundle member, which may
 cite only the loop head and the contract, selects nothing. When its other
-strategies miss, `solve` works from the facts connected to the goal. It reads a condition a function
+strategies miss, `close()` works from the facts connected to the goal. It reads a condition a function
 fact forces out of the function's definition
 (`mdtests/solve_reads_a_condition_out_of_a_definition.md`), then rewrites the
 goal by the connected equalities: first a goal that
 restates an available fact through one connected equality, such as
 `f(Node(..)) == 1` beside `f(t) == 1` and `t == Node(..)`, by one `rewrite`
-and `known` (at most 16 rewrites), then a bounded chain of up to three
-rewrites whose rewritten goals the direct closers and a nested `solve` try.
+and `close()` (at most 16 rewrites), then a bounded chain of up to three
+rewrites whose rewritten goals the direct closers and a nested `close()` try.
 Last, it states the equation between two constructor applications that facts
 equate to one value, and reads the fields' equalities, or the constructors'
 mismatch, from it
 (`mdtests/solve_reads_definitions_and_constructor_equations.md`).
 Written
-as a step of a script, `solve();` closes the first open goal
+as a step of a script, `close();` closes the first open goal
 (`mdtests/a_written_solve_closes_one_goal.md`). A
 script that stops with C left ends with the implicit tail, which executes
 whatever remains and closes every open goal
@@ -203,8 +202,8 @@ and runs the statement again, which then keeps the element. It tries at most
 four dropped elements per statement, and proves each only by the signed
 interval certificate over its variables' bounds, an order between the two
 indices by selected-premise arithmetic, or the disequality bridge of
-[`solve`'s arithmetic](#arithmetic-with-selected-premises) (a case split on the index
-equality), not by the rest of `solve`. Bounds such as `2 <= m` or `1 <= j`,
+[`close()`'s arithmetic](#arithmetic-with-selected-premises) (a case split on the index
+equality), not by the rest of `close()`. Bounds such as `2 <= m` or `1 <= j`,
 `1 <= m` with `m != 1` (a bound made strict by a disequality of its own
 difference,
 [`a_store_index_bound_and_disequality_keep_a_cached_element.md`](https://github.com/clicklang/click/blob/master/mdtests/a_store_index_bound_and_disequality_keep_a_cached_element.md)),
@@ -244,11 +243,11 @@ that fails the goal's condition ends in a constant other than `k`, the fact
 forces the goal, as `is_rb(Node(.., left, right)) == 1` forces
 `is_rb(left) == 1`. An argument that a connected equation names as a constructor,
 such as a `match` arm's `up.model == Context::Left(..)`, is replaced by it:
-the fact is first restated as a `have` by rewriting with that equation. The proof is ordinary checked steps: `if` the goal
-holds, `known`; otherwise a proof `if` on each condition met before the
-goal's. At each end, expansion proves an equation between the application and
+the fact is first restated as a `have` by rewriting with that equation. The
+expanded proof uses `close()` if the goal already holds. When it needs to split a
+condition before reaching the goal, it writes a proof `if`. At each end, expansion proves an equation between the application and
 the selected branch's literal using `unfold`, selected arm equations and
-`known()`. It rewrites the claimed value comparison with the equation and
+`close()`. It rewrites the claimed value comparison with the equation and
 closes the branch with `contradiction`. At most 16
 connected function facts are read, each up to 16 ends; a `match` that its
 arguments do not decide, or an end that is not a constant, is a miss. See
@@ -269,7 +268,7 @@ Signed `int32` arithmetic substitutes equalities: `x == 5` bounds `x` on
 both sides, so it proves `x - 1` defined and closes `x - 1 == 4`; a listed
 `a == b + 1` with `b` bounded converts to `a - b == 1` and bounds `a`, and
 `c == a + 1` converts after it. A bound substitutes through such equalities
-in turn to the listed bounds on what remains. `solve` gathers a goal
+in turn to the listed bounds on what remains. `close()` gathers a goal
 variable's equalities beside its bounds when the bounds alone decide
 nothing, so a callee's `ensures o.size == old(o.size) + delta`, about a
 resource field or a cell, supports arithmetic across calls (see
@@ -277,7 +276,7 @@ resource field or a cell, supports arithmetic across calls (see
 and
 [`abstract_resource_field_call_facts_support_arithmetic.md`](https://github.com/clicklang/click/blob/master/mdtests/abstract_resource_field_call_facts_support_arithmetic.md)).
 
-For a signed `int32` bound, `solve` can use an indexed equality of a goal
+For a signed `int32` bound, `close()` can use an indexed equality of a goal
 operand to a literal even when that call-derived equality has no recorded
 Surface form. It first proves the equality in a checked nested `have`
 using the operand as written in the goal, then rewrites and closes the bound.
@@ -304,7 +303,7 @@ authority. Named struct pointers and library model accessors retain their
 ordinary form. The Rust
 assignment-operator audit checks this through an erased local array pointer.
 
-For equality of a 32-bit or 64-bit machine integer with a literal, `solve` and
+For equality of a 32-bit or 64-bit machine integer with a literal, `close()` and
 the implicit closer stop searching when current facts already decide the opposite truth
 value. An inconsistent context remains eligible for contradiction closure.
 The reference-call scaling regression compares valid results with false
@@ -457,8 +456,8 @@ linear bounds it combines: `x > y` and `y > 3` decide `x > 3`, and
 
 Call preconditions and emitted verification conditions become obligations at the
 step's pre-state. Each obligation is proved by a written `step() by { ... }`
-body or ordinary implicit `solve()`, even if the fact is already available.
-An exact known precondition normally expands to `step() by { known(); }`.
+body or ordinary implicit `close()`, even if the fact is already available.
+An exact known precondition normally expands to `step() by { close(); }`.
 This solving is smart and may miss; for example, it can prove a callee's
 `requires a > 0` from `requires x == 5 or x == 7`.
 
@@ -477,7 +476,7 @@ facts from the condition that selects that operand.
 The step produces one successor state:
 
 - Assigned locals and stored cells hold the evaluated values. After
-  `y = x + 1;`, `have y == x + 1 by known();` closes.
+  `y = x + 1;`, `have y == x + 1 by close();` closes.
 - A call adds the callee's `ensures`, instantiated at the call's arguments and
   result, and applies its ownership transition.
 - A fact keeps the meaning it had. A fact about an entry value stays about
@@ -629,14 +628,14 @@ branch the facts do not decide it names the split to write
 When execution reaches function exit, the path's open goals are the
 contract's claims in the order the contract writes them: every `ensures`, and
 every `owns` and `produces` clause, whose goal is that the path still holds the
-instance. `views` and `consumes` clauses make no claim. A closer (`known`,
-`normalize`, `all`, `solve`, `close() using`) acts on the first
+instance. `views` and `consumes` clauses make no claim. A closer (`close()`,
+`normalize`, `all`, `close() using`) acts on the first
 open goal, and a refusal names that goal; it does not look further down the
 list for a claim it could close
 (`mdtests/a_closer_after_execution_acts_on_the_first_open_claim.md`,
 `mdtests/solve_after_execution_acts_on_the_first_open_claim.md`). The implicit
 closer is the catch-all: it closes every goal still open.
-`known()` closes a resource goal whose instance the path holds
+`close()` closes a resource goal whose instance the path holds
 (`mdtests/closers_after_execution_close_a_resource_goal_first.md`). A closer
 written when every goal on the path is closed is refused
 (`mdtests/a_closer_with_no_open_goal_is_refused.md`). `fold`, `apply`, `have`
@@ -646,7 +645,7 @@ closes the goals still open.
 
 Goal refinements (`witness`, `intro` and `rewrite`) work on
 the same first open claim. It must be a proposition, and the tactic applies to
-its current goal. Close an earlier resource claim with `known()` to reach the
+its current goal. Close an earlier resource claim with `close()` to reach the
 next claim. When a tactic leaves a claim on its own proof, later tactics
 continue that proof using the path's current state and resources, so a later
 `fold` or the contract's resource transition reaches it. A `have` written after
@@ -654,8 +653,8 @@ continue that proof using the path's current state and resources, so a later
 `intro`, it can still close the original claim directly. A closer in a proof
 opened only by `witness` must close the goal with the chosen witness.
 
-A written closer that closes no goal it acts on is refused, `solve` and
-`close() using` included; only the implicit closer at the end of the script
+A written `close()` or `close() using` must close an open goal. The implicit
+closer at the end of the script
 leaves an open claim to the report that names it
 (`mdtests/a_written_solve_that_closes_nothing_is_refused.md`).
 
@@ -787,11 +786,11 @@ the back edge owes the loop's bundle: each declared `invariant`, guarded by
 the invariants declared before it, and for a `decreases` loop one `0 <= m`
 member per component and one descent member `m < at(<iteration entry>, m)`
 (for a tuple measure, the right-nested disjunction over pivots with the
-earlier components tied). Each member is closed by `solve()`, exactly as a
+earlier components tied). Each member is closed by `close()`, exactly as a
 function's exit closes each `ensures`; this closes, for example, an unsigned or
 64-bit bound and its descent from the guard
 ([`back_edge_closes_an_unsigned_bound_from_the_guard.md`](https://github.com/clicklang/click/blob/master/mdtests/back_edge_closes_an_unsigned_bound_from_the_guard.md)).
-To help a member `solve()` misses, prove it, or a fact it needs, with
+To help a member `close()` misses, prove it, or a fact it needs, with
 `have <invariant> by { ... }` before the back edge. `click expand` prints the
 closure as one `have <member> by { ... }` per member at the end of the
 `maintain` script, omitting members already available as facts. The retired
@@ -847,7 +846,7 @@ A non-loop frontier or failed invariant, frame, or decrease obligation fails; so
 does a path that stops short of all four endings, and exits that reach different
 states, which are named rather than dropped. A continuing arm owes the same
 bundle as a top-level loop, including the `decreases` the enclosing termination
-judgment requires. A member `solve()` misses fails locally, naming that member,
+judgment requires. A member `close()` misses fails locally, naming that member,
 and a ranked loop's diagnostic names the ranking obligations.
 
 Click checks the structural rule; expansion materializes omitted phase proofs,
@@ -983,7 +982,7 @@ A call publishes the callee's postconditions. It does not search memory history
 to turn symbolic reads in those postconditions into extra constant equalities.
 Establish the needed read equality in the proof; use `preserve(...)`
 when it crosses a memory effect. Already-available equalities remain usable by
-`known()` and explicit arithmetic or rewrite steps.
+`close()` and explicit arithmetic or rewrite steps.
 
 **Checked examples:** [`c_call_binder_transport.md`](https://github.com/clicklang/click/blob/master/mdtests/c_call_binder_transport.md), [`c_call_binder_transport_multiple_produces.md`](https://github.com/clicklang/click/blob/master/mdtests/c_call_binder_transport_multiple_produces.md), [`call_result_in_condition.md`](https://github.com/clicklang/click/blob/master/mdtests/call_result_in_condition.md), [`call_step_binder_map_on_an_uncontracted_inline_helper_rejected.md`](https://github.com/clicklang/click/blob/master/mdtests/call_step_binder_map_on_an_uncontracted_inline_helper_rejected.md)
 
@@ -1042,13 +1041,13 @@ Expansion retains the bindings and omits empty maps.
 an obligation a different proof than the implicit closer. Any `step` form,
 including `let` and call forms, followed by the proof of the one obligation its
 primitive generates. Emitted verification conditions and call preconditions
-remain obligations even when known: their ordinary `solve()` proof is usually
-`known()`. Arithmetic evaluation still has safety decisions that precede
+remain obligations even when known: their ordinary `close()` proof is usually
+`close()`. Arithmetic evaluation still has safety decisions that precede
 obligation generation; those are not yet migrated.
 
 The body proves that obligation at the step's pre-state, as a `have` would, and
 the step then runs with it stated. The body is one tactic call, such as
-`solve();`, or a block.
+`close();`, or a block.
 
 **Failure, checking, and tools:**
 
@@ -1090,17 +1089,17 @@ Checked equality closure also records a contradiction when one typed scalar
 class contains unequal 32-bit or 64-bit constants, including classes connected
 through model getters, or when one model class contains two different
 constructors. Two applications of one constructor in a class have equal fields,
-so `x == Full(a)` and `x == Full(b)` give `a == b` to `solve` and `known()`
+so `x == Full(a)` and `x == Full(b)` make `a == b` available to `close()`
 without a stated `Full(a) == Full(b)`; see
 [`constructor_injectivity_through_an_equal_value.md`](https://github.com/clicklang/click/blob/master/mdtests/constructor_injectivity_through_an_equal_value.md). Semantic fact lookup and inconsistency checking use this
-indexed evidence, so `known()` can close a goal in that impossible context
+indexed evidence, so `close()` can close a goal in that impossible context
 without another search. The evidence belongs to the current branch and is
 rebuilt when a context is restricted to selected facts; it does not equate reads across
 version points where memory may have changed. Exact fact membership remains separate. See
 [`model_getter_constant_conflict.md`](https://github.com/clicklang/click/blob/master/mdtests/model_getter_constant_conflict.md).
 
 `have P;` can project an available disjunction. The solver selects a connected
-stated disjunction and expands to explicit `cases`, with `known()` in each arm.
+stated disjunction and expands to explicit `cases`, with `close()` in each arm.
 For example, `(A and X) or (B and Y)` supplies `A or B`. Every source arm must
 establish the requested proposition; arm assumptions remain local.
 See [`have_disjunction_projection.md`](https://github.com/clicklang/click/blob/master/mdtests/have_disjunction_projection.md)
@@ -1109,7 +1108,7 @@ and [`loop_exit_disjunction_projection.md`](https://github.com/clicklang/click/b
 A simple tactic that adds a fact (`instantiate(...)`,
 `apply`, `transport ... using`, and `obtain`) also closes a
 proposition goal that it adds, when it is the last written step or only
-`known`, `solve`, or `normalize` follows it. An added order fact closes
+`close()` or `normalize()` follows it. An added order fact closes
 the goal under either form of the same claim: `0 <= e` closes the goal
 `e >= 0`, and `a < b` closes `b > a`, for machine and `Integer` operands
 alike. A written theorem application also closes the mirrored goal when
@@ -1121,13 +1120,11 @@ step is still checked.
 | --- | --- | --- | --- | --- |
 | `all { P => { ... } Q => { ... } }` | control | Expansion output | Prove each conjunct. | [Reference](#conjunctions) |
 | `outcomes { returned => { ... } threw => { ... } }` | control | Specialized | Prove each returned or exceptional outcome. | [Reference](#execution-outcomes) |
-| `solve()` | smart | Compatibility | Close one goal from available facts and bounded rules. | [Reference](#simplification) |
 | `close() using { P; ... }` | smart | Specialized | Close one goal from written premises only. | [Reference](#simplification-with-selected-premises) |
 | `check_termination_local("f")` | simple | Expansion output | Establish the generated local descent classification. | [Reference](#termination-checks) |
 | `check_termination_component("f", mode)` | simple | Expansion output | Classify a generated recursive component using established premises. | [Reference](#termination-checks) |
 | `check_termination_callbacks()` | simple | Expansion output | Classify callback safety using established strict return premises. | [Reference](#termination-checks) |
 | `close()` | smart | Core | Try the direct goal check, then search if it fails. | [Reference](#closing-a-goal) |
-| `known()` | simple | Compatibility | Require a direct goal check. | [Reference](#available-facts) |
 | `normalize()` | simple | Compatibility | Close a goal by evaluation without context. | [Reference](#context-free-normalization) |
 | `normalize() using { P; ... }` | simple | Compatibility | Check normalization against written premises. | [Reference](#normalization-with-selected-premises) |
 | `preserve(resource, region)` | simple | Specialized | Preserve a selected read across a separated effect. | [Reference](#preservation) |
@@ -1168,16 +1165,16 @@ proof. Each arm inherits the parent assumptions, and facts proved in an arm
 stay in that arm. The `all` location owns expansion and profiling of its
 nested proofs.
 
-`by solve();` is sugar for a script containing the same `solve()` operation at
+`by close();` is sugar for a script containing the same `close()` operation at
 the same proof state, followed like every script by the implicit tail. A
-`solve()` written before execution has reached the function exit is refused
+`close()` written before execution has reached the function exit is refused
 with the frontier it stands at; the end of a body is one `step()` of its own
 (`mdtests/solve_before_exit_in_arm_names_the_frontier.md`).
 
 Inside a `have` body, a tactic that already closed the goal (an `unfold`
 whose refreshed goal is an available fact, a `transport` onto the goal, a
-theorem whose conclusion is the goal) may be followed only by `known`,
-`solve`, or `normalize`, which then assert the closed judgment and emit
+theorem whose conclusion is the goal) may be followed only by `close()`
+or `normalize()`, which then assert the closed judgment and emit
 nothing. So `unfold(f(x)); normalize();` means the same whether or not the
 unfold alone closed the goal
 (`mdtests/closer_after_unfold_closed_goal.md`); any other tactic after the
@@ -1188,7 +1185,7 @@ Scalar `induct` is available only in a pure theorem and may follow earlier
 proof steps while the original theorem goal remains focused. Its hypothesis
 is introduced at that step. The algebraic form is the enclosing control
 tactic and therefore the only top-level tactic; its constructor arms contain
-the proof steps. It is never inserted by `solve` or the implicit closer.
+the proof steps. It is never inserted by `close()` or the implicit closer.
 
 The algebraic hypothesis takes the theorem's complete parameter list in
 declaration order. Only the inducted position is restricted: it must name a
@@ -1220,12 +1217,12 @@ Expansion preserves the application.
 `enumerate` is how an explicit proof closes a finite case analysis over a
 constant-bounded universal, such as a `sorted(p, 3)` postcondition: the
 expanded proof spells one `have` per non-vacuous instance (typically closed by
-`intro`, `instantiate(...)`, an explicit transport, and `known`),
+`intro`, `instantiate(...)`, an explicit transport, and `close()`),
 and `enumerate()` checks exactly those instances against the goal's own
 guard-derived ranges. A goal stated as a predicate call is unfolded to the
-body that binds the instances, and the smart `solve` proves nearest pairs
+body that binds the instances, and proof search proves nearest pairs
 first so a wider span can cite its neighbours. Instances are lowered lazily: a missing instance stops `enumerate` before
-visiting the rest of the numeric range, and smart `solve` also stops generating
+visiting the rest of the numeric range, and search also stops generating
 instances at its first failed proof. The finite-universal planner and its
 retained certificate checker use the same lazy range order and still require
 every in-range instance for success. This keeps refusal of a false frame over
@@ -1296,7 +1293,7 @@ An arm can also name a whole conjunct that is itself a conjunction, for
 example when its proof changes the goal before splitting it.
 
 Each proof starts with the parent assumptions. Facts established in one arm
-are local to that arm. An absent, extra, or unfinished arm fails. An ordinary conjunction can still be closed by `solve()`.
+are local to that arm. An absent, extra, or unfinished arm fails. An ordinary conjunction can still be closed by `close()`.
 
 Expansion writes a flat list using the retained child goals or by raising
 their kernel propositions from the names in scope.
@@ -1336,10 +1333,10 @@ state. Expansion preserves both certificates.
 
 ### Simplification
 
-**Form:** `solve()`
+**Search after the direct check in `close()`.**
 
-`solve()` closes one goal and runs no C. The parser refuses a written `auto();`, naming
-`solve();` for it and the omitted proof for `by auto();`. `by solve();` restates what an omitted proof of a
+`close()` closes one goal and runs no C. The parser refuses a written `auto();`, naming
+`close();` for it and the omitted proof for `by auto();`. `by close();` restates what an omitted proof of a
 `have` or a pure theorem's `ensures` does, but it is accepted: it marks a place
 to write a different tactic later.
 
@@ -1372,7 +1369,7 @@ by `contradiction` on that antecedent, reading only the goal; expansion
 writes `intro(); contradiction(A);`
 ([`an_antecedent_normalization_refutes_closes_its_implication.md`](https://github.com/clicklang/click/blob/master/mdtests/an_antecedent_normalization_refutes_closes_its_implication.md)).
 An implication whose antecedent, or one conjunct of an `a and b` antecedent,
-has its opposite among the facts closes by `contradiction` once `solve`
+has its opposite among the facts closes by `contradiction` once `close()`
 introduces it, whichever form the facts state the opposite in (`x > 100`
 for `x <= 100` false), so `a and b implies c` closes where the curried
 `a implies b implies c` does
@@ -1382,14 +1379,14 @@ for `x <= 100` false), so `a and b implies c` closes where the curried
 A goal that is one conjunct of an implication's consequent, `c == 2` from
 `a != 0` and `a != 0 implies (b == 1 and c == 2)`, is closed once the
 antecedent is an exact available fact: unit propagation publishes the whole
-conclusion, and expansion can close the selected conjunct with `known()`.
+conclusion, and expansion can close the selected conjunct with `close()`.
 When the guard needs proving first, expansion may retain an explicit
 `apply(fact)`
 ([`solve_closes_a_conjunct_of_a_discharged_consequent.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_closes_a_conjunct_of_a_discharged_consequent.md)).
 
 A comparison held only under a definedness guard (`defined(e) implies a == b`,
 as a call postcondition over partial arithmetic lowers) whose consequent names a
-goal operand is used once a nested `solve` proves the guard: the closer applies
+goal operand is used once a nested `close()` proves the guard: the closer applies
 the implication with explicit evidence and rewrites the goal with an equality
 or closes from the new fact.
 
@@ -1397,11 +1394,11 @@ An `int32` or `int64` definedness goal `defined(a + b)` or `defined(a - b)`
 selects the constant order and equality facts of that width indexed under each
 operand. It states intrinsic operand ranges and proves both ordinary bounds on
 the exact result, using local interval normalization or Integer laws. Expansion
-retains those `have` proofs and closes the domain with `known()`; it emits no
+retains those `have` proofs and closes the domain with `close()`; it emits no
 signed-definedness ordinary arithmetic proof.
 
 A recursive specification function applied to a known constructor is
-evaluated: `solve` unfolds it, then keeps unfolding the recursive calls the
+evaluated: `close()` unfolds it, then keeps unfolding the recursive calls the
 definition exposes while their arguments select one arm, rewriting an argument
 by a constructor equation (a supplied premise or a connected fact such as
 `u == Tree::Node(..)`) when that exposes one, for at most eight checked steps.
@@ -1411,16 +1408,16 @@ A recursive call whose arguments are constants, such as
 level at a time instead. Each level is the arm of the definition that its
 constant `if` guards select, with the next call's constant arguments
 evaluated; a guard may compare a string literal's byte at a constant index,
-which is a constant since the literal is read-only. `solve` proves one
+which is a constant since the literal is read-only. `close()` proves one
 `have` for the call's value, and inside it one `have` per level, `call ==
-arm`, by `unfold` and `known()` (or `solve()` for a `Bool` level). Only the
+arm`, by `unfold` and `close()`. Only the
 value joins the proof, so the work grows linearly with the depth, at most
 1024 levels. A call a fact names inside `at(point, ...)`, as a postcondition
 names it at the call's entry, is evaluated at that point, with
 `unfold(at(point, call))`. Expansion writes the `have`s
 (`mdtests/a_recursive_byte_function_evaluates_automatically.md`,
 `mdtests/a_long_recursion_over_constants_is_evaluated_one_level_at_a_time.md`).
-A bottom-up proof, one `have` per call by `unfold` and `solve()`, states the
+A bottom-up proof, one `have` per call by `unfold` and `close()`, states the
 same levels by hand
 (`mdtests/a_recursive_byte_function_evaluates_a_string_literal.md`).
 An argument nothing fixes stays folded
@@ -1429,7 +1426,7 @@ An argument nothing fixes stays folded
 
 An existential `exists v { x == C(.., v, ..) }` whose `x` a fact fixes to a
 constructor of the same variant, `x == C(.., t, ..)`, takes `t` as its witness:
-`solve` writes `witness(t)` and closes the instance. A constant payload is
+`close()` writes `witness(t)` and closes the instance. A constant payload is
 written as itself and any other value by the local, parameter or binder that
 holds it; a value of another variant gives no witness
 ([`solve_takes_a_known_constructor_payload_as_the_witness.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_takes_a_known_constructor_payload_as_the_witness.md),
@@ -1442,12 +1439,12 @@ goal and normalization decides the constructors differ
 
 An `int32` or `int64` definedness goal whose operand is a sum with a summand an
 exact equality fixes to `0`, such as a count `A + n` with `A == 0`, first proves
-the operand equal to the sum without it by `solve`, then the restated goal from
+the operand equal to the sum without it by `close()`, then the restated goal from
 its bounds
 ([`solve_defined_count_after_a_zero_summand.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_defined_count_after_a_zero_summand.md)).
 
 When the goal also carries an operand's own definedness, such as a field read
-through a resource, `solve` proves `defined(operand)` as a `have`, separately
+through a resource, `close()` proves `defined(operand)` as a `have`, separately
 from the exact-result bounds
 ([`solve_defined_read_through_a_produced_resource.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_defined_read_through_a_produced_resource.md)).
 
@@ -1480,7 +1477,7 @@ A guarded universal goal `forall k { G implies A }` closes from an available
 `forall k { G implies A and B }` with the same binder and guards, selected by one
 indexed lookup of the conjuncts guarded universals conclude. The proof is `intro()`
 for the binder and each guard, `instantiate` at the introduced binder, and
-`known()`, so `memset`'s `defined(..) and` value postcondition supplies
+`close()`, so `memset`'s `defined(..) and` value postcondition supplies
 `bytes::all_equal`
 ([`solve_drops_a_conjunct_of_a_guarded_memset_postcondition.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_drops_a_conjunct_of_a_guarded_memset_postcondition.md)).
 A different guard or an unstated conjunct is not supplied
@@ -1507,10 +1504,7 @@ search plus leaves.
 
 **Form:** `close() using { P; ... }`
 
-The former spelling `solve() using { ... }` is refused with a diagnostic
-naming `close() using`.
-
-**Specialized.** Write it when `solve` picks the wrong premises or searches too
+**Specialized.** Write it when `close()` picks the wrong premises or searches too
 long, to restrict it to the named facts. On a proposition goal, including a
 contract claim after function exit, search using exactly the listed proposition
 facts. A preceding `have` is available on each outcome where it was proved;
@@ -1521,10 +1515,10 @@ A listed guarded equality whose definedness guard is not listed has the guard
 proved first, from the other listed facts when they suffice, and is then used as
 its consequent. An `int32` or `int64` definedness goal uses the listed operand
 bounds and intrinsic type ranges to prove the two exact-result bounds through
-ordinary `known()` leaves and Integer laws. For an Integer goal observing a machine sum or difference,
+ordinary `close()` leaves and Integer laws. For an Integer goal observing a machine sum or difference,
 listed bounds and the machine type's range can establish the in-range
 identity, such as `to_integer(x + 1) == to_integer(x) + 1`. Expansion writes
-the range proofs and a `known()` identity step. An
+the range proofs and a `close()` identity step. An
 unsigned operation is used this way only when those bounds prove it does not wrap.
 
 Available verified theorems are reasoning rules, not extra hypotheses. If the
@@ -1550,12 +1544,12 @@ function fixed(x: Integer) -> Integer { 7 }
 
 theorem lower_bound(x: Integer) {
     requires 0 <= x;
-    ensures fixed(x) >= 7 by { unfold(fixed(x)); solve(); }
+    ensures fixed(x) >= 7 by { unfold(fixed(x)); close(); }
 }
 
 theorem equality(x: Integer) {
     requires 0 <= x;
-    ensures fixed(x) == 7 by { unfold(fixed(x)); solve(); }
+    ensures fixed(x) == 7 by { unfold(fixed(x)); close(); }
 }
 
 theorem test(value: Integer) {
@@ -1580,7 +1574,7 @@ function shifted(x: Integer) -> Integer { x + 7 }
 
 theorem shifted_bound(x: Integer) {
     requires 0 <= x;
-    ensures 7 <= shifted(x) by { unfold(shifted(x)); solve(); }
+    ensures 7 <= shifted(x) by { unfold(shifted(x)); close(); }
 }
 
 theorem use_bound(value: Integer) {
@@ -1603,9 +1597,9 @@ the rule gap, and profiling reports the restricted site.
 
 **Form:** `close()`
 
-`close()` first runs the same direct check as `known()`. On a hit it
-finishes immediately. On a miss ordinary verification runs the standard
-`solve()` search with its usual budget. Checked-only verification reports
+`close()` first checks whether the current goal follows directly from the
+available facts. If the check misses, ordinary verification runs bounded
+search. Checked-only verification reports
 the direct-check failure at the tactic. `click expand` emits the checked
 steps selected by either path, spelling direct goal closures `close()`.
 
@@ -1618,21 +1612,9 @@ theorem closes_by_search(x: int32) {
 
 ### Available facts
 
-**Form:** `known()`
-
-The former form `assumption()` is refused with a diagnostic naming
-`known()`. It reuses available facts and also checks the computational leaves
-described below.
-
-**Compatibility.** Existing proofs can use `known()` to require a direct
-check at one step. New proofs use `close()`. To check that the proof
-replays without search, run `click verify --checked-only`. Expansion writes
-the checked operation as `close()`.
-
-Smart closure uses `known()` for computational leaves, including residuals
-after a rewrite or unfold and leaves inside logical proofs. Proof strategies
-can still use `normalize()` where its broader rules are needed. Expansion also
-preserves explicitly written `normalize()` steps.
+The direct check in `close()` also handles computational leaves after a
+rewrite or unfold and inside logical proofs. Use
+`click verify --checked-only` to require replay without search.
 
 **Accepts** a goal that is available, where an atomic proposition is
 available when one of these holds:
@@ -1670,7 +1652,7 @@ available when one of these holds:
   chains and conjunctive guards. Matching preserves proposition syntax, types,
   and memory states; it does not search for equivalent guards. Each clause
   occurrence is processed at most once per proof-context lineage, and
-  `known()` reads the resulting ordinary fact indexes. See
+  `close()` reads the resulting ordinary fact indexes. See
   [`exact_proposition_propagation.md`](https://github.com/clicklang/click/blob/master/mdtests/exact_proposition_propagation.md).
 - It is another spelling of an available order claim, in every order family
   (C machine integers and `Integer`): `0 <= x` for `x >= 0`, and `not(y <= x)`,
@@ -1712,7 +1694,7 @@ A machine-valued range fold whose step returns its accumulator equals its
 initial value. This check reads only the accumulator binding and the initial
 value.
 
-After an explicit `unfold`, `known()` can check values and bounds of machine
+After an explicit `unfold`, `close()` can check values and bounds of machine
 expressions such as decimal lengths and their padded lengths. It follows a
 decided guard and otherwise bounds both arms. Its arithmetic uses only the
 operands in the goal, with a bounded walk and checked machine ranges.
@@ -1743,7 +1725,7 @@ alignment of a null, heap, global or static address reads only that address's
 block registration and constant byte offset. It does not search alignment facts
 or infer alignment for a symbolic offset.
 
-For a written alignment goal, `known()` may also look up the base's recorded
+For a written alignment goal, `close()` may also look up the base's recorded
 alignment by coordinate. A constant byte displacement or a symbolic index at
 a stride divisible by the requested alignment preserves the corresponding
 residue. The check probes only the base and the supported alignment strengths.
@@ -1761,7 +1743,7 @@ quotient guard when needed. The written product and endpoint name the guards
 for exact lookup.
 A full-width unsigned index agrees with its signed low word when both use
 the same base and stride and the full-width index is at most `INT32_MAX`.
-`known()` checks this bound on the full-width index itself. See
+`close()` checks this bound on the full-width index itself. See
 [`uint64_int32_owned_index_alias.md`](https://github.com/clicklang/click/blob/master/mdtests/uint64_int32_owned_index_alias.md) for a store through the full-width index and a read through the signed index.
 A written machine `+`, `-`, or `*` observation equals its exact Integer expression when
 both exact-result range bounds are available. An integral cast or `to_T(z)`
@@ -1777,10 +1759,10 @@ A bitwise-and with a
 nonnegative literal mask is between zero and the mask, and is at most a
 nonnegative source. For
 unsigned words, this range also supports comparisons of compound expressions.
-For example, `known()` can prove `((y & 7u32) + 1u32) as uint32 != 0u32`
+For example, `close()` can prove `((y & 7u32) + 1u32) as uint32 != 0u32`
 because the addition's range is `[1, 8]` and fits the word.
 
-For a 32- or 64-bit shift count, `known()` can remove the mask `width - 1`
+For a 32- or 64-bit shift count, `close()` can remove the mask `width - 1`
 when the count is known in range. It also checks the equality of the signed
 and unsigned right shifts of the positive signed maximum at the same in-range
 count. A constant right shift of a zero-extended unsigned byte or halfword
@@ -1820,7 +1802,7 @@ already held as a fact retains its existing exact-lookup behavior.
 - A consequent of an available implication: `have Q;` or apply the implication
   with `apply(fact)`.
 - A reordered disjunction fact (`y > 0 or x < y` from `x < y or y > 0`):
-  `have y > 0 or x < y;`, which expands to `cases`, then `known()`.
+  `have y > 0 or x < y;`, which expands to `cases`, then `close()`.
 - A weaker or derived bound, such as `x <= y` from `x < y`: `close()
   using { x < y; }`.
 - An implication or quantifier whose body is only equivalent to a fact, such
@@ -1835,7 +1817,7 @@ The structural walk checks each needed leaf using indexed facts or direct
 computation. A failure names the first side it cannot close; prove other
 missing premises with `have` first.
 
-For exactly named, independently held resources, `known()` applies the
+For exactly named, independently held resources, `close()` applies the
 live partition rule: an owned unit is separate from another owned unit or a
 view. Two views alone do not establish separation. The rule uses exact resource
 lookups; it does not enumerate aliases or compositions, and supported cached
@@ -1902,9 +1884,9 @@ For explicit Integer normalization, `2 * x == x + x`,
 Products also normalize association and factor order within each monomial.
 One explicit symbolic distribution, `(a + b) * c == a * c + b * c`
 (or subtraction, or distribution on the other side), is a local primitive
-with opaque operands. Full polynomial expansion is search: `solve` writes
+with opaque operands. Full polynomial expansion is search: `close()` writes
 individual distribution equalities and rewrites before normalization. Calls,
-reads, and folds remain opaque. Checking reads no facts. The computational `known()` leaf
+reads, and folds remain opaque. Checking reads no facts. The computational `close()` leaf
 retains its narrower sum/difference rules. C machine multiplication also
 remains opaque; these exact Integer identities introduce no machine overflow
 or definedness facts.
@@ -1912,9 +1894,9 @@ or definedness facts.
 **Outside it**, with what to write instead:
 
 - A top-level `and`, `or`, implication, or quantifier: use `all`, prove one
-  disjunct with `have` and close with `known()`, or `intro`.
+  disjunct with `have` and close with `close()`, or `intro`.
 - A goal that needs a fact, including a premise of the theorem: use
-  `normalize() using { P; ... }`, `rewrite`, or `known()`.
+  `normalize() using { P; ... }`, `rewrite`, or `close()`.
 - A pure function call: `unfold` it first; `normalize` leaves calls symbolic.
 - Distributing a symbolic product, such as `(x + y) * z == x * z + y * z`;
   an order claim between C machine sums, such as `x + 1 > x`; or an `Integer` order claim whose terms
@@ -1926,7 +1908,7 @@ or definedness facts.
 A refusal prints the goal after substitution. Click runs the deterministic
 leaf check; expansion is unchanged, and profiling charges the normalized
 expression. Smart tactics retain the corresponding `all`, disjunct proof and
-`known()`, or `intro` proof.
+`close()`, or `intro` proof.
 
 Intrinsic Integer bounds on a machine quotient, right shift, or remainder
 by a positive constant also normalize without facts, in the bound's written
@@ -1978,9 +1960,9 @@ A square can cite just the two endpoints of its operand's range. Its
 lower bound is zero if that range crosses zero.
 A product's lower bound can instead cite two strictly positive lower
 endpoints. Multiplication by a literal signed zero can cite a finite
-operand or its two finite bounds. `known()` accepts the exact
+operand or its two finite bounds. `close()` accepts the exact
 `isfinite` premise for the zero product.
-`solve` can select these float bounds and expand to `normalize() using`
+`close()` can select these float bounds and expand to `normalize() using`
 with the selected premises.
 
 
@@ -2015,19 +1997,19 @@ and then the alignment facts. One finite classification proves the matching
 reflexive IEEE comparison. These are fixed local rules over explicit inputs;
 none selects premises or expands a polynomial.
 
-For a reflexive `float` or `double` comparison, `solve` expands to
-`known()` when the exact `isfinite(x)` fact is available for the common
+For a reflexive `float` or `double` comparison, `close()` expands to
+`close()` when the exact `isfinite(x)` fact is available for the common
 operand. Restricted `close() using` must select that fact. For example,
 `isfinite(x)` establishes `x == x`, `x <= x` and `not(x < x)`. An ordered
 bound on an exact float widening or sign negation also closes with
-`known()` from the corresponding input comparison at the same endpoint.
+`close()` from the corresponding input comparison at the same endpoint.
 Negation reverses the order and flips the endpoint's sign. The widening
 check requires the endpoint to be exactly representable in the input width.
-For a weaker result bound, `solve()` records the transported comparison in
+For a weaker result bound, `close()` records the transported comparison in
 a `have` and applies the corresponding `click::float_order` transitivity law.
 
-For supported native unsigned address words, `solve` emits ordinary `have`
-goals, `apply(click::integer::...)`, rewrites, and `known()`: alignment
+For supported native unsigned address words, `close()` emits ordinary `have`
+goals, `apply(click::integer::...)`, rewrites, and `close()`: alignment
 weakening, scalar element offsets, low-tag projections and high-mask recovery
 name their local laws and retain the unsigned width explicitly. Remaining
 legacy forms still use the compatibility normalization path.
@@ -2035,7 +2017,7 @@ legacy forms still use the compatibility normalization path.
 **Accepts** a goal that `normalize()` accepts after this reduction, when every
 cited premise is accepted:
 
-- A premise is accepted when it is available in the sense of `known()`'s
+- A premise is accepted when it is available in the sense of `close()`'s
   atomic rules, or in its other polarity or direction, or holds without facts
   (`0 <= 0`), and it is a single condition or its negation: a comparison, an
   equality including an algebraic one, or its `not`. The list may be empty.
@@ -2192,7 +2174,7 @@ plan. All supported arithmetic families expand to ordinary proof steps.
 **Form:** `close() using { P; ... }`. The parser refuses the removed form
 `arithmetic() using { P; ... }` and names `close() using { P; ... }`.
 
-**Specialized.** Write it when `solve` misses an integer bound or equality,
+**Specialized.** Write it when `close()` misses an integer bound or equality,
 listing the premises the bound follows from. `close() using` tries the
 engine this section describes last, and a miss adds the engine's reason
 (`mdtests/a_solve_using_miss_reports_arithmetic_s_reason.md`). The engine
@@ -2254,13 +2236,13 @@ written the other way round, `n >= i - 1` or `not (n < i - 1)`, is proved as
 comparison itself (see
 [One form for comparisons of observations](../../internals/mathematical-integers.md#one-form-for-comparisons-of-observations)),
 so each listed premise of that type is restated over its observations by
-`known()`, a listed `not left < right` is read as `right <= left` and a
+`close()`, a listed `not left < right` is read as `right <= left` and a
 listed `right > left` as `left < right`, each value written beside a sum or
-difference has its type's range stated by `known()` (so `i -
+difference has its type's range stated by `close()` (so `i -
 1` is defined under `0 < i`), each sum and difference in the premises and the
 goal is shown to stay in range from the facts before it, by both constant
-bounds of its exact value, and observed by a `known()` identity step reading those bounds, the Integer claim is proved in the `Integer`
-family, and `known()` concludes the goal. A listed premise the proof does
+bounds of its exact value, and observed by a `close()` identity step reading those bounds, the Integer claim is proved in the `Integer`
+family, and `close()` concludes the goal. A listed premise the proof does
 not hold is refused as an unavailable exact premise.
 
 An equality goal takes its type from a listed order premise or a typed literal,
@@ -2268,7 +2250,7 @@ and is read this way only when both sides are sums and differences of plain
 operands; an equality over a product, a shift or a mask is left to the other
 families. An unsigned sum must not exceed the type; a signed one is defined
 once both Integer bounds of its exact value are facts, which together are its
-definedness fact, so `known()` states it; a premise over a signed sum is
+definedness fact, so `close()` states it; a premise over a signed sum is
 carried only once that sum is defined.
 
 Expansion writes those steps as ordinary `have`, `apply(...)`, and
@@ -2282,15 +2264,15 @@ fact. `k < j` gives `k != j`
 ([`arithmetic_proves_a_disequality_by_refuting_its_equality.md`](https://github.com/clicklang/click/blob/master/mdtests/arithmetic_proves_a_disequality_by_refuting_its_equality.md));
 `k <= j` does not, and the refusal is the one for the `false` goal
 ([`a_disequality_its_premises_allow_is_refused.md`](https://github.com/clicklang/click/blob/master/mdtests/a_disequality_its_premises_allow_is_refused.md)).
-`solve` proves `a < b`, or else `b < a`, by selected-premise arithmetic,
+`close()` proves `a < b`, or else `b < a`, by selected-premise arithmetic,
 which a linear refutation of `a == b` always leaves, and refutes the equality
 from it. Expansion writes that `have` and the two arms of the proof `if`.
 
 Arithmetic reads no disequality premise, so a disequality goal that only
 another disequality gives is proved by cases. When every other strategy
-misses, `solve` splits on `a == b` and, in that arm, proves `p == q` for an
+misses, `close()` splits on `a == b` and, in that arm, proves `p == q` for an
 available `p != q` connected to the goal (at most four, in turn), which
-`known()` closes against the stated fact; the other arm holds the goal.
+`close()` closes against the stated fact; the other arm holds the goal.
 This carries the Integer fact `m - 1 != 0` to the `int32` word fact
 `((m - 1) as int32) != 0` where the facts keep `m - 1` in range, and back.
 It refuses where the word may wrap: `u + 1 != 0` over a `uint32` `u` does not
@@ -2298,17 +2280,17 @@ give `((u + 1) as uint32) != 0`
 ([`a_store_index_fact_may_be_the_integer_or_the_word.md`](https://github.com/clicklang/click/blob/master/mdtests/a_store_index_fact_may_be_the_integer_or_the_word.md),
 [`an_integer_disequality_does_not_give_a_wrapping_word_one.md`](https://github.com/clicklang/click/blob/master/mdtests/an_integer_disequality_does_not_give_a_wrapping_word_one.md)).
 Expansion writes the proof `if`, the `have p == q` with its certificate, and
-the two `known()` steps.
+the two `close()` steps.
 
 After that, a pointer disequality between two element addresses of one
 base, `&q[j] != &q[0]`, whose indices have one width and format (`int32`, or
-64-bit of one signedness), is reduced to its indices: `solve` states
+64-bit of one signedness), is reduced to its indices: `close()` states
 `have j != 0` (written from the index words, as the store search writes its
-fact: `((m - 1) as int32) != 0`, `j != 0u64`), proves it by `solve`, and
+fact: `((m - 1) as int32) != 0`, `j != 0u64`), proves it by `close()`, and
 closes the goal with
 `apply(click::separation::distinct_elements(q, j, 0))`.
 Expansion writes that `have` and the `apply`. Where the indices may be equal
-the nested `solve` misses and the goal's ordinary refusal stands
+the nested `close()` misses and the goal's ordinary refusal stands
 ([`solve_proves_element_addresses_distinct_from_their_indices.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_proves_element_addresses_distinct_from_their_indices.md),
 [`solve_proves_element_addresses_distinct_at_each_index_type.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_proves_element_addresses_distinct_at_each_index_type.md),
 [`solve_does_not_prove_element_addresses_distinct_when_the_indices_may_be_equal.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_does_not_prove_element_addresses_distinct_when_the_indices_may_be_equal.md)).
@@ -2364,7 +2346,7 @@ published outcome a return can also include one recorded retirement of a
 provably distinct automatic object after the statement's exit snapshot.
 
 For equality goals, use an ordinary `have` to establish the equality, then
-`rewrite` and `known` to carry a proposition across the change. The tactic remains
+`rewrite` and `close()` to carry a proposition across the change. The tactic remains
 `preserve(...)` in expansion. Unavailable separation, an unsupported observation,
 or mismatched endpoints is a local refusal. This tactic is distinct from a
 loop's `maintain by { ... }` proof block.
@@ -2396,7 +2378,7 @@ Non-unit quantities, construction, extra runtime effects such as allocation or
 release, or additional unaccounted changes do not receive this bound. A one-transition
 source selector names the same descriptor that the step published.
 
-Use `known()` to select the published containment, then apply
+Use `close()` to select the published containment, then apply
 `separation::contains_refl` and `separation::separate_restrict` with the explicitly
 available resource separation. For several inputs, first use
 `separation::separate_star`. The resulting footprint separation is an ordinary
@@ -2405,13 +2387,13 @@ See `mdtests/recursive_call_footprint_containment.md` and
 `mdtests/recursive_call_pair_footprint_containment.md`.
 
 For one checked transition, establish each affected member's exact separation
-from `B`, then close `separate(region.footprint, B)` with `known()`.
+from `B`, then close `separate(region.footprint, B)` with `close()`.
 Restrict parent separations or rewrite aliases in preceding proof steps.
 Spatial ranges use byte coordinates and retain their range-validity
 conditions. Empty memory ranges, distinct storage blocks, and token/memory
 pairs are disjoint directly. For several transitions, write an individual
 `preserve(...)` proof for each transition and compose their equalities with
-`rewrite` and `known`.
+`rewrite` and `close()`.
 
 `preserve` supports complete pointer, 8/16/32/64/128-bit integer, and abstract
 typed memory observations. It also preserves a selected field of a named owned
@@ -2438,7 +2420,7 @@ Read observations are retained only while lowering and applying an explicit
 checking does not retain these observations. Missing observations fail locally;
 no alias or history fallback runs.
 Pointer preservation also accepts address equality when the pointer domains
-already agree. Equality composition uses ordinary `rewrite` and `known` steps.
+already agree. Equality composition uses ordinary `rewrite` and `close()` steps.
 Footprints can record non-memory resources, symbolic release spans, and
 multiple mutable call resources. Wide-index memory ranges are supported for
 viewability preservation.
@@ -2465,7 +2447,7 @@ Arithmetic automation expands to ordinary proofs. Arithmetic operations correspo
 
 Integer composition plans expand their premise, addition, scaling, and
 equality-direction nodes into ordinary `have`, `apply(...)`, `rewrite`,
-and `known()` steps. Each intermediate fact is established once and later
+and `close()` steps. Each intermediate fact is established once and later
 nodes reuse it. Context-free identities relate the plan's flat affine forms
 to the written operands. Expansion uses checked `normalize()` when the
 bounded algebra emitter cannot spell an identity. Integer antisymmetry uses
@@ -2475,12 +2457,12 @@ Strict Integer premises and goals use the successor-order law. Linear
 refutations that use the negated goal once become direct compositions;
 other refutations open a negated-goal scope with `intro` and close its contradiction. Type
 ranges and constant-divisor quotient, shift, and remainder bounds use
-`known()`. Rounding and endpoint exclusions use ordinary Integer laws.
-Machine operation and cast identities use `known()` after their exact Integer
+`close()`. Rounding and endpoint exclusions use ordinary Integer laws.
+Machine operation and cast identities use `close()` after their exact Integer
 bounds have been proved. Literal shifts and nonnegative literal masks expand
 to these leaves, explicit product bounds, and rounding laws. Numeric conditionals
 at the root or nested inside arithmetic, casts, observations and call arguments
-expand to `known()` arm equations and rewrites when their guards are selected.
+expand to `close()` arm equations and rewrites when their guards are selected.
 Outer arms are selected before examining their contents; an inactive arm is
 not detached and evaluated. Multiple conditionals are reduced in source order,
 with at most 64 rewrites and 4096 visited source nodes under the solve deadline.
@@ -2489,7 +2471,7 @@ Arithmetic after selection uses ordinary emitters. Omitted guards remain
 unavailable to `close() using`, even when present in the ambient context.
 See [`nested_conditional_explicit_arm_equations.md`](https://github.com/clicklang/click/blob/master/mdtests/nested_conditional_explicit_arm_equations.md).
 Boolean and constructor-valued conditionals use the same arm equations.
-For example, from `flag == true`, `known()` proves
+For example, from `flag == true`, `close()` proves
 `(if flag { Some(x) } else { None }) == Some(x)`. Nested selections expose
 one arm at a time and retain each proof as an explicit rewrite. A Boolean
 comparison with a literal can also use the selected arm's exact truth fact.
@@ -2508,7 +2490,7 @@ above `INT32_MAX`, and nonnegative int64 constants through `UINT32_MAX`.
 Missing selected bounds and bounds one below the attainable sum are refused.
 See [`widened_unsigned_sum_bounds.md`](https://github.com/clicklang/click/blob/master/mdtests/widened_unsigned_sum_bounds.md)
 and its adjacent refusal fixture. Exact type bounds on observations at
-program points expand to `known()` when the bound follows from the type.
+program points expand to `close()` when the bound follows from the type.
 Other retained-read and history obligations keep the compatibility normalizer
 with their selected facts and version points. Other specialized selected rules
 normalize from explicit inputs, while polynomial
@@ -2517,14 +2499,14 @@ ordinary tactics. The [library reference](../library/index.md#foundational-integ
 states the named laws' exact guards.
 
 Integer inequality composition writes the equalities that convert bounds
-to and from `left - right <= 0`. `known()` checks the local equalities,
+to and from `left - right <= 0`. `close()` checks the local equalities,
 and the algebra emitter writes named laws and rewrites for coefficient
 rearrangements. A cited fact that is false by computation can close with
 `contradiction(fact)` directly.
 
 Bounded cast identities expand by proving the exact destination range from
 the selected bounds and then closing the observation equality with
-`known()`. Native and Integer spellings of the source bounds can be cited.
+`close()`. Native and Integer spellings of the source bounds can be cited.
 For example, a signed value bounded from 1 through 100 keeps its Integer
 value when cast to `uint32`.
 
@@ -2619,7 +2601,7 @@ fact. Write `rewrite(x, y)`; the old `rewrite(x == y)` form is refused.
   arm: `unfold` or `match` first. An unfolded `match` the rewrite cannot
   enter is left exactly as it was.
 - Rewriting a fact rather than the goal: rewrite a goal that restates it,
-  then close with `known()`.
+  then close with `close()`.
 
 **Failure, checking, and tools:**
 
@@ -2651,7 +2633,7 @@ access in a proof; it is not parsed as the shadowed-binder qualifier.
 **Accepts** a goal whose lowered head is one of these:
 
 - `A implies B`: `A` becomes a fact and the goal is `B`. A conjunction `A` is
-  available conjunct by conjunct, so `known()` closes `0 <= k` after
+  available conjunct by conjunct, so `close()` closes `0 <= k` after
   introducing `0 <= k and k < n`. `implies` groups to the right, so
   `A implies B implies C` takes two `intro()`s.
 - `forall (x: T) { B }` for an `int32`, `uint64`, pointer, `Integer`, or
@@ -2672,10 +2654,9 @@ access in a proof; it is not parsed as the shadowed-binder qualifier.
   that condition in the first arm and use the complementary fact in the
   second arm.
 - A conjunction: `all`. A disjunction: prove one disjunct with `have` and
-  close with `known()`.
+  close with `close()`.
 - An existential, including `(lo..hi).any(...)`: `witness`.
-- A comparison or other leaf: `normalize`, `close() using`, `known`, or
-  another closer.
+- A comparison or other leaf: `normalize()`, `close()`, or `close() using`.
 
 **Failure, checking, and tools:**
 
@@ -2873,7 +2854,7 @@ An unavailable source names the missing quantified fact. A non-universal or
 wrongly typed argument is refused locally. Missing guards do not cause an
 instantiation error: they remain in its resulting implication. After all
 arguments have checked, the step closes the goal if it added that exact
-fact. Use `known()` to close a consequence made available by propagation.
+fact. Use `close()` to close a consequence made available by propagation.
 Expansion retains the argument list and any needed guard proofs as ordinary
 `have` blocks. Checking does
 indexed source lookup and substitution over the selected body, without scans
@@ -2918,7 +2899,7 @@ generates obligations from the instantiated theorem requirements and argument
 evaluation, in pure proofs, at the execution frontier, and on returned
 outcomes. Available facts and direct checking close these obligations,
 including evaluation conditions that are already established in scope.
-Ordinary implicit `solve()` proves any remaining obligations. You can
+Ordinary implicit `close()` proves any remaining obligations. You can
 establish a missing fact first with `have P by { ... }`.
 
 **Failure, checking, and tools:**
@@ -2962,13 +2943,13 @@ names are in scope, and:
   conversions of constants fold, so `(uint64)` of an `int32` constant becomes
   a `uint64` constant. Nothing else is normalized.
 - Closes the goal when the refreshed goal is an available fact, such as the
-  equation just added. After that only `known`, `solve`, or `normalize`
+  equation just added. After that only `close()` or `normalize()`
   may follow.
 - At a C execution frontier, adds the equation and leaves the frontier.
 - With `at(point, ...)`, adds `at(point, function(args)) == at(point, body)`:
   the defining equation with the arguments' array contents read at `point`,
   and rewrites occurrences of `at(point, function(args))`
-  (`mdtests/unfold_at_a_point_opens_a_pure_function_there.md`). `solve`
+  (`mdtests/unfold_at_a_point_opens_a_pure_function_there.md`). `close()`
   evaluates a call that a fact names at a point, such as a postcondition at
   the call's entry, with this form.
 - For an `Integer` range-fold body, a decided empty range exposes its initial
@@ -3217,15 +3198,15 @@ premise it could not prove.
 
 **Core.** Open a nested goal `P`; on success, add `P` to the surrounding context
 without changing its execution frontier. `have P;` without a proof is `have P by
-solve();`, and a one-step proof may drop the braces: `have P by T(args);`. A
-`have` executes no C. On a linear `Integer` bound `solve`
+close();`, and a one-step proof may drop the braces: `have P by T(args);`. A
+`have` executes no C. On a linear `Integer` bound `close()`
 refutes the integer negation from the facts connected to `P` and applies the
 result as ordinary Integer law applications
 ([`have_by_solve_refutes_a_linear_bound.md`](https://github.com/clicklang/click/blob/master/mdtests/have_by_solve_refutes_a_linear_bound.md)).
 
 Connected `int32`, `int64` and `uint64` order facts are carried to `Integer` by
-`known()`, since a comparison of observations is the native comparison,
-and `uint64` values get their type range by `known()`; only
+`close()`, since a comparison of observations is the native comparison,
+and `uint64` values get their type range by `close()`; only
 the selected carried facts are kept
 ([`solve_carries_machine_orders_to_integer.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_carries_machine_orders_to_integer.md)).
 
@@ -3241,17 +3222,17 @@ definedness fact
 ([`solve_proves_signed_addition_defined.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_proves_signed_addition_defined.md)),
 and each `to_integer(a + b)` or `to_integer(a - b)` in the goal is observed term
 by term: a signed operation once it is defined, and a `uint64` one once it
-does not wrap, by `known()` reading both
+does not wrap, by `close()` reading both
 constant bounds of its exact value
 ([`solve_observes_an_operation_term_by_term.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_observes_an_operation_term_by_term.md)).
 
 Machine equality facts are carried by rewriting, each observed value gets its
-type range by `known()`, an `int32`, `int64` or `uint64`
+type range by `close()`, an `int32`, `int64` or `uint64`
 equality goal is
 proved as its observed reading once both sides are shown defined, splitting an
 equality into its two bounds when needed, and a conjunction goal is split
 ([`solve_proves_a_conservation_equation.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_proves_a_conservation_equation.md)).
-On an implication `A implies B`, `solve` introduces `A` and closes `B`, with
+On an implication `A implies B`, `close()` introduces `A` and closes `B`, with
 this arithmetic and the searches below, as for `result == 1 implies cap ==
 old(cap) + 1` on a path where the antecedent reads `true`
 ([`solve_proves_an_implication_whose_consequent_needs_the_solver.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_proves_an_implication_whose_consequent_needs_the_solver.md)).
@@ -3262,11 +3243,10 @@ operands' explicit type ranges by ordinary product-bound applications included
 and integral-cast identities this arithmetic uses, nested ones included, are
 described in [mathematical integers](../../internals/mathematical-integers.md#in-range-machine-sums-differences-and-products).
 
-When its other strategies miss, `solve` searches chains of at most three
+When its other strategies miss, `close()` searches chains of at most three
 `rewrite` steps by the equalities connected to `P`, machine, `Integer` and
 algebraic alike, each in either direction, and closes the rewritten goal by
-`known`, `normalize`, the direct logical closer or, a few times per search,
-`solve`.
+direct closure, normalization, or a bounded recursive search.
 
 Each rewrite is a checked step, and the search offers at most 64 equalities,
 those that rewrite `P` itself first, and tries at most 256 rewrites, so a large
@@ -3276,10 +3256,10 @@ connected component fails promptly
 
 The search cites only equalities that raise at that point; a fact
 from an earlier `have` or a proof `if` condition inside a pure theorem has none
-and is not offered. In a pure theorem, an omitted proof of `ensures P` is the
-same `solve`. `have name: P` also names the fact: until the end of
+and is not offered. In a pure theorem, an omitted proof of `ensures P` uses the same
+closure and search as `close()`. `have name: P` also names the fact: until the end of
 the enclosing block, `name` stands for `P` wherever a proposition is cited
-whole, as in `using { name; }`, `have name by known();` or `contradiction(name)`, and is
+whole, as in `using { name; }`, `have name by close();` or `contradiction(name)`, and is
 read as `P` there, so citing it proves exactly what restating `P` proves.
 
 The name is not visible inside the fact's own proof, and expansion writes `P` in
@@ -3516,7 +3496,7 @@ Commuted operands name their commutativity equations separately. The library
 For Integer `truncating_quotient(n, d)` and `truncating_remainder(n, d)`,
 selected constant lower/upper bounds on `n` and `d` can prove a constant
 result bound when the divisor interval excludes zero. Expansion states the
-numerical endpoint conditions with `known()`, proves the nonzero divisor
+numerical endpoint conditions with `close()`, proves the nonzero divisor
 from the selected interval, and applies ordinary quotient/remainder lemmas.
 Positive-divisor quotient bounds also accept `n <= bound * d` or
 `bound * d <= n` together with `1 <= d`, including symbolic bounds.
@@ -3525,7 +3505,7 @@ Remainder proofs retain both the dividend and divisor envelopes and the case
 where the dividend's magnitude is smaller than every divisor's magnitude.
 
 These expansions and their derived library proofs contain no `normalize()`
-or implicit solving. Selection runs under the existing `solve` budgets;
+or implicit solving. Selection runs under the existing proof search budgets;
 replay checks only the written arguments and premises. Missing bounds, a
 zero-crossing divisor interval, and false result bounds do not justify the
 interval route. Native machine definedness remains a separate obligation.
@@ -3535,7 +3515,7 @@ interval route. Native machine definedness remains a separate obligation.
 Use `close() using { L <= x; x <= U; M <= y; y <= N; }` to prove
 an exact bound on the mathematical product `x * y`. Each interval endpoint
 and the result bound must be constant, with ordered interval endpoints.
-Expansion writes four numerical corner checks with `known()`, followed by
+Expansion writes four numerical corner checks with `close()`, followed by
 `apply(integer::product_lower_bound(...))` or
 `apply(integer::product_upper_bound(...))`. The library proofs
 split on signs and apply multiplication order and transitivity explicitly;
@@ -3587,7 +3567,7 @@ steps and transport the unfolded definition.
 **Form:** `transport(P, Q)`
 
 **Specialized.** Write it when a fact stated at an earlier state is needed at
-the current one and neither `step` nor `solve` carried it. When exact source `P`
+the current one and neither `step` nor `close()` carried it. When exact source `P`
 is available, derive target `Q` at another certified point, citing `P` alone
 as frame evidence. No other available fact is searched for: a frame that needs
 more premises is written in the `using` form below.
@@ -3655,7 +3635,7 @@ for replay. See `mdtests/single_write_transport_expansion.md` and
 
 For several statements, cite each footprint separation in `using`. Expansion
 writes one `have at(statement(i).exit, read) == at(statement(i).entry, read)`
-proved by `preserve` per cited footprint, then `known()` joins the
+proved by `preserve` per cited footprint, then `close()` joins the
 endpoint equalities. The premises can be written in either order; they must
 cover the read's path to the current point. No intermediate footprint or
 separation is discovered from history, and failure of ordinary equality closure is final rather
@@ -3665,9 +3645,9 @@ use this form. See `mdtests/multi_write_transport_expansion.md`.
 A focused comparison with one read operand changing from a statement entry
 to the current point uses the same preservation chain. For example,
 `transport(at(statement(0).entry, *q) > 0, *q > 0) using { ... }`
-first retains the earlier inequality with `known()`, proves the read
+first retains the earlier inequality with `close()`, proves the read
 equality from the cited footprint separations, then uses `rewrite` and
-`known()` to close the current comparison. This also carries a known
+`close()` to close the current comparison. This also carries a known
 value, such as `at(statement(0).entry, *q) == 7` to `*q == 7`. It covers
 non-reflexive `==`, `<`, `<=`, `>`, `>=`, and `!=`, with the changing operand
 on either side; the other operand and comparison operator must be unchanged. It also applies to abstract
@@ -3682,13 +3662,13 @@ integer literals are point-independent; every other operand retains an
 explicit `at(...)`. Thus an old comparison of two reads can carry one read
 while the target explicitly keeps the other at its old point, but this route
 does not silently substitute the other's current value. The original source
-fact remains in the proof and is checked by `known()`.
+fact remains in the proof and is checked by `close()`.
 See `mdtests/state_comparison_transport_expansion.md`.
 
 When both operands are reads at earlier points, the comparison route can
 preserve both: `transport(at(statement(0).entry, *q == *r), *q == *r)`.
 Cite the footprint separation for each read in `using`. Expansion writes one
-preservation chain per operand, rewrites both, and closes with `known()`.
+preservation chain per operand, rewrites both, and closes with `close()`.
 Selection uses the explicitly written single-cell dereference or named
 resource-field subject; it does not discover aliases or prove range containment.
 Every supplied separation must be used and checked. See
@@ -3699,7 +3679,7 @@ Expansion emits a flat `all` block in goal order, with a preservation and
 rewrite proof for each scalar leaf. This form handles
 matching conjunction structure; selection and regrouping are described below. The source can wrap the whole tree, a
 subtree, or individual leaves in `at(...)`; nested `at(...)` wrappers are not
-handled by this route. Each leaf checks its earlier fact with `known()`
+handled by this route. Each leaf checks its earlier fact with `close()`
 and uses the supplied footprint separations for its changing reads. This covers
 memory and root fields of named resources across one or several statements.
 The explicit separations are indexed once by their written cell or resource,
@@ -3714,7 +3694,7 @@ keeps two in a different order. The target may regroup or repeat selected
 leaves in a conjunction tree.
 The driver indexes the written source's `at(...)` comparison leaves once and
 selects each target leaf by exact source text. It emits a `have` for each selected
-historical leaf using `known()`, followed by its ordinary preservation/rewrite
+historical leaf using `close()`, followed by its ordinary preservation/rewrite
 proof, and combines the results with `all` in the target's conjunct order.
 Discarded conjuncts need not remain true; only the selected reads need footprint
 separations. The supplied separations are indexed once and must all be used and
@@ -3730,8 +3710,8 @@ built from `and`, `or`, `not`, nested `implies`, and supported scalar comparison
 leaves. For example,
 `transport(at(statement(0).entry, (*q == 7 and *r > 0) implies (*q > 0 implies *r == 8)), (*q == 7 and *r > 0) implies (*q > 0 implies *r == 8))`
 uses footprint separations for reads throughout the guard and conclusion.
-Expansion retains the earlier whole fact with `known()`, proves each
-selected read's preservation, then closes the whole goal with `known()`
+Expansion retains the earlier whole fact with `close()`, proves each
+selected read's preservation, then closes the whole goal with `close()`
 using those equalities. It emits no whole-goal rewrites and does not assume
 that any guard is true. Exact shared read pairs use one preservation chain.
 The driver traverses the written logical trees once and indexes explicit
@@ -3776,8 +3756,8 @@ Beyond it:
   `memset(dst, 7, 4); dst[4] = 0;`, `memset`'s guarded postcondition carries
   to `(0u64..4u64).all(|k| { dst[k] == 7 })`.
 
-The rule answers the same for every caller, so `solve`'s transport between points
-reaches it too, and `solve` offers an `A and B` source when the goal is held at
+The rule answers the same for every caller, so `close()`'s transport between points
+reaches it too, and `close()` offers an `A and B` source when the goal is held at
 a recorded point only as one of its conjuncts.
 
 **Outside it**, with what to write instead:
@@ -3941,7 +3921,7 @@ execution frontier, or at a function outcome after the C has returned) or in a
   match up to equality by current facts: under `requires p == q;`,
   `fold(cell(q))` consumes `p`'s cells.
 - Each body `fact` is proved by its written obligation proof or by ordinary
-  implicit `solve()`. An already-known fact is still an obligation.
+  implicit `close()`. An already-known fact is still an obligation.
 
 It consumes the clauses' facts and adds the folded resource; the pure facts
 stay. Each body fact without a written proof goes to the implicit closer
@@ -3961,7 +3941,7 @@ described below, which is smart: its miss is not a `fold` bug.
 **Failure, checking, and tools:**
 
 Every body fact is an obligation, including exactly available and trivially
-true facts. The driver uses its written proof or ordinary `solve()`, and
+true facts. The driver uses its written proof or ordinary `close()`, and
 expansion retains that proof. A failed proof names the body fact.
 
 A body fact over a witness the proof cannot name cannot be written as a
@@ -3984,7 +3964,7 @@ followed by the proof of its one body fact, written as
 the resource's body fact over the fold's arguments and proved at the fold, as a
 `have` would.
 
-The body is one tactic call, such as `solve();`, or a block.
+The body is one tactic call, such as `close();`, or a block.
 
 **Failure, checking, and tools:**
 
@@ -4115,7 +4095,7 @@ Argument evaluation and instantiated contract requirements are ordinary proof
 obligations at the selected state before the tactic changes its resources.
 Argument obligations come first. Use
 `by { ... }` for one obligation or `{ requires P by ...; }` to name obligations.
-Omitted proofs use implicit `solve()`, and expansion retains the proofs before
+Omitted proofs use implicit `close()`, and expansion retains the proofs before
 the tactic's resource effects are applied.
 See [the checked call examples](https://github.com/clicklang/click/blob/master/mdtests/user_tactic_requires_obligations.md).
 
@@ -4166,7 +4146,7 @@ inside a `have` proof with a concrete program state. It performs indexed
 permission lookups, without looking for a covering range or following
 history. The held resources do not change.
 
-For a fixed-size linked-pointer view, `solve()` can emit this observation
+For a fixed-size linked-pointer view, `close()` can emit this observation
 directly when the range already names held storage. When the base is a
 pointer read from an initializer, expansion cites its equality with the
 file-qualified object, rewrites the view to that object, and observes the
@@ -4188,7 +4168,7 @@ To restrict the resulting fact to a smaller range, use `separation::contains_sub
 and `separation::viewable_restrict`. For example, see
 [`observe_memory_after_store.md`](https://github.com/clicklang/click/blob/master/mdtests/observe_memory_after_store.md).
 [`observe_uninitialized_memory_rejected.md`](https://github.com/clicklang/click/blob/master/mdtests/observe_uninitialized_memory_rejected.md)
-checks that a subsequent `solve` still cannot establish initialization.
+checks that a subsequent `close()` still cannot establish initialization.
 
 The remaining rules in this section describe observing a declared composite
 resource.
@@ -4256,7 +4236,7 @@ aggregate search cost is significant even though each smart tactic is prompt.
 `click profile` reports smart and simple work under the same concepts:
 statement transitions are `step`, checked loop transitions are `loop`,
 fact transports are `transport`, and atomic
-reasoning uses rules such as `known`, `normalize`, `rewrite`, and named
+reasoning uses rules such as `close()`, `normalize`, `rewrite`, and named
 theorem applications. A slow simple leaf is a Click performance bug. A
 successful slow smart tactic is an expansion candidate. An unsuccessful smart
 tactic has nothing to expand; decompose that proof unless its search failed to
@@ -4270,7 +4250,7 @@ grows.
 
 ## Arithmetic bridge prerequisites
 
-`solve` carries connected machine comparisons into mathematical `Integer`
+`close()` carries connected machine comparisons into mathematical `Integer`
 comparisons through checked standard-library theorems. When observing an
 addition or subtraction requires its own definedness or no-wrap bound, a
 nested search does not re-enter the same operation's bridge. Already available
@@ -4286,7 +4266,7 @@ bound rejected.
 ## Termination checks
 
 These checked steps run inside `termination by { ... }`, including its nested
-`have` bodies. They establish ordinary propositions; `known()` then closes the
+`have` bodies. They establish ordinary propositions; `close()` then closes the
 corresponding goal. See [program termination proofs](../language/index.md#program-termination-proofs).
 
 **Accepts:** `check_termination_local("f")` names a generated function body;
@@ -4305,18 +4285,18 @@ unrelated functions and proof facts are not enumerated.
 
 **Outside it:** these steps cannot run in an unrelated function or theorem
 proof, introduce a function absent from the generated scope, or replace a
-missing premise. Establish that premise in a `have` proof or use `solve()` to
+missing premise. Establish that premise in a `have` proof or use `close()` to
 plan the required steps. The checked example is
 `mdtests/termination_ordinary_proof_steps.md`.
 
 ### Explicit `Integer` algebra expansion
 
-Coefficient algebra and polynomial identities selected by `solve()` expand
+Coefficient algebra and polynomial identities selected by `close()` expand
 to applications of Integer distributivity, associativity, commutativity and
-sign laws, followed by explicit rewrites and `known()` additive or numeric
+sign laws, followed by explicit rewrites and `close()` additive or numeric
 leaves. Calls, reads, folds, and machine observations remain opaque operands.
 Polynomial discovery uses the existing tactic budget and a 4096-step output
-bound; it does not run inside `known()`. Supporting library proofs use
+bound; it does not run inside `close()`. Supporting library proofs use
 ordinary tactics.
 
 Nonnegative quotient shifts use `integer::nonnegative_quotient_shift`: for

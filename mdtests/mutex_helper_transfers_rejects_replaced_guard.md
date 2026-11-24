@@ -18,7 +18,7 @@ void acquire(struct holder *p) {
 } by {
     step();
     step();
-    solve();
+    close();
 }
 void release(struct holder *p) {
     owns access: mutex_use(&p->mu);
@@ -26,7 +26,7 @@ void release(struct holder *p) {
 } by {
     step();
     step();
-    solve();
+    close();
 }
 void twice(struct holder *p) {
     owns access: mutex_use(&p->mu);
@@ -36,7 +36,7 @@ void twice(struct holder *p) {
     let { guard: replacement } = step(acquire, { access: access });
     step(release, { access: access, guard: acquired });
     step();
-    solve();
+    close();
 }
 ```
 

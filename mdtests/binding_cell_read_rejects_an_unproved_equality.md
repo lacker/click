@@ -79,7 +79,7 @@ int32 read_through_unproved_local(struct cell* node, struct cell* parent) {
             step();
             let g = fold(holder_at(node), { model: Holder::Full(identity, value) });
             step();
-            solve();
+            close();
         },
     }
 }

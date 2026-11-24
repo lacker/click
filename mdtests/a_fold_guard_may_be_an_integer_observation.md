@@ -19,7 +19,7 @@ theorem step(n: uint64, k: uint64) {
     requires to_integer(n - k) < 18446744073709551615;
     ensures total(0u64, (n - k) + 1u64) == total(0u64, n - k) + to_integer(n - k) by {
         unfold(total(0u64, (n - k) + 1u64));
-        solve();
+        close();
     }
 }
 ```

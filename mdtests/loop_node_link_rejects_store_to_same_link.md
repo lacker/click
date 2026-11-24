@@ -55,7 +55,7 @@ void rotate(struct node* parent) {
         invariant parent->right != 0;
         invariant parent->right->left != 0;
         decreases 0;
-        initialize by solve();
+        initialize by close();
         maintain by {
             match t.model {
                 Tree::Empty => { contradiction(t.model == Tree::Empty); },
@@ -80,7 +80,7 @@ void rotate(struct node* parent) {
                                     have tmp2 == iid;
                                     mark inner_inputs;
                                     step(); step(); step(); // The three link stores.
-                                    have sid->right == at(inner_inputs, sid->right) by known();
+                                    have sid->right == at(inner_inputs, sid->right) by close();
                                 },
                             }
                         },
@@ -93,5 +93,5 @@ void rotate(struct node* parent) {
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: could not establish `sid->right == at(inner_inputs, sid->right)`
 ```

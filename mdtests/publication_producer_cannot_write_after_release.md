@@ -40,7 +40,7 @@ void* producer(void* argument) {
     step();
     step();
     step();
-    solve();
+    close();
 }
 ```
 

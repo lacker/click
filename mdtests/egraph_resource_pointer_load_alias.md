@@ -35,7 +35,7 @@ void check(struct node* p) {
             have &p->next == &id->next;
             have p->next == id->next;
             step_until(function.exit);
-            solve();
+            close();
         },
     }
 }

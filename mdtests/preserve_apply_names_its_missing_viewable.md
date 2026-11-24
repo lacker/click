@@ -44,7 +44,7 @@ theorem walk_in_range(next: int32[], n: int32, from: int32, fuel: Nat) {
         match fuel {
             Nat::Zero => {
                 unfold(walk(next, from, Nat::Zero));
-                solve();
+                close();
             }
             Nat::Succ(previous) => {
                 apply(ih(previous));
@@ -54,10 +54,10 @@ theorem walk_in_range(next: int32[], n: int32, from: int32, fuel: Nat) {
                     instantiate(forall (k: int32) {
                         0 <= k and k < n implies 0 <= next[k] and next[k] < n
                     }, walk(next, from, previous));
-                    known();
+                    close();
                 }
                 unfold(walk(next, from, Nat::Succ(previous)));
-                known();
+                close();
             }
         }
     }
@@ -81,7 +81,7 @@ theorem walk_frame(a: int32[], b: int32[], n: int32, from: int32, fuel: Nat) {
             Nat::Zero => {
                 unfold(walk(a, from, Nat::Zero));
                 unfold(walk(b, from, Nat::Zero));
-                solve();
+                close();
             }
             Nat::Succ(previous) => {
                 apply(ih(previous));
@@ -91,7 +91,7 @@ theorem walk_frame(a: int32[], b: int32[], n: int32, from: int32, fuel: Nat) {
                     instantiate(forall (k: int32) {
                         0 <= k and k < n implies a[k] == b[k]
                     }, walk(a, from, previous));
-                    known();
+                    close();
                 }
                 unfold(walk(a, from, Nat::Succ(previous)));
                 unfold(walk(b, from, Nat::Succ(previous)));
@@ -124,7 +124,7 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
     have exists (fuel: Nat) { walk(next, from, fuel) == cur } by {
         witness(Nat::Zero);
         unfold(walk(next, from, Nat::Zero));
-        solve();
+        close();
     }
     loop {
         decreases unmarked(visited, 0, n);
@@ -136,24 +136,24 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
         invariant exists (fuel: Nat) { walk(next, from, fuel) == cur };
         views next[0..n];
         owns visited[0..n];
-        initialize by { solve(); }
+        initialize by { close(); }
         maintain by {
             observe(visited[0..n]);
             mark iter;
             let previous = obtain(exists (previous: Nat) { walk(next, from, previous) == cur });
             have at(iter, forall (k: int32) {
                 0 <= k and k < n implies 0 <= next[k] and next[k] < n
-            }) by { known(); }
+            }) by { close(); }
             have 0 <= next[cur] and next[cur] < n by {
                 instantiate(forall (k: int32) {
                     0 <= k and k < n implies 0 <= next[k] and next[k] < n
                 }, cur);
-                known();
+                close();
             }
             if cur == to {
                 step();
                 step();
-                solve();
+                close();
             } else {
                 step();
             }
@@ -178,7 +178,7 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
                 have next[k] == at(iter, next[k]) by {
                     preserve(memory(next[k]), loop(0).statement(1));
                 }
-                known();
+                close();
             }
             have forall (k: int32) {
                 0 <= k and k < n implies 0 <= next[k] and next[k] < n
@@ -191,7 +191,7 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
                     0 <= j and j < n implies at(iter, next[j]) == next[j]
                 }, k);
                 rewrite(next[k], at(iter, next[k]));
-                known();
+                close();
             }
             have forall (k: int32) { 0 <= k and k < cur implies at(iter, visited[k]) == visited[k] } by {
                 intro(); intro();
@@ -205,7 +205,7 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
                 have visited[k] == at(iter, visited[k]) by {
                     preserve(memory(visited[k]), loop(0).statement(1));
                 }
-                known();
+                close();
             }
             have forall (k: int32) { cur < k and k < n implies at(iter, visited[k]) == visited[k] } by {
                 intro(); intro();
@@ -219,7 +219,7 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
                 have visited[k] == at(iter, visited[k]) by {
                     preserve(memory(visited[k]), loop(0).statement(1));
                 }
-                known();
+                close();
             }
             observe(at(iter, visited)[0..n]);
             apply(unmarked_point_update(at(iter, visited), visited, 0, n, n, cur));
@@ -233,7 +233,7 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
                 instantiate(forall (k: int32) {
                     0 <= k and k < n implies 0 <= next[k] and next[k] < n
                 }, cur);
-                known();
+                close();
             }
             step();
             observe(next[0..n]);
@@ -249,16 +249,16 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
             }
             have walk(next, from, Nat::Succ(previous)) == cur by {
                 unfold(walk(next, from, Nat::Succ(previous)));
-                known();
+                close();
             }
             apply(walk_in_range(next, n, from, Nat::Succ(previous)));
             have 0 <= cur and cur < n by {
                 rewrite(cur, walk(next, from, Nat::Succ(previous)));
-                known();
+                close();
             }
             have exists (fuel: Nat) { walk(next, from, fuel) == cur } by {
                 witness(Nat::Succ(previous));
-                known();
+                close();
             }
         }
     }

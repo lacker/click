@@ -37,7 +37,7 @@ theorem transfer_is_forward(callback: int32* (*)(int32*)) {
     ensures Forward(callback) by {
         unfold(Transfer(callback));
         unfold(Forward(callback));
-        solve();
+        close();
     }
 }
 int32* identity(int32* p) {
@@ -45,7 +45,7 @@ int32* identity(int32* p) {
     produces cell(result);
 }
 theorem identity_has_transfer() executes identity(int32* p) {
-    ensures Transfer(&identity) by { step_until(function.exit); solve(); }
+    ensures Transfer(&identity) by { step_until(function.exit); close(); }
 }
 int32 direct(int32* p, int32* q) {
     consumes cell(p);
@@ -55,7 +55,7 @@ int32 direct(int32* p, int32* q) {
     apply(identity_has_transfer());
     step();
     step(Transfer);
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }
 int32 refined(int32* (*callback)(int32*), int32* p, int32* q) {
     requires Transfer(callback);
@@ -66,14 +66,14 @@ int32 refined(int32* (*callback)(int32*), int32* p, int32* q) {
     apply(transfer_is_forward(callback));
     step();
     step(Forward);
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }
 int32 indirect(int32* (*callback)(int32*), int32* p, int32* q) {
     requires Transfer(callback);
     consumes cell(p);
     owns *q;
     ensures result == 0;
-} by { step_until(function.exit); solve(); }
+} by { step_until(function.exit); close(); }
 ```
 
 ```expect

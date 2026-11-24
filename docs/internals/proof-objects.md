@@ -107,7 +107,7 @@ for the same C loop identity while preserving the current proof-local scope.
 Wide generated invariant bundles use balanced conjunctions, keeping all members
 in declaration order while bounding certificate nesting logarithmically. Short
 bundles retain their established grouping. Wide source conjunctions can instead
-expand to sequential checked `have` leaves followed by `known`; every
+expand to sequential checked `have` leaves followed by `close()`; every
 reified leaf must lower to the exact kernel proposition. Neither representation
 raises the parser depth limit or skips an invariant obligation.
 
@@ -367,8 +367,7 @@ program state, checks their root assumptions against the retained path,
 and imports only the completed conclusions. It imports the path's execution
 facts and resource observations once, then checks persistent fact deltas for
 successive proofs. Resource folds recompute their semantic facts; they never
-replace the path context with a proof's ambient assumptions. Explicit
-resource `known` closers and `solve` retain the same checked claim
+replace the path context with a proof's ambient assumptions. Direct resource closure and the fallback search both retain checked claim
 receipts. The ordinary resource-closing operation proves their joint
 availability before the outcome completes, independently of how its
 certificate is printed.
@@ -511,11 +510,11 @@ scope owns their identities; Source names them with `termination_returns("f")`,
 cannot be assumed in unrelated contracts or theorems.
 
 An optional top-level `termination by { ... }` block runs the ordinary proof
-driver: `have`, logical steps, `known`, and `solve` have their normal meanings.
-Omitting the block invokes ordinary bounded `solve` on the same root. Its
+driver: `have`, logical steps, and `close()` have their normal meanings.
+Omitting the block invokes ordinary bounded proof search on the same root. Its
 termination strategy plans the generated dependencies and emits checked
 `check_termination_local("f")`, `check_termination_component("f", strict|normal)`,
-and `check_termination_callbacks()` steps, followed by `known()`. Local descent
+and `check_termination_callbacks()` steps, followed by `close()`. Local descent
 uses the same primitives as the standalone termination API; its result is
 retained as a fact and reused by strict and normal dependency steps. The
 intermediate facts are written `termination_local("f")`, `termination_strict("f")`,
@@ -673,10 +672,10 @@ Independent conditional execution artifacts have no opened-entry authority and
 retain their separate entry preparation and rule-packaging APIs.
 
 Closing goal state is fixed-size and shared proof forks retain independent
-updates. An explicit `known()` discharges the selected closing goal using
-its retained outcome, receipts and body effects. Written `solve()` selects the
+updates. An explicit `close()` discharges the selected closing goal using
+its retained outcome, receipts and body effects. Written `close()` selects the
 same operation; the implicit solver schedules it for each omitted closing proof.
-Expansion records one `known()` per completed goal, so rechecking requires
+Expansion records one `close()` per completed goal, so rechecking requires
 no implicit proof of these obligations. A checked resource transition retains
 resource/lifetime evidence without silently closing either goal. Explicit
 resource changes reopen the affected goals. Packaging an exit completion reads
@@ -750,7 +749,7 @@ an authorized rebase of that same path; there is no second lowering to match.
 A claim with no `by` block ends, like every script, with the implicit closer
 (`SmartSite::Implicit`, which diagnostics call the implicit closer): the direct
 logical closure of the kernel's claim goal from the outcome Proof or, when
-that does not apply, the smart `solve` search, whose certificates are
+that does not apply, the search behind `close()`, whose certificates are
 checked like explicit ones; each
 records the completion like any other closer. A
 resource ensure is an exact check against the outcome that returns an opaque
@@ -850,11 +849,9 @@ simple and structural operations as explicit tactics. A candidate is not
 accepted merely because the planner labels it successful; success is a
 completed checked descendant.
 
-A checked `solve` derivation is added only for a common, bounded,
+A checked derivation for proof search is added only for a common, bounded,
 checkable shape: it must emit proof steps the kernel checks one at a
-time and a certificate can encode. That the search-based `solve` decision
-procedure could decide a goal is not a criterion; it is a diagnostic, not
-an authority.
+time and a certificate can encode. A search result guides diagnosis. The emitted steps establish the goal.
 
 For expansion, the completed proof's lineage is filtered to the selected
 source site and rendered as an explicit Surface Click proof. The complete
@@ -909,7 +906,7 @@ Three standing rules keep the boundary where the 2026-09 cleanup left it.
   emits the proposition as an obligation. One that must choose among
   candidates the kernel itself enumerates lowers the choice as a finite
   disjunction so the proof proves one disjunct, closes it with
-  `known()`, and expansion prints it; open
+  `close()`, and expansion prints it; open
   choices use the existing `instantiate`, `witness`, `obtain`, `rewrite`,
   and `transport` syntax.
 - **Retained evidence names premises, never a context.** A derivation leaf
@@ -935,7 +932,7 @@ Three standing rules keep the boundary where the 2026-09 cleanup left it.
   may reconstruct a match-bound scalar name, but only when lowering that name
   in the same scope yields the exact available kernel premise. The emitted proof
   keeps the source name, never the kernel's fresh variable name.
-  For an implication guarded by algebraic equality, `solve` first tries to
+  For an implication guarded by algebraic equality, `close()` first tries to
   refute the guard with an indexed model equality and direct normalization.
   A successful candidate emits the ordinary scoped `have`, `rewrite`,
   `intro`, and `contradiction` operations, before selecting or raising facts

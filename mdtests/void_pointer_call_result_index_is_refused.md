@@ -25,7 +25,7 @@ void keep(struct holder* h) {
 } by {
     step();
     have statement(0).call(get, 0).result[0] == 5 by {
-        known();
+        close();
     }
     step_until(function.exit);
 }

@@ -6,7 +6,7 @@ and needs no range guard. A checked conversion is written `to_uint16(...)`.
 
 ```click quick-solve
 theorem defined_everywhere(x: int32) {
-    ensures defined(x as uint16) by solve();
+    ensures defined(x as uint16) by close();
 }
 ```
 

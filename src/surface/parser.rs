@@ -126,7 +126,7 @@ const CONTRACT_LET_RECURSION_LIMIT: usize = 8;
 /// `guarded_by` associated a resource with a mutex field by declaration. A
 /// mutex's protected resource now comes from its checked initialization, so
 /// the spelling is refused with that direction.
-const RETIRED_CLOSE_INVARIANTS: &str = "`close_invariants` is retired: a `maintain` script closes the loop's invariants and `decreases` when it reaches the back edge, as a function proof closes its `ensures` at the exit, each by `solve()`; prove one that needs help with `have <invariant> by { ... }` before the back edge";
+const RETIRED_CLOSE_INVARIANTS: &str = "`close_invariants` is retired: a `maintain` script closes the loop's invariants and `decreases` when it reaches the back edge, as a function proof closes its `ensures` at the exit, each by `close()`; prove one that needs help with `have <invariant> by { ... }` before the back edge";
 const RETIRED_GUARDED_BY: &str = "`guarded_by` is retired: a mutex protects the resource its checked `pthread_mutex_init` step deposits, so remove the clause and pass the resource to that step";
 /// The index shape and scalar element type of a C global or static array
 /// visible to one function's contract. Resource lowering only knows parameter
@@ -738,7 +738,7 @@ fn is_builtin_tactic_spelling(name: &str) -> bool {
 }
 
 /// Turn the default `have P;` simplification into the same one-step script
-/// as an explicit `have P by solve();`. Out of line to keep recursive frames small.
+/// as an explicit `have P by close();`. Out of line to keep recursive frames small.
 #[inline(never)]
 fn have_proof_as_written_in_full(proof: SourceProof) -> SourceProof {
     if proof == SourceProof::Tactic(SmartTactic::Solve) {
@@ -748,20 +748,16 @@ fn have_proof_as_written_in_full(proof: SourceProof) -> SourceProof {
     }
 }
 
-fn is_tactic_name(name: &str) -> bool {
-    name == "solve"
-}
-
 /// The refusal of a removed tactic spelling, naming what replaced it.
 fn removed_tactic_refusal(name: &str) -> Option<&'static str> {
     Some(match name {
         "both" => "`both` is retired: write `all { P => { ... } Q => { ... } }`",
         "open" => "`open` is now `with`; write `with(resource) { ... }`",
-        "assumption" => {
-            "`assumption()` is now `known()`; use `known()` to close a goal from available facts"
+        "known" | "solve" | "assumption" => {
+            "this tactic is retired: write `close()`, or `close() using { ... }` to list premises"
         }
         "auto" => {
-            "`auto()` is removed: a `by auto();` proof is the omitted proof, so delete it, and a written `auto();` is `solve();`"
+            "`auto()` is removed: a `by auto();` proof is the omitted proof, so delete it, and a written `auto();` is `close();`"
         }
         "arithmetic" => {
             "`arithmetic()` is now `close() using { ... }`, which closes the goal from only the listed premises; `arithmetic()` with no list is `close() using {}`"
@@ -10580,53 +10576,26 @@ impl Parser {
         }
     }
 
-    fn starts_standalone_smart_proof(&self) -> bool {
-        match self.peek_ident() {
-            // A removed spelling is refused with its replacement.
-            Some(name) if removed_tactic_refusal(name).is_some() => true,
-            // Route a bare `solve` through the missing-parentheses diagnostic.
-            Some("solve") => self.peek_next() != Some(&Token::LParen),
-            _ => false,
-        }
-    }
-
     fn parse_by_clause_body(&mut self) -> Result<SourceProof, ClickError> {
         if self.peek() == Some(&Token::LBrace) {
             self.position += 1;
-            let proof = match self.peek() {
-                Some(Token::Ident(name))
-                    if is_tactic_name(name) && self.starts_standalone_smart_proof() =>
-                {
-                    let open = self.positions[self.position - 1].clone();
-                    let start = self.positions[self.position].clone();
-                    let tactic = self.parse_tactic()?;
-                    self.record_proof_block(open, vec![start]);
-                    self.expect(Token::RBrace)?;
-                    SourceProof::Tactic(tactic)
-                }
-                Some(Token::RBrace) => {
-                    return Err(self.error("`by` block must contain at least one tactic"));
-                }
-                Some(_) => {
-                    let tactics = self.parse_tactic_list_to_rbrace()?;
-                    self.expect(Token::RBrace)?;
-                    SourceProof::Script(tactics)
-                }
-                None => return Err(self.error("expected tactic, got end of input")),
-            };
-            return Ok(proof);
+            if self.peek() == Some(&Token::RBrace) {
+                return Err(self.error("`by` block must contain at least one tactic"));
+            }
+            let tactics = self.parse_tactic_list_to_rbrace()?;
+            self.expect(Token::RBrace)?;
+            return Ok(SourceProof::Script(tactics));
         }
 
-        // `solve()` uses whole-proof automation. Other single calls are one-step scripts.
-        if self.starts_standalone_smart_proof() {
-            let first = self.position;
-            let tactic = self.parse_tactic()?;
-            self.record_implicit_proof(first);
-            return Ok(SourceProof::Tactic(tactic));
-        }
         match self.peek() {
+            Some(Token::Ident(name)) if let Some(refusal) = removed_tactic_refusal(name) => {
+                Err(self.error(refusal))
+            }
             Some(Token::Ident(_)) if self.peek_next() == Some(&Token::LParen) => {
                 Ok(SourceProof::Script(vec![self.parse_implicit_proof_tactic()?]))
+            }
+            Some(Token::Ident(name)) if name == "close" => {
+                Err(self.error("`close` requires parentheses; write `close()`"))
             }
             Some(Token::Ident(name)) => Err(self.error(format!(
                 "expected a proof after `by`, got `{name}`: write one tactic call such as `{name}();`, or a block `{{ ... }}`"
@@ -10708,15 +10677,7 @@ impl Parser {
         }
         let proof = self.parse_by_clause();
         self.loop_proof_value_names = binder_scope;
-        let proof = proof?;
-        // A lone phase `solve()` owns the generated execution and closure steps,
-        // with either brace spelling. Keep it out of per-step source capture.
-        if matches!(&proof, SourceProof::Script(tactics) if matches!(tactics.as_slice(), [ProofTactic::Solve]))
-        {
-            Ok(SourceProof::Tactic(SmartTactic::Solve))
-        } else {
-            Ok(proof)
-        }
+        proof
     }
 
     fn parse_proof_clause_or_default(&mut self) -> Result<SourceProof, ClickError> {
@@ -11386,7 +11347,7 @@ impl Parser {
         }
     }
 
-    /// `have P;`, `have P by solve();` or `have P by { ... }`, after the word
+    /// `have P;`, `have P by close();` or `have P by { ... }`, after the word
     /// `have`. Out of line: the tactic dispatcher that calls it is on the
     /// recursive proof-parsing path and keeps none of this in its frame.
     #[inline(never)]
@@ -11451,7 +11412,7 @@ impl Parser {
                 proof: have_proof_as_written_in_full(SourceProof::Tactic(SmartTactic::Solve)),
             }));
         }
-        // `have P by solve();` proves the fact where it is stated: with no C
+        // `have P by close();` proves the fact where it is stated: with no C
         // to run toward the fact, `solve` is `solve`.
         let binder_scope = self.loop_proof_value_names.clone();
         self.remember_loop_goal_binders(&proposition);
@@ -11459,7 +11420,7 @@ impl Parser {
         self.loop_proof_value_names = binder_scope;
         let proof = proof?;
         self.skip_redundant_semicolon();
-        // `have P;`, `have P by solve();` and `have P by { solve(); }` are
+        // `have P;`, `have P by close();` and `have P by { close(); }` are
         // one proof step. They are one syntax tree too, so every
         // consumer proves and reports them the same way.
         Ok(ProofTactic::Have(ProofHave {
@@ -12195,10 +12156,6 @@ impl Parser {
                 }
                 ProofTactic::Close
             }
-            "known" => {
-                self.expect_empty_tactic_args(&name)?;
-                ProofTactic::Known
-            }
             "sorry" => {
                 self.expect_empty_tactic_args(&name)?;
                 if !crate::surface::verification::sorry_is_allowed() {
@@ -12232,7 +12189,7 @@ impl Parser {
             "intro" => return self.parse_intro_tactic(),
             "split" | "left" | "right" => {
                 return Err(self.error(format!(
-                    "`{name}()` is now `known()`, which closes a conjunction whose sides are facts and a disjunction with one side a fact"
+                    "`{name}()` is now `close()`, which closes a conjunction whose sides are facts and a disjunction with one side a fact"
                 )));
             }
             "enumerate" => {
@@ -12299,15 +12256,6 @@ impl Parser {
                     quantified,
                     arguments,
                 }
-            }
-            "solve" => {
-                self.expect_empty_tactic_args(&name)?;
-                if self.peek_ident() == Some("using") {
-                    return Err(self.error(
-                        "write `close() using { ... }` for a selected-premise proof",
-                    ));
-                }
-                ProofTactic::Solve
             }
             "fold" => {
                 self.expect(Token::LParen)?;
@@ -12825,9 +12773,7 @@ impl Parser {
     }
 
     fn expect_empty_tactic_args(&mut self, name: &str) -> Result<(), ClickError> {
-        if (is_tactic_name(name) || name == "close_invariants")
-            && self.peek() != Some(&Token::LParen)
-        {
+        if matches!(name, "close" | "close_invariants") && self.peek() != Some(&Token::LParen) {
             return Err(self.error(format!("`{name}` requires parentheses; write `{name}()`")));
         }
         self.expect(Token::LParen)?;
@@ -13049,26 +12995,6 @@ impl Parser {
                 "expected code region `function`, `loop(N)`, `region(N)`, `assignment(local, N)`, `read(N)`, or label, got end of input",
             )),
         }
-    }
-
-    fn parse_tactic(&mut self) -> Result<SmartTactic, ClickError> {
-        let tactic = match self.next() {
-            Some(Token::Ident(name)) if name == "solve" => SmartTactic::Solve,
-            Some(Token::Ident(name)) if let Some(refusal) = removed_tactic_refusal(&name) => {
-                self.position -= 1;
-                return Err(self.error(refusal));
-            }
-            Some(Token::Ident(name)) => {
-                return Err(self.error(format!("expected tactic, got `{name}`")));
-            }
-            Some(token) => {
-                return Err(self.error(format!("expected tactic, got {token}")));
-            }
-            None => return Err(self.error("expected tactic, got end of input")),
-        };
-        self.expect_empty_tactic_args("solve")?;
-        self.expect(Token::Semicolon)?;
-        Ok(tactic)
     }
 
     fn parse_ensure_expression(&mut self) -> Result<CExpression, ClickError> {
@@ -19608,8 +19534,8 @@ mod integer_quantifier_parser_tests {
             function identity(x: int32) -> int32 { x }
             theorem state_call(x: int32) {
                 ensures x == x by {
-                    have at(saved, identity(x)) == at(saved, 1) by { known(); }
-                    known();
+                    have at(saved, identity(x)) == at(saved, 1) by { close(); }
+                    close();
                 }
             }
         "#;
@@ -19785,7 +19711,7 @@ mod tactic_classification_tests {
         ),
         (
             "all",
-            "all { x == 1 => { known(); } x <= 1 => { known(); } }",
+            "all { x == 1 => { normalize(); } x <= 1 => { normalize(); } }",
         ),
         (
             "branch",
@@ -19803,7 +19729,6 @@ mod tactic_classification_tests {
         ("witness", "witness(1);"),
         ("obtain", "let x = obtain(exists (k: Integer) { k == k });"),
         ("close", "close();"),
-        ("known", "known();"),
         ("normalize", "normalize();"),
         ("normalize-using", "normalize() using { x == 1; };"),
         ("preserve", "preserve(memory(*p), statement(0));"),
@@ -19819,7 +19744,6 @@ mod tactic_classification_tests {
             "transport(x == 1, y == 1) using { x == y; };",
         ),
         ("instantiate", "instantiate(F, 1);"),
-        ("solve", "solve();"),
         ("close-using", "close() using { x == 1; };"),
         ("check-termination-local", "check_termination_local(\"f\");"),
         (

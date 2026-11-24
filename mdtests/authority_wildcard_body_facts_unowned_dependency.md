@@ -29,14 +29,14 @@ int32 lifecycle() { ensures result == 0 or result == 9; } by {
     branch { true => { } false => {} }
     step(); step();
     fold(authority(slot(&pool, _)));
-    have 0 <= p[0] by solve();
-    have 0 <= p[1] by solve();
-    have p[1] == 2 by solve();
+    have 0 <= p[0] by close();
+    have 0 <= p[1] by close();
+    have p[1] == 2 by close();
     fold(slot(&pool, p));
     fold(slot(&pool, p + 1));
-    have count(slot(&pool, _)) == 2 by solve();
-    with(slot(&pool, p)) { step(); have 0 <= p[0] by solve(); }
-    have count(slot(&pool, _)) == 2 by solve();
+    have count(slot(&pool, _)) == 2 by close();
+    with(slot(&pool, p)) { step(); have 0 <= p[0] by close(); }
+    have count(slot(&pool, _)) == 2 by close();
     with(slot(&pool, p)) {
         with(slot(&pool, p + 1)) { step(); step(); }
     }

@@ -7,7 +7,7 @@ refused where it is declared. Only a C name keeps those spellings (see
 
 ```click
 theorem every_value(x: int32) {
-    ensures forall (true: int32) { x == x } by { solve(); }
+    ensures forall (true: int32) { x == x } by { close(); }
 }
 ```
 

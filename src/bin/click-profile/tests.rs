@@ -706,7 +706,7 @@ fn each_sidecar_spends_its_own_work_budget() {
         .unwrap();
         let path = root.join(format!("{name}.click"));
         fs::write(&path, format!(
-            "verifying \"{name}.c\";\nint32 {name}(int32 x) {{ ensures result == x; }} by {{ step(); known(); }}\n"
+            "verifying \"{name}.c\";\nint32 {name}(int32 x) {{ ensures result == x; }} by {{ step(); close(); }}\n"
         )).unwrap();
         sidecars.push(path);
     }
@@ -1321,7 +1321,7 @@ int32 reset(int32 i, int32 n, int32 flag) {
     loop {
         decreases i;
         invariant i <= n;
-        initialize by { known(); }
+        initialize by { close(); }
         maintain by {
             if flag != 0 {
                 step(); step();
@@ -1331,7 +1331,7 @@ int32 reset(int32 i, int32 n, int32 flag) {
         }
     }
     step();
-    known();
+    close();
 }
 ```
 
@@ -1426,8 +1426,8 @@ fn profile_recommendation_expands_a_mixed_have_body() {
     let source = r#"```click
 theorem mixed(x: int32) {
     ensures x == 1 implies x == 1 by {
-        have x == 1 implies x == 1 by { intro(); solve(); }
-        known();
+        have x == 1 implies x == 1 by { intro(); close(); }
+        close();
     }
 }
 ```
@@ -1476,7 +1476,7 @@ fn profile_resolves_a_project_once_for_reporting_as_tactic_rows_grow() {
         let source = format!(
             "verifying \"identity.c\";\n\
              int32 identity(int32 x) {{ ensures result == x; }} by {{\n\
-             step();\n{}known();\n}}\n",
+             step();\n{}close();\n}}\n",
             "have result == x by { normalize(); }\n".repeat(count)
         );
         fs::write(&path, source).unwrap();

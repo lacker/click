@@ -39,10 +39,10 @@ void fill(uint8* dst) {
         }
         instantiate(at(statement(1).entry,
             (0u64..4u64).all(|j| { defined(dst[j]) and dst[j] == 7 })), k);
-        solve();
+        close();
     }
     step();
-    known();
+    close();
 }
 ```
 

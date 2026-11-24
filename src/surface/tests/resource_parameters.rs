@@ -98,7 +98,7 @@ fn resource_parameters_accept_declared_descriptors() {
     resource cell(p: int32*) { owns *p; }
     theorem transport(A: Resource, B: Resource) {
         requires separate(A, B);
-        ensures separate(A, B) by { known(); }
+        ensures separate(A, B) by { close(); }
     }
     theorem declared(p: int32*, id: int32) {
         requires separate(cell(p), ticket(id));
@@ -164,7 +164,7 @@ fn generic_pointer_parameters_subrange_and_expansion() {
 fn generic_pointer_parameters_require_consistent_element_types() {
     let source = r#"
         theorem same<T>(p: T*, q: T*) {
-            ensures true by { known(); }
+            ensures true by { close(); }
         }
         theorem wrong(p: int32*, q: uint8*) {
             ensures true by {

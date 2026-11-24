@@ -27,15 +27,15 @@ void keep(struct item* root) {
     ensures 1 == 1;
 } by {
     match state.model {
-        Tree::Leaf(identity) => { unfold(state); step_until(function.exit); solve(); },
+        Tree::Leaf(identity) => { unfold(state); step_until(function.exit); close(); },
         Tree::Parent(identity, rest) => {
             let { child: inner } = unfold(state);
             match inner.model {
-                Tree::Leaf(parent) => { unfold(inner); step_until(function.exit); solve(); },
+                Tree::Leaf(parent) => { unfold(inner); step_until(function.exit); close(); },
                 Tree::Parent(parent, tail) => {
                     let { child: leaf } = unfold(inner);
-                    have parent->child != parent by { known(); }
-                    step_until(function.exit); solve();
+                    have parent->child != parent by { close(); }
+                    step_until(function.exit); close();
                 },
             }
         },
@@ -43,5 +43,5 @@ void keep(struct item* root) {
 }
 ```
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: could not establish `parent->child != parent`
 ```

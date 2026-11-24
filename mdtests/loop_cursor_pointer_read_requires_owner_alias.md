@@ -42,7 +42,7 @@ void inspect(struct node* root) {
     loop {
         owns tree: parent_at(root);
         decreases 0;
-        initialize by solve();
+        initialize by close();
         maintain by {
             match tree.model {
                 Parent::At(pid, child_model) => {

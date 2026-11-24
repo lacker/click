@@ -44,7 +44,7 @@ void set_either(int32* p, int32 flag) {
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

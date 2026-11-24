@@ -8,7 +8,7 @@ use super::*;
 fn integer_theorem_argument_capture_scales_with_unused_bindings_and_applications() {
     let mut work_samples = Vec::new();
     for size in [4usize, 16, 64, 256] {
-        let source = "theorem reflexive(z: Integer) { ensures z == z by solve(); }";
+        let source = "theorem reflexive(z: Integer) { ensures z == z by close(); }";
         let parsed = crate::surface::parser::parse_file_items(source).unwrap();
         let theorem = &parsed.theorem_definitions()[0];
         let application = TheoremApplication {

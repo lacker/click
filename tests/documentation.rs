@@ -1576,7 +1576,14 @@ fn every_tactic_form_has_a_checked_positive_fixture() {
 /// the implicit tail's closer, the loop back edge's closer
 /// (`close_invariants`), `choose`, and the arithmetic engine that
 /// `close() using` runs last.
-const INTERNAL_TACTICS: &[&str] = &["arithmetic", "choose", "close_invariants", "implicit tail"];
+const INTERNAL_TACTICS: &[&str] = &[
+    "arithmetic",
+    "choose",
+    "close_invariants",
+    "implicit tail",
+    "known",
+    "solve",
+];
 
 #[test]
 fn cli_inventory_matches_argument_parsers() {

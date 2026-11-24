@@ -20,7 +20,7 @@ int32 f(int32* p) {
 } by {
     step_until(function.exit);
     observe(cell1(p));
-    solve();
+    close();
 }
 ```
 

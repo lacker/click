@@ -12,7 +12,7 @@ theorem forwarded(p: InputForwarded, value: Integer, other: Integer) {
         InputForwarded::Value(x) => ResultForwarded::Item(x),
     }) == ResultForwarded::Item(Box::Value(7)) by {
         rewrite(p, InputForwarded::Value(Box::Value(7)));
-        solve();
+        close();
     }
 }
 
@@ -24,7 +24,7 @@ theorem wrapped(p: InputWrapped, value: Integer, other: Integer) {
         InputWrapped::Value(x) => ResultWrapped::Item(Box::Value(x)),
     }) == ResultWrapped::Item(Box::Value(value)) by {
         rewrite(p, InputWrapped::Value(value));
-        solve();
+        close();
     }
 }
 
@@ -36,7 +36,7 @@ theorem captured(p: InputCaptured, value: Integer, other: Integer) {
         InputCaptured::Value(x) => ResultCaptured::Tagged(x, Box::Value(other)),
     }) == ResultCaptured::Tagged(value, Box::Value(other)) by {
         rewrite(p, InputCaptured::Value(value));
-        solve();
+        close();
     }
 }
 
@@ -48,7 +48,7 @@ theorem tagged(p: InputTagged, value: Integer, other: Integer) {
         InputTagged::Value(x) => ResultTagged::Tagged(x, Box::Value(7)),
     }) == ResultTagged::Tagged(value, Box::Value(7)) by {
         rewrite(p, InputTagged::Value(value));
-        solve();
+        close();
     }
 }
 
@@ -60,7 +60,7 @@ theorem mixed(p: InputMixed, value: Integer, other: Integer) {
         InputMixed::Value(x) => ResultMixed::Item(Pair::Both(Box::Value(x), Box::Value(other))),
     }) == ResultMixed::Item(Pair::Both(Box::Value(value), Box::Value(other))) by {
         rewrite(p, InputMixed::Value(value));
-        solve();
+        close();
     }
 }
 ```

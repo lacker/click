@@ -592,7 +592,7 @@ mod tests {
                 .filter(|p| !p.is_empty())
                 .map(|p| format!("requires {p};"))
                 .collect::<String>();
-            for tactic in [format!("close() using {{{bounds}}};"), "solve();".into()] {
+            for tactic in [format!("close() using {{{bounds}}};"), "close();".into()] {
                 let source = format!(
                     "theorem translated({parameters}) {{ {requires} ensures {goal} by {{ {tactic} }} }}"
                 );

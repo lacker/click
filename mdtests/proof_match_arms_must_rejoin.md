@@ -52,7 +52,7 @@ int32 peek(struct cell* node) {
     }
     step();
     step();
-    solve();
+    close();
 }
 ```
 

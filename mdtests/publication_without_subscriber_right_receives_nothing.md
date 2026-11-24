@@ -31,7 +31,7 @@ int32 consume_again(struct channel* channel) diverges {
         invariant channel == channel;
     }
     step();
-    solve();
+    close();
 }
 ```
 

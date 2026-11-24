@@ -64,8 +64,8 @@ int32 vector_get(struct vector* owner, int32 index) {
     step();
     step();
     step();
-    known();
-    known();
+    close();
+    close();
 }
 
 int32 vector_set(struct vector* owner, int32 index, int32 value) {
@@ -84,12 +84,12 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
     step();
     step();
     fold(nonempty_vector(owner));
-    known();
-    known();
-    known();
-    known();
-    known();
-    known();
+    close();
+    close();
+    close();
+    close();
+    close();
+    close();
 }
 
 int32 vector_replace_if(
@@ -121,8 +121,8 @@ int32 vector_replace_if(
         }
     }
     step();
-    known();
-    known();
+    close();
+    close();
 }
 ```
 

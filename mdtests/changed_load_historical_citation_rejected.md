@@ -22,9 +22,9 @@ int32 change(int32 p[]) {
     ensures result == 0;
 } by {
     step();
-    have p[0] == 0 by known();
+    have p[0] == 0 by close();
     step();
-    solve();
+    close();
 }
 ```
 

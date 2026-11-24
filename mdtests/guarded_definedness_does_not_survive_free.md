@@ -21,7 +21,7 @@ void dispose(int32 *data, int32 n) {
 } by {
     unfold(cell(data, n));
     step();
-    have forall (k: int32) { 0 <= k and k < n implies defined(data[k]) } by { solve(); }
+    have forall (k: int32) { 0 <= k and k < n implies defined(data[k]) } by { close(); }
 }
 ```
 

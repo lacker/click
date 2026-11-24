@@ -36,15 +36,15 @@ int32 caller(int32 x) throws int32 {
                 returned => {
                     step();
                     step();
-                    solve();
+                    close();
                 }
                 threw => {
-                    solve();
+                    close();
                 }
             }
         }
         threw => {
-            solve();
+            close();
         }
     }
 }

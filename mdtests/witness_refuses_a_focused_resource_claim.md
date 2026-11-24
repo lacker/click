@@ -13,7 +13,7 @@ int32 f(int32* p, int32 n) {
 } by {
     step_until(function.exit);
     witness(n);
-    known();
+    close();
 }
 ```
 

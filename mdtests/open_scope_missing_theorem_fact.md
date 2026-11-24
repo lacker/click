@@ -8,7 +8,7 @@ void touch(int32* p) { p[0] = 1; }
 resource cell(p: int32*) { owns p[0..1]; }
 theorem needs_zero(value: int32) {
     requires value == 0;
-    ensures value == 0 by known();
+    ensures value == 0 by close();
 }
 verifying "open_apply.c";
 void touch(int32* p) {

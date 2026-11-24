@@ -29,16 +29,16 @@ void overwrite(int32* p) {
 } by {
     unfold(r);
     step();
-    have r.tag == 3 by known();
+    have r.tag == 3 by close();
     let r = fold(tagged(p), { tag: 4 });
-    have r.tag == 4 by known();
+    have r.tag == 4 by close();
 }
 
 void read_witness(int32* p) {
     owns r: witnessed(p);
 } by {
     with(r) {
-        have r.base == p by known();
+        have r.base == p by close();
     }
 }
 ```

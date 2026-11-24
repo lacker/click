@@ -31,7 +31,7 @@ int32 alias_read(struct cell* root) {
     have p->value == root->value;
     step();
     step();
-    solve();
+    close();
 }
 ```
 

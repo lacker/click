@@ -69,7 +69,7 @@ void release(struct node* p) {
         owns x: list_at(p);
         decreases links_len(x.model);
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             match x.model {
                 Links::Nil => { contradiction(x.model == Links::Nil); },
@@ -78,7 +78,7 @@ void release(struct node* p) {
                     have links_len(x.model) == links_len(rest_model) + 1 by {
                         rewrite(x.model, Links::Cons(rest_model));
                         unfold(links_len(Links::Cons(rest_model)));
-                        known();
+                        close();
                     }
                     have links_len(rest_model) < links_len(x.model) by {
                         close() using { links_len(x.model) == links_len(rest_model) + 1; };
@@ -86,7 +86,7 @@ void release(struct node* p) {
                     let { rest: r } = unfold(x);
                     have 0 <= links_len(r.model) by {
                         rewrite(r.model, rest_model);
-                        known();
+                        close();
                     }
                     step();
                     step();
@@ -96,7 +96,7 @@ void release(struct node* p) {
     }
     unfold(x);
     step();
-    solve();
+    close();
 }
 ```
 

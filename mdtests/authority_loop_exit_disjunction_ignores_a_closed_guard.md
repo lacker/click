@@ -48,26 +48,26 @@ void paint(struct node* p, int32 flag) {
                 step();
                 step();
                 let c = fold(painted(p), { color: Color::Red });
-                have c.color == Color::Red or c.color == Color::Black by known();
+                have c.color == Color::Red or c.color == Color::Black by close();
                 step();
             } else {
                 unfold(c);
                 step();
                 let c = fold(painted(p), { color: Color::Black });
-                have true == true by solve();
-                have c.color == Color::Red or c.color == Color::Black by known();
+                have true == true by close();
+                have c.color == Color::Red or c.color == Color::Black by close();
                 step();
             }
         }
     }
     have c.color == Color::Red or c.color == Color::Black by {
         cases {
-            c.color == Color::Red => { known(); }
-            c.color == Color::Black => { known(); }
+            c.color == Color::Red => { close(); }
+            c.color == Color::Black => { close(); }
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

@@ -23,7 +23,7 @@ void release(struct counter *p) {
 } by {
     step();
     step();
-    solve();
+    close();
 }
 ```
 

@@ -34,7 +34,7 @@ void caller(int32 *left, int32 *visited, int32 n) {
         have contains(memory(left[0..n]), memory(left[k])) by {
             apply(separation::contains_element(left, 0, n, k));
         }
-        have contains(memory(visited[0..n]), statement(0).footprint) by { known(); }
+        have contains(memory(visited[0..n]), statement(0).footprint) by { close(); }
         have separate(memory(visited[0..n]), memory(left[0..n])) by {
             apply(separation::separate_symm(memory(left[0..n]), memory(visited[0..n])));
         }
@@ -44,7 +44,7 @@ void caller(int32 *left, int32 *visited, int32 n) {
         have left[k] == old(left[k]) by {
             preserve(memory(left[k]), statement(0));
         }
-        known();
+        close();
     }
 }
 ```

@@ -35,7 +35,7 @@ void loop_owns_clause_rejects_body_store_outside(int32 p[], int32 q[], int32 n) 
         invariant i <= n;
     }
     step();
-    solve();
+    close();
 }
 ```
 

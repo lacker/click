@@ -24,7 +24,7 @@ int32 caller(int32 a) {
 } by {
     step();
     step();
-    solve();
+    close();
 }
 ```
 

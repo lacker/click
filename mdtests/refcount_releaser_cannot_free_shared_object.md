@@ -81,7 +81,7 @@ void object_release(struct object *obj) {
     let restored = fold(control(obj), { refs: refs - 1, slack: slack + 1 });
     step(pthread_mutex_unlock, { access: access, guard: guard, state: restored });
     step();
-    solve();
+    close();
 }
 
 void release_and_free(struct object *obj) {

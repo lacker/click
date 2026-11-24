@@ -42,7 +42,7 @@ void sweep(int32 visited[], int32 n) {
     have 0 <= 0;
     have unmarked(visited, 0, 0) == 0 by {
         unfold(unmarked(visited, 0, 0));
-        known();
+        close();
     }
     loop {
         decreases n - i;
@@ -50,13 +50,13 @@ void sweep(int32 visited[], int32 n) {
         invariant i <= n;
         invariant unmarked(visited, 0, i) == 0;
         owns visited[0..n];
-        initialize by { solve(); }
+        initialize by { close(); }
         maintain by {
             mark iter;
             have i < 2147483647 by {
                 close() using { i < n; n <= 1073741823; };
             }
-            have viewable(visited[0..n]) by { observe(visited[0..n]); known(); }
+            have viewable(visited[0..n]) by { observe(visited[0..n]); close(); }
             step();
             have unmarked(visited, 0, i) == 0 by {
                 have forall (k: int32) {
@@ -73,16 +73,16 @@ void sweep(int32 visited[], int32 n) {
                     }
                     preserve(memory(visited[k]), loop(0).statement(0));
                 }
-                have viewable(visited[0..n]) by { observe(visited[0..n]); known(); }
-                have 0 <= 0 by { known(); }
-                have i <= i by { known(); }
+                have viewable(visited[0..n]) by { observe(visited[0..n]); close(); }
+                have 0 <= 0 by { close(); }
+                have i <= i by { close(); }
                 apply(unmarked_frame(visited, at(iter, visited), 0, n, i, i));
                 rewrite(unmarked(visited, 0, i), unmarked(at(iter, visited), 0, i));
-                known();
+                close();
             }
             have unmarked(visited, 0, i + 1) == 0 by {
                 unfold(unmarked(visited, 0, i + 1));
-                solve();
+                close();
             }
             step();
         }

@@ -38,7 +38,7 @@ int32 put(struct pair* p, int32 x) {
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

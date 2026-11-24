@@ -4,7 +4,7 @@
 //! in `F` that element is `v`. When `F` contains `S` every value of `S`
 //! lies in `F`, so widening needs no premise; a narrowing needs the range.
 //!
-//! Both the root-local `known()` rule and the compatibility certificate
+//! Both the root-local `close()` rule and the compatibility certificate
 //! `integer_cast_identity` check this statement for
 //! the conversion its observation names ([`cast`] gives the format the
 //! operand's two bounds must lie in). A widening's bounds are the operand's

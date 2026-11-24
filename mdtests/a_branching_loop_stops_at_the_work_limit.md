@@ -46,7 +46,7 @@ int32 f(int32 n, int32 a0, int32 a1, int32 a2, int32 a3, int32 a4, int32 a5, int
         invariant 0 <= i and i <= n;
     }
     step();
-    solve();
+    close();
 }
 ```
 

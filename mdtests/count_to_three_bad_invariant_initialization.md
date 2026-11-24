@@ -26,7 +26,7 @@ int32 count_to_three_bad_invariant_initialization() {
         invariant i == 1;
     }
     step();
-    solve();
+    close();
 }
 ```
 

@@ -67,10 +67,10 @@ Function and claim rankings are two views of the same work and must not be
 added together. A `SMART` row is a written smart tactic, the implicit tail,
 or a simple tactic written with an elided argument, such as `apply(t(x))` or
 a bare `transport(P, Q)`, whose search fills that argument. The same tactic
-with its argument written is a `SIMPLE` row. A written `solve()` or
-`close() using` row reads `solve`, a `step_until` row reads `step_until`, and
-the implicit tail at the end of a script or an omitted proof, its C
-execution and its closing, reads `implicit tail`. The implicit closer
+with its argument written is a `SIMPLE` row. Profile rows for `close()` and `close() using` read `close`. Bare
+`close()` charges its initial check as simple work and its fallback search
+as smart work. A `step_until` row reads `step_until`. The implicit tail
+at the end of a script or an omitted proof reads `implicit tail`. The implicit closer
 that proves a `step()` or `fold` requirement is an `implicit closer` row.
 
 A slow smart success may be expanded. A slow simple tactic is an engine

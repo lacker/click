@@ -13,7 +13,7 @@ theorem positive_is_nonnegative(x: int32) {
 theorem bad_apply(y: int32) {
     ensures y >= 0 by {
         apply(positive_is_nonnegative(y));
-        solve();
+        close();
     }
 }
 ```

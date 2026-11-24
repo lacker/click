@@ -67,7 +67,7 @@ theorem length_nonnegative<T>(xs: List<T>) {
         match xs {
             List::Nil => {
                 unfold(length(List<T>::Nil));
-                solve();
+                close();
             }
             List::Cons(value, rest) => {
                 apply(ih(rest));
@@ -96,7 +96,7 @@ template<class T> void Stack<T>::push(T value) {
         to_integer(old(this->count)) == length(old(before.items));
         length(List::Cons(value, old(before.items))) == length(old(before.items)) + 1;
     };
-    solve();
+    close();
 }
 
 template<class T> unsigned long Stack<T>::size() const {
@@ -124,7 +124,7 @@ unsigned long pushed_size(int x) {
         length(List<int32>::Cons(x, List<int32>::Nil)) == length(List<int32>::Nil) + 1;
         length(List<int32>::Nil) == 0;
     };
-    solve();
+    close();
 }
 ```
 

@@ -93,7 +93,7 @@ void set_parent_black(struct rb_node* node, struct rb_node* old_parent, struct r
                 model: RbTree::Node(identity, parent, Color::Red, left_model, right_model),
                 left: l, right: r
             });
-            solve();
+            close();
         },
     }
 }

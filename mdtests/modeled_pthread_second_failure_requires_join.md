@@ -50,7 +50,7 @@ int32 run(struct cell *first_task, struct cell *second_task) {
     branch {
         true => {
             step();
-            solve();
+            close();
         }
         false => {}
     }

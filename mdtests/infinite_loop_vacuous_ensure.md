@@ -22,7 +22,7 @@ int32 spin_with_postcondition() diverges {
     loop diverges {
         invariant 0 == 0;
     }
-    solve();
+    close();
 }
 ```
 

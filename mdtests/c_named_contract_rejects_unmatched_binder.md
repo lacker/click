@@ -57,7 +57,7 @@ prove it explicitly:
 theorem needs_two_is_preserve_one() executes needs_two(int32* p, int32* q) {
     ensures PreserveOne(&needs_two) as { root: r1 } by {
         step(needs_two, { t: r1, u: r2 });
-        solve();
+        close();
     }
 }
 ```

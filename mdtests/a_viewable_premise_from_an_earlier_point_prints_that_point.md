@@ -9,7 +9,7 @@ proof wrote, which the checker does not hold.
 
 The proof establishes containment of `p[k..k + 4]` and restricts the view at
 entry. After the declaration, `rewrite(q, p + k)` aligns the pointer spelling.
-`known()` refuses the current viewability goal and prints the available
+`close()` refuses the current viewability goal and prints the available
 window fact at `function.entry`.
 
 ```c filename=a_viewable_premise_from_an_earlier_point_prints_that_point.c
@@ -42,7 +42,7 @@ uint8 last(const uint8* p, uint64 n, uint64 k) {
     step();
     have viewable(q[0..4]) by {
         rewrite(q, p + k);
-        known();
+        close();
     }
     step_until(function.exit);
 }

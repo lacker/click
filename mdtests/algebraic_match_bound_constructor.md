@@ -29,7 +29,7 @@ theorem select_color(p: ColorInput) {
         },
     }) == Chosen::Red by {
         rewrite(p, ColorInput::Hold(Color::Red));
-        solve();
+        close();
     }
 }
 
@@ -39,7 +39,7 @@ theorem select_number(p: BoxInput) {
         BoxInput::Hold(b) => match b { Box::Value(x) => NumberResult::Value(x), },
     }) == NumberResult::Value(7) by {
         rewrite(p, BoxInput::Hold(Box::Value(7)));
-        solve();
+        close();
     }
 }
 
@@ -52,7 +52,7 @@ theorem select_flag(p: FlagInput) {
         },
     }) == FlagResult::Value(true) by {
         rewrite(p, FlagInput::Hold(Flag::Set(true)));
-        solve();
+        close();
     }
 }
 
@@ -62,7 +62,7 @@ theorem forward_box(p: EnvelopeInput) {
         EnvelopeInput::Hold(e) => match e { Envelope::Wrap(b) => BoxResult::Value(b), },
     }) == BoxResult::Value(Box::Value(7)) by {
         rewrite(p, EnvelopeInput::Hold(Envelope::Wrap(Box::Value(7))));
-        solve();
+        close();
     }
 }
 
@@ -72,7 +72,7 @@ theorem select_pair(p: PairInput, a: Integer) {
         PairInput::Hold(b, y) => match b { Box::Value(x) => PairResult::Value(x, y), },
     }) == PairResult::Value(7, a) by {
         rewrite(p, PairInput::Hold(Box::Value(7), a));
-        solve();
+        close();
     }
 }
 
@@ -88,7 +88,7 @@ theorem select_chain(p: StageInput) {
         },
     }) == NumberResult::Value(9) by {
         rewrite(p, StageInput::Hold(Stage::Next(Envelope::Wrap(Box::Value(9)))));
-        solve();
+        close();
     }
 }
 ```

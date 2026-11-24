@@ -8,7 +8,7 @@ theorem written(p: Packet) {
         (match p { Packet::Empty => Packet::Empty, Packet::Value(v) => Packet::Value(v), }) == p
     } by {
         intro();
-        known();
+        close();
     }
 }
 
@@ -16,13 +16,13 @@ theorem rewritten(p: Packet, q: Packet) {
     requires q == p;
     ensures (match p { Packet::Empty => Packet::Empty, Packet::Value(v) => Packet::Value(v), }) == q by {
         rewrite(q, p);
-        known();
+        close();
     }
 }
 
 spec enum Wide { Word(uint128) }
 theorem wide(w: Wide) {
-    ensures w == (match w { Wide::Word(bits) => Wide::Word(bits) }) by known();
+    ensures w == (match w { Wide::Word(bits) => Wide::Word(bits) }) by close();
 }
 ```
 

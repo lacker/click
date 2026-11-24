@@ -261,7 +261,7 @@ loop {
 
 `initialize` is a pure proof of all invariants at the actual loop entry. Its
 script may use exactly `unfold(predicate(args))`, `apply(theorem(args))`, `have`,
-`known()`, `normalize()`, `rewrite(...)`, `solve()`, `all`, `cases`, and
+`close()`, `normalize()`, `rewrite(...)`, `all`, `cases`, and
 proof-level `if`;
 anything else is rejected with `` `initialize` is a pure proof and cannot use
 `<tactic>` ``. `maintain` assumes all invariants and the loop condition,
@@ -312,19 +312,19 @@ read as three parts, in this order:
 - one `have` per declared invariant, in declaration order, naming the
   invariant exactly as the `loop` head writes it. Such a `have` is that
   invariant's own proof, and no other invariant reads it.
-- an optional trailing `known()` or `solve()`.
+- an optional trailing `close()`.
 
 A script that does not name the invariants individually — `initialize by
-solve();`, or a helper prefix followed by `solve()` — is one shared proof: every
+close();`, or a helper prefix followed by `close()` — is one shared proof: every
 invariant's entry goal is proved by the same remaining steps, with the helper
 facts already available.
 
 That division is what expansion prints. A smart tactic inside an invariant's
 own `have` expands to the same `have` with a checked body, left where it was
-written; a trailing `solve()` that stands for the rest of the phase expands to
+written; a trailing `close()` that stands for the rest of the phase expands to
 one `have` per invariant, and the helpers above it are not copied into them. A
-`solve()` written after the invariants are already named contributes nothing,
-so expanding it removes it. `maintain by solve();` is the same whole-phase shape
+`close()` written after the invariants are already named contributes nothing,
+so expanding it removes it. `maintain by close();` is the same whole-phase shape
 one phase over, and expands to the planned preservation proof.
 
 ## What invariants do
@@ -450,7 +450,7 @@ region, including when a continue comes from inside a switch.
 
 A `continue` reaches the back edge through that continuation. Everything the
 body's end owes is owed there: the loop's binders are bound again on the state
-after the continuation, the invariants are closed there by `solve()`, and a
+after the continuation, the invariants are closed there by `close()`, and a
 declared measure must have descended there.
 
 <!-- verified-example: mdtests/loop_body_continue_back_edge.md -->
@@ -932,7 +932,7 @@ strictly less than the value at this head. Both are ordinary goals. The kernel
 does not unfold the function or search for a proof. The usual route is to match
 on the model so that its parts have names. State each side with `have`, by
 `unfold` and `rewrite`. Apply a lemma for nonnegativity, typically one proved
-once by structural `induct`. Then let `solve` close the comparison before
+once by structural `induct`. Then let `close()` close the comparison before
 the back edge.
 
 A `Nat`-valued function of the model ranks by its Integer image `to_integer`,
@@ -1200,7 +1200,7 @@ or a function `return`.
 
 A body path that reaches `return` closes the function contract in that
 `maintain` arm. Tactics written after the returning step, such as
-`have result == 7 by solve();`, apply only to that returned outcome.
+`have result == 7 by close();`, apply only to that returned outcome.
 The tactics after `loop` apply only to the continuing exit. A returning arm
 is finished by the implicit closer, owned by `loop`, including when
 preservation is automatically generated. Every returned outcome still
@@ -1210,7 +1210,7 @@ natural cycles and nested loops.
 
 A `maintain` script works like a function proof: when it ends, the loop's
 back edge owes the whole invariant bundle, and each member is closed by
-`solve()`, as a function's exit closes each `ensures`. There is no tactic to
+`close()`, as a function's exit closes each `ensures`. There is no tactic to
 write for it; the retired `close_invariants` is rejected by the parser
 (`mdtests/close_invariants_is_retired.md`).
 
@@ -1238,8 +1238,8 @@ the steps that need proof work and ends where that work ends
 (`mdtests/preserve_runs_the_rest_of_the_body.md`). Expansion writes the steps
 that ran.
 
-The back edge closes every member with `solve()` alone, which reads the facts
-in scope like any other `solve()`; each member is guarded by the invariants
+The back edge closes every member with `close()` alone, which reads the facts
+in scope like any other `close()`; each member is guarded by the invariants
 declared before it. Each member
 is raised as its clause writes it, as a function's exit closes each `ensures`
 as written: an invariant over the back-edge locals, and the descent member of
@@ -1248,7 +1248,7 @@ disjunction over pivots with the earlier components tied. That closes an
 unsigned or 64-bit bound such as `i <= n` after `i += 1` from the guard
 `i < n`, and the descent of `n - i`
 (`mdtests/back_edge_closes_an_unsigned_bound_from_the_guard.md`,
-`mdtests/a_64_bit_countdown_closes_its_back_edge.md`). A member `solve()`
+`mdtests/a_64_bit_countdown_closes_its_back_edge.md`). A member `close()`
 misses is named in the refusal; prove it, or a fact it needs, with
 `have <invariant> by { ... }` before the back edge, as for an `ensures`.
 

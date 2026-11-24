@@ -39,7 +39,7 @@ int32 lifecycle() { ensures result == 0 or result == 9; } by {
     fold(authority(slot(&pool, _)));
     fold(slot(&pool, p + 1));
     step();
-    have count(slot(&pool, _)) == 2 by solve();
+    have count(slot(&pool, _)) == 2 by close();
     with(slot(&pool, p)) {
         with(slot(&pool, p + 1)) { step(); step(); }
     }

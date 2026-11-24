@@ -30,10 +30,10 @@ int32 spent_count() {
 } by {
     step();
     step();
-    branch { true => { step(); solve(); } false => {} }
+    branch { true => { step(); close(); } false => {} }
     step();
     step();
-    have count(reference(obj)) == 0 by solve();
+    have count(reference(obj)) == 0 by close();
 }
 ```
 

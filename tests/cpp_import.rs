@@ -733,8 +733,8 @@ int32 probe(struct View& target, const struct View& source) {
  ensures source.extent.size == old(source.extent.size);
  ensures result == 0;
 } by {
- step() by { solve(); }
- step() by { known(); }
+ step() by { close(); }
+ step() by { close(); }
 }
 "#;
     let path = project.directory.join("copy.click");
@@ -2507,8 +2507,8 @@ fn scalar_int32_profile_catches_a_modular_throw_with_a_typed_payload() {
                 threw => {{ step_until(function.exit); }}
             }}
             outcomes {{
-                returned => {{ solve(); }}
-                threw(error) => {{ have error == 7 by known(); solve(); }}
+                returned => {{ close(); }}
+                threw(error) => {{ have error == 7 by close(); close(); }}
             }}
         }}"#
     );
@@ -2550,8 +2550,8 @@ fn scalar_int32_profile_catches_a_modular_throw_with_a_typed_payload() {
         expanded.contains("outcomes {")
             && returned_proof.contains("have result == 7 by {")
             && threw_proof.contains("have result == 7 by {")
-            && returned_proof.contains("known();")
-            && threw_proof.contains("known();")
+            && returned_proof.contains("close();")
+            && threw_proof.contains("close();")
             && !expanded.contains("solve(")
             && !expanded.contains("trivial();"),
         "each outcome should retain its own explicit result certificate: {expanded}"
@@ -2663,13 +2663,13 @@ fn scalar_int32_profile_joins_a_caught_throw_inside_conditional_cleanup() {
                             step(); // destructor
                             step(); // retire the guard's automatic storage
                         }
-                        threw => { step_until(function.exit); solve(); }
+                        threw => { step_until(function.exit); close(); }
                     }
                 }
                 false => { }
             }
             step();
-            solve();
+            close();
         }
 "#;
     let sidecar = project.directory.join("demo.click");
@@ -2742,7 +2742,7 @@ int32 many({parameters}, int32& value) {{ owns value; requires value == 7; ensur
             .replace("ensures result == 7;", "ensures result == 8;")
             .replace(
                 "ensures value == 7; }",
-                "ensures value == 7; } by { step_until(function.exit); known(); }",
+                "ensures value == 7; } by { step_until(function.exit); close(); }",
             );
         let sidecar = project.directory.join("bad.click");
         fs::write(&sidecar, &hostile).unwrap();
@@ -8233,15 +8233,15 @@ fn unsigned_positive_divisor_contract_expands_and_reverifies() {
                     if b == 0u64 {
                         have not (b > 0u64) by {
                             rewrite(b, 0u64);
-                            known();
+                            close();
                         }
                         contradiction(b > 0u64);
                     } else {
-                        known();
+                        close();
                     }
                 }
                 step();
-                solve();
+                close();
             }
         "#,
     );
@@ -11444,7 +11444,7 @@ int32 many(bool early, int32 value) { ensures result == value; }
             check_selected_claim_certificate(&project, &import, source);
             let hostile = source.replace(
                 "ensures result == value; }",
-                "requires value == 5; ensures result == 6; } by { step_until(function.exit); known(); }",
+                "requires value == 5; ensures result == 6; } by { step_until(function.exit); close(); }",
             );
             let sidecar = project.directory.join("bad.click");
             fs::write(&sidecar, &hostile).unwrap();
@@ -12699,7 +12699,7 @@ fn wide_narrowing_preserves_symbolic_values_only_with_checked_destination_bounds
         let import = load_import(&project.config()).unwrap();
         let cert = cast_identity_proof("to_integer(a)", lo, hi);
         let proof = format!(
-            "verifying \"narrow.cpp\"; {result} {name}({source} a) {{ requires {lo} <= to_integer(a); requires to_integer(a) <= {hi}; ensures to_integer(result) == to_integer(a); }} by {{ step_until(function.exit); have to_integer(result) == to_integer(a) by {{ {cert} }} solve(); }}"
+            "verifying \"narrow.cpp\"; {result} {name}({source} a) {{ requires {lo} <= to_integer(a); requires to_integer(a) <= {hi}; ensures to_integer(result) == to_integer(a); }} by {{ step_until(function.exit); have to_integer(result) == to_integer(a) by {{ {cert} }} close(); }}"
         );
         check_selected_claim_certificate(&project, &import, &proof);
         for missing in [
@@ -12735,7 +12735,7 @@ fn wide_narrowing_quotient_and_remainder_keep_native_definedness_and_range_bound
         let observed = format!("to_integer(a {op} b)");
         let cert = cast_identity_proof(&observed, lo, hi);
         let proof = format!(
-            "verifying \"narrow.cpp\"; {result} {name}(int128 a, int128 b) {{ requires to_integer(b) != 0; requires to_integer(a) != -170141183460469231731687303715884105728 or to_integer(b) != -1; requires {lo} <= {observed}; requires {observed} <= {hi}; ensures to_integer(result) == {observed}; }} by {{ step_until(function.exit); have to_integer(result) == {observed} by {{ {cert} }} solve(); }}"
+            "verifying \"narrow.cpp\"; {result} {name}(int128 a, int128 b) {{ requires to_integer(b) != 0; requires to_integer(a) != -170141183460469231731687303715884105728 or to_integer(b) != -1; requires {lo} <= {observed}; requires {observed} <= {hi}; ensures to_integer(result) == {observed}; }} by {{ step_until(function.exit); have to_integer(result) == {observed} by {{ {cert} }} close(); }}"
         );
         check_first_claim_certificate(&project, &import, &proof);
         let unsafe_proof = format!(
@@ -12800,7 +12800,7 @@ int64 ss64(int128 a) {{
     requires {lo} <= to_integer(a);
     requires to_integer(a) <= {hi};
     ensures to_integer(result) == to_integer(a);
-}} by {{ step_until(function.exit); have to_integer(result) == to_integer(a) by {{ {cert} }} solve(); }}
+}} by {{ step_until(function.exit); have to_integer(result) == to_integer(a) by {{ {cert} }} close(); }}
 int64 relay(int128 a, int32* untouched) {{
     requires {lo} <= to_integer(a);
     requires to_integer(a) <= {hi};
@@ -13961,7 +13961,7 @@ fn wide_division_operand_bounds_certify_native_narrowing() {
     have {observed} <= {hi} by {{ close() using {{ {observed} == {expression}; {upper}; }}; }}
     have to_integer(result) == {observed} by {{ {cast_cert} }}
     have to_integer(result) == {expression} by {{ close() using {{ {observed} == {expression}; to_integer(result) == {observed}; }}; }}
-    solve();
+    close();
 }}
 "#
         );
@@ -14003,7 +14003,7 @@ int128 {name}(int128 a, int128 b) {{
 }} by {{
     have to_integer(b) != 0 by {{ close() using {{ 1 <= to_integer(b); }}; }}
     have to_integer(b) != -1 by {{ close() using {{ 1 <= to_integer(b); }}; }}
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }}"#
         );
         check_first_claim_certificate(&project, &import, &source);
@@ -14054,7 +14054,7 @@ verifying "narrow.cpp";
     have to_integer(result) == to_integer(a) by {{ {cert} }}
     have -100 <= to_integer(result) by {{ close() using {{ to_integer(result) == to_integer(a); -100 <= to_integer(a); }}; }}
     have to_integer(result) <= 100 by {{ close() using {{ to_integer(result) == to_integer(a); to_integer(a) <= 100; }}; }}
-    solve();
+    close();
 }}"#
         );
         if name == "relay" {
@@ -15429,7 +15429,7 @@ fn condition_calls_preserve_inherited_receiver_and_sibling_frames() {
                 normalize();
             }}
             step_until(function.exit);
-            solve();
+            close();
         }}
         "#
         );
@@ -15629,8 +15629,8 @@ fn condition_calls_preserve_the_enclosing_catch_scope() {
         bool predicate(bool fail) throws int32 { ensures result == true; exceptional ensures exception == 7; }
         int32 choose(bool fail) { ensures result == 5 or result == 7; } by {
             outcomes {
-                returned => { step_until(function.exit); solve(); }
-                threw => { step_until(function.exit); solve(); }
+                returned => { step_until(function.exit); close(); }
+                threw => { step_until(function.exit); close(); }
             }
         }
     "#;
@@ -15762,7 +15762,7 @@ fn locked_header_graph_conditions_verify_offline_with_inherited_frames() {
                 normalize();
             }}
             step_until(function.exit);
-            solve();
+            close();
         }}
         "#
         );
@@ -16804,7 +16804,7 @@ contract int32 PositiveRead(const struct State& state) {
 theorem read_application() executes read(const struct State& state) {
     ensures PositiveRead(&read) by {
         have state.child.value > 0 by { close() using { state.child.value == 2; } }
-        step_until(function.exit); solve();
+        step_until(function.exit); close();
     }
 }
 "#;
@@ -17061,7 +17061,7 @@ bool relay(uint128 value) {{ requires to_integer(value) == {point}; ensures resu
  let {{ result: captured }} = step(echo, {{}});
  have to_integer(captured) == {point} by {{ close() using {{ to_integer(value) == {point}; to_integer(captured) == to_integer(value); }} }}
  {zero_fact}
- step_until(function.exit); solve();
+ step_until(function.exit); close();
 }}
 "#
         );
@@ -17326,20 +17326,20 @@ int32 run(int32& value) { owns value; ensures result == 1; ensures value == 1; }
         &project,
         &import,
         &proof(
-            "step(); step(); step(); have r == 1; have &r == &value; step_until(function.exit); solve();",
+            "step(); step(); step(); have r == 1; have &r == &value; step_until(function.exit); close();",
         ),
     );
     for (body, expected) in [
         (
-            "step(); step(); step(); have r == 2; step_until(function.exit); solve();",
+            "step(); step(); step(); have r == 2; step_until(function.exit); close();",
             "r == 2",
         ),
         (
-            "step(); step(); step(); have r[0] == 1; step_until(function.exit); solve();",
+            "step(); step(); step(); have r[0] == 1; step_until(function.exit); close();",
             "`r` is a reference and names the value it refers to, so it takes no index",
         ),
         (
-            "step_until(assignment(r, 0).entry); step_until(function.exit); solve();",
+            "step_until(assignment(r, 0).entry); step_until(function.exit); close();",
             "`r` is a reference, and binding a reference is not an assignment",
         ),
     ] {
@@ -18678,7 +18678,7 @@ int32& last(const struct View& view) {
  requires view.size <= 1073741823;
  ensures &result == old(view.data) + (old(view.size) - 1);
  ensures result == old(view.data[view.size - 1]);
-} by { have 0 <= view.size - 1 by { close() using { 1 <= view.size; view.size <= 1073741823; } } have view.size - 1 < view.size by { close() using { 1 <= view.size; view.size <= 1073741823; } } step_until(function.exit); solve(); }
+} by { have 0 <= view.size - 1 by { close() using { 1 <= view.size; view.size <= 1073741823; } } have view.size - 1 < view.size by { close() using { 1 <= view.size; view.size <= 1073741823; } } step_until(function.exit); close(); }
 int32& probe(struct View& view, int32 n) {
  owns view.data;
  owns view.size;
@@ -18690,7 +18690,7 @@ int32& probe(struct View& view, int32 n) {
  ensures view.data == old(view.data);
  ensures view.size == old(view.size) - 1;
 
-} by { have 0 <= view.size - 1 by { close() using { 1 <= view.size; view.size <= 1073741823; } } have view.size - 1 < view.size by { close() using { 1 <= view.size; view.size <= 1073741823; } } step_until(function.exit); solve(); }
+} by { have 0 <= view.size - 1 by { close() using { 1 <= view.size; view.size <= 1073741823; } } have view.size - 1 < view.size by { close() using { 1 <= view.size; view.size <= 1073741823; } } step_until(function.exit); close(); }
 "#;
     check_arithmetic_sidecar(&project, &import, proof);
     let missing = proof.replace(
@@ -19306,7 +19306,7 @@ uint8 probe(uint8* destination, const uint8* source) {
         instantiate(forall (k: uint64) {
             true and k < 1u64 implies destination[0u64 + k] == old(source[0u64 + k])
         }, 0u64);
-        solve();
+        close();
     }
     step_until(function.exit);
 }
@@ -19563,7 +19563,7 @@ int twice(int x) {
     ensures result == x + x;
 }
 theorem twice_doubles() {
-    ensures Doubling(&twice) by { unfold(Doubling(&twice)); solve(); }
+    ensures Doubling(&twice) by { unfold(Doubling(&twice)); close(); }
 }
 int apply(int (*f)(int), int x) {
     requires Doubling(f);
@@ -19573,7 +19573,7 @@ int apply(int (*f)(int), int x) {
 int caller(int x) {
     requires 0 <= x and x <= 1000;
     ensures result == x + x;
-} by { apply(twice_doubles()); step_until(function.exit); solve(); }
+} by { apply(twice_doubles()); step_until(function.exit); close(); }
 "#;
 
 // A pointer call may be a returned call, a local's initializer, or a
@@ -19623,7 +19623,7 @@ fn a_cpp_function_pointer_call_needs_its_contract_and_its_refinement() {
     refresh_import(&project.config()).unwrap();
     let import = load_import(&project.config()).unwrap();
     let sidecar = project.directory.join("callback.click");
-    let theorem = "theorem twice_doubles() {\n    ensures Doubling(&twice) by { unfold(Doubling(&twice)); solve(); }\n}\n";
+    let theorem = "theorem twice_doubles() {\n    ensures Doubling(&twice) by { unfold(Doubling(&twice)); close(); }\n}\n";
     let without_theorem = FUNCTION_POINTER_SIDECAR
         .replace(theorem, "")
         .replace("apply(twice_doubles()); ", "");
@@ -19697,7 +19697,7 @@ int twice(int x) {
     ensures result == x + x;
 }
 theorem twice_doubles() {
-    ensures Doubling(&twice) by { unfold(Doubling(&twice)); solve(); }
+    ensures Doubling(&twice) by { unfold(Doubling(&twice)); close(); }
 }
 int stored(int (*f)(int), int x) {
     requires Doubling(f);
@@ -19900,7 +19900,7 @@ int caller::(lambda#0)(int y) {
     ensures result == y + y;
 }
 theorem lambda_doubles() {
-    ensures Doubling(&caller::(lambda#0)) by { unfold(Doubling(&caller::(lambda#0))); solve(); }
+    ensures Doubling(&caller::(lambda#0)) by { unfold(Doubling(&caller::(lambda#0))); close(); }
 }
 int caller(int x) {
     requires 0 <= x and x <= 1000;
@@ -19993,10 +19993,10 @@ int pair::(lambda#1)(int y) {
     ensures result == y + y;
 }
 theorem first_is_bounded() {
-    ensures Bounded(&pair::(lambda#0)) by { unfold(Bounded(&pair::(lambda#0))); solve(); }
+    ensures Bounded(&pair::(lambda#0)) by { unfold(Bounded(&pair::(lambda#0))); close(); }
 }
 theorem second_is_bounded() {
-    ensures Bounded(&pair::(lambda#1)) by { unfold(Bounded(&pair::(lambda#1))); solve(); }
+    ensures Bounded(&pair::(lambda#1)) by { unfold(Bounded(&pair::(lambda#1))); close(); }
 }
 int pair(int x) {
     requires 0 <= x and x <= 1000;
@@ -21765,11 +21765,11 @@ const int* probe(const int* p) noexcept { return invoke(&identity, p); }
     let source = r#"verifying "callback.cpp";
 contract const int32* Identity(const int32* p) { ensures result == p; }
 const int32* identity(const int32* p) { ensures result == p; }
-theorem identity_refines() { ensures Identity(&identity) by { unfold(Identity(&identity)); solve(); } }
+theorem identity_refines() { ensures Identity(&identity) by { unfold(Identity(&identity)); close(); } }
 const int32* invoke(const int32* (*f)(const int32*), const int32* p) {
     requires Identity(f); ensures result == p;
 }
-const int32* probe(const int32* p) { ensures result == p; } by { apply(identity_refines()); step_until(function.exit); solve(); }
+const int32* probe(const int32* p) { ensures result == p; } by { apply(identity_refines()); step_until(function.exit); close(); }
 "#;
     check_return_call_sidecar(&project, &import, source);
     for bad in [
@@ -22042,8 +22042,8 @@ int32 fallible(int32 x, bool fail) throws Error { ensures result == x; exception
 int32 guarded(int32 x, bool fail) { requires fail == false; ensures result == x; } by {
     step_until(call(0).entry);
     outcomes {
-        returned => { step_until(function.exit); solve(); }
-        threw => { have fail == true; have false by { contradiction(fail); }; solve(); }
+        returned => { step_until(function.exit); close(); }
+        threw => { have fail == true; have false by { contradiction(fail); }; close(); }
     }
 }
 int32 probe(int32 x, bool fail) throws Error { requires fail == false; ensures result == x; exceptional ensures true; }
@@ -22161,7 +22161,7 @@ int probe(bool fail) noexcept {{
         let source = format!(
             r#"verifying "caught.cpp";
 int32 probe(bool fail) {{ ensures fail == false or result == 7; ensures fail == true or result == {normal}; }} by {{
-    if fail {{ step_until(function.exit); solve(); }} else {{ step_until(function.exit); solve(); }}
+    if fail {{ step_until(function.exit); close(); }} else {{ step_until(function.exit); close(); }}
 }}
 "#
         );
@@ -22522,10 +22522,10 @@ int probe(Outer& outer, int value) noexcept { auto* ref = child(outer); *ref = v
 int32* child(Outer& outer) { views outer.first; views outer.child.value; ensures result == &outer.child.value; }
 int32 probe(Outer& outer, int32 value) { owns outer.child.value; views outer.first; ensures result == value; ensures outer.child.value == value; ensures outer.first == old(outer.first); } by {
     step(); step(); step();
-    have ref == &outer.child.value by { known(); }
-    have separate(memory(outer.child.value), memory(outer.first)) by { known(); }
+    have ref == &outer.child.value by { close(); }
+    have separate(memory(outer.child.value), memory(outer.first)) by { close(); }
     have separate(memory(ref[0]), memory(outer.first)) by {
-        rewrite(ref, &outer.child.value); known();
+        rewrite(ref, &outer.child.value); close();
     }
     step();
 }

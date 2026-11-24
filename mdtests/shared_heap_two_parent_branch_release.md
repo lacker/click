@@ -113,7 +113,7 @@ void child_release(struct child* obj) {
         unfold(child_ref(obj));
         unfold(authority(child_ref(obj)));
         step_until(function.exit);
-        solve();
+        close();
     } else {
         unfold(child_ref(obj));
         have 1 < obj->refs by {
@@ -124,7 +124,7 @@ void child_release(struct child* obj) {
         step();
         fold(child_control(obj));
         step_until(function.exit);
-        solve();
+        close();
     }
 }
 
@@ -161,7 +161,7 @@ int32 parent_read_payload(struct parent* p) {
             unfold(link);
             with(child_control(p->kid)) { step_until(function.exit); }
             let link = fold(parent(p), { link: ParentLink::Linked(p->kid) });
-            solve();
+            close();
         },
     }
 }
@@ -182,17 +182,17 @@ void parent_detach(struct parent* p) {
         },
         ParentLink::Linked(entry_child) => {
             unfold(link);
-            have old(p->kid) == entry_child by solve();
+            have old(p->kid) == entry_child by close();
             if p->kid->refs > 1 {
-                have to_integer(old(p->kid->refs)) == to_integer(old(count(child_ref(p->kid)))) by known();
+                have to_integer(old(p->kid->refs)) == to_integer(old(count(child_ref(p->kid)))) by close();
                 step_until(statement(1).entry);
                 step(child_release);
                 with(child_control(kid)) {
                     have to_integer(kid->refs) == to_integer(old(p->kid->refs)) - 1 by {
                         rewrite(to_integer(kid->refs), to_integer(count(child_ref(kid))));
-                        solve();
+                        close();
                     }
-                    have separate(memory(kid->refs), memory(p->kid)) by solve();
+                    have separate(memory(kid->refs), memory(p->kid)) by close();
                 }
                 mark before_clear;
                 step();
@@ -203,15 +203,15 @@ void parent_detach(struct parent* p) {
                 have to_integer(old(p->kid)->refs) == to_integer(old(p->kid->refs)) - 1 by {
                     rewrite(old(p->kid), kid);
                     rewrite(kid->refs, at(before_clear, kid->refs));
-                    known();
+                    close();
                 }
                 let out = fold(parent(p), { link: ParentLink::Empty });
                 step_until(function.exit);
-                solve();
+                close();
             } else {
                 step_until(function.exit);
                 let out = fold(parent(p), { link: ParentLink::Empty });
-                solve();
+                close();
             }
         },
     }
@@ -227,28 +227,28 @@ void caller(struct parent* first, struct parent* second, struct child* kid) {
     owns child_ref(kid);
 } by {
     let { link: first_link } = step(parent_attach);
-    have to_integer(count(child_ref(kid))) == 2 by solve();
+    have to_integer(count(child_ref(kid))) == 2 by close();
     let { link: second_link } = step(parent_attach);
-    have count(child_ref(kid)) == 3 by solve();
+    have count(child_ref(kid)) == 3 by close();
     step(child_release);
-    have to_integer(count(child_ref(kid))) == 2 by solve();
+    have to_integer(count(child_ref(kid))) == 2 by close();
     unfold(first_link);
-    have first->kid == kid by known();
+    have first->kid == kid by close();
     with(child_control(kid)) {
-        have kid->refs > 1 by solve();
-        have first->kid->refs > 1 by { rewrite(first->kid, kid); known(); }
+        have kid->refs > 1 by close();
+        have first->kid->refs > 1 by { rewrite(first->kid, kid); close(); }
     }
     let first_link = fold(parent(first), { link: ParentLink::Linked(kid) });
     let { out: first_out } = step(parent_detach, { link: first_link });
     step();
     with(child_control(kid)) {
-        have count(child_ref(kid)) == 1 by solve();
+        have count(child_ref(kid)) == 1 by close();
     }
-    have count(child_ref(kid)) == 2 by solve();
+    have count(child_ref(kid)) == 2 by close();
     step(parent_read_payload, { link: second_link });
     let { out: second_out } = step(parent_detach, { link: second_link });
     step();
-    solve();
+    close();
 }
 ```
 

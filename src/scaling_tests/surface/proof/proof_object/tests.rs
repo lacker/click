@@ -896,7 +896,7 @@ fn cursor_execution_load_binding_work_is_deterministic_and_output_sized() {
     let click_file = crate::surface::parse(
         r#"
             int32 branch_load_scaling(int32 x, int32 p[1]) {
-                ensures returns_any: result == result by { known(); }
+                ensures returns_any: result == result by { close(); }
             }
         "#,
     )
@@ -2644,7 +2644,7 @@ fn exact_goal_solve_stops_at_known_as_related_and_unrelated_facts_grow() {
 #[test]
 fn fixed_state_application_proves_premises_and_replays_explicitly() {
     let file = crate::surface::parse(
-        "theorem nonnegative(n: int32) { requires n >= 0; ensures n >= 0 by known(); }",
+        "theorem nonnegative(n: int32) { requires n >= 0; ensures n >= 0 by close(); }",
     )
     .unwrap();
     let parsed = syntax::parse_function("int32 identity(int32 x) { return x; }").unwrap();
@@ -2757,8 +2757,8 @@ fn cold_theorem_application_ignores_declaration_proof_length() {
     for size in [4, 16, 64] {
         let _session = crate::kernel::VerificationSession::enter();
         let source = format!(
-            "theorem identity<T>(x: T) {{ requires x == x; ensures x == x by {{ {} known(); }} }}",
-            "have x == x by solve(); ".repeat(size)
+            "theorem identity<T>(x: T) {{ requires x == x; ensures x == x by {{ {} close(); }} }}",
+            "have x == x by close(); ".repeat(size)
         );
         // Verification is declaration work; measure only the application below.
         crate::surface::verify_c_sources(&source, &[]).unwrap();

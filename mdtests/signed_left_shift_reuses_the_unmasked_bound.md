@@ -32,13 +32,13 @@ int64 shift64(int64 x, int64 s) {
 theorem shift_count_mask(s: int32) {
     requires s >= 0;
     requires s < 32;
-    ensures (s & 31) == s by known();
+    ensures (s & 31) == s by close();
 }
 
 theorem shift_count_mask64(s: int64) {
     requires 0i64 <= s;
     requires s < 64i64;
-    ensures (s & 63i64) == s by known();
+    ensures (s & 63i64) == s by close();
 }
 ```
 

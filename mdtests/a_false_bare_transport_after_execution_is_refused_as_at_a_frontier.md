@@ -31,7 +31,7 @@ void mark_one(int32 a[], int32 n, int32 i, int32 m) {
     step();
     step_until(function.exit);
     transport(at(entry, a[m]) == at(entry, a[m]), at(entry, a[m]) == 5);
-    solve();
+    close();
 }
 ```
 

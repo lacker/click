@@ -5199,7 +5199,7 @@ mod tests {
         {
             let _session = crate::kernel::VerificationSession::enter();
             crate::surface::verify_c_sources(
-                "theorem warm_array_metadata_library() { ensures 0 == 0 by solve(); }",
+                "theorem warm_array_metadata_library() { ensures 0 == 0 by close(); }",
                 &[],
             )
             .unwrap();

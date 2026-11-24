@@ -26,7 +26,7 @@ void bump(struct pool* pool) {
     }
     step();
     step();
-    known();
+    close();
 }
 ```
 

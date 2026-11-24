@@ -4,7 +4,7 @@
 spec enum Item { Empty, Value(int32) }
 theorem missing(item: Item) {
     ensures item == Item::Empty by {
-        match item { Item::Empty => { known(); }, }
+        match item { Item::Empty => { close(); }, }
     }
 }
 ```

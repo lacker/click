@@ -4,7 +4,7 @@
 theorem bad(n: int8) {
     ensures exists (x: uint8) { x == x } by {
         witness(n);
-        solve();
+        close();
     }
 }
 ```

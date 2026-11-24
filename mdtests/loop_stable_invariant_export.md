@@ -37,18 +37,18 @@ int32 fill_tail(int32 p[], int32 n, int32 untouched[]) {
         invariant i >= 1 and i <= n;
         invariant i >= 1 and i <= n;
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             step();
             step();
         }
     }
-    have at(loop(0).exit, n) <= at(loop(0).exit, 10) by known();
+    have at(loop(0).exit, n) <= at(loop(0).exit, 10) by close();
     have at(loop(0).exit, i) >= at(loop(0).exit, 1) and
-        at(loop(0).exit, i) <= at(loop(0).exit, n) by { known(); }
+        at(loop(0).exit, i) <= at(loop(0).exit, n) by { close(); }
     have i == n;
     step();
-    solve();
+    close();
 }
 ```
 

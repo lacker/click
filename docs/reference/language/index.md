@@ -32,7 +32,7 @@ this page covers each form's full rules and edge cases.
 | --- | --- | --- |
 | `verifying "file.c";` | Names the C source the sidecar's contracts describe | [File shape](#file-shape) |
 | `int32 f(int32 x) { requires P; ensures Q; }` | A C function's contract; an omitted proof runs the C and closes each claim | [File shape](#file-shape), [Requirements](#requirements) |
-| `} by { step(); solve(); }` | An explicit proof script for the contract | [Tactics](../tactics/index.md) |
+| `} by { step(); close(); }` | An explicit proof script for the contract | [Tactics](../tactics/index.md) |
 | `views p[0..n];`, `owns p[0..n];` | Read and write resources a call needs and keeps | [Read and write resources](#read-and-write-resources) |
 | `decreases e;` | Termination measure of a recursive function or a loop | [C termination](#c-termination) |
 | `old(e)`, `at(region(N).entry, e)` | A value in the entry state or another recorded state | [`old(...)`](#old), [`at(...)`](#at) |
@@ -116,7 +116,7 @@ fn function_pointers::apply(f: fn(i32) -> i32, x: i32) -> i32 {
 theorem twice_is_doubling() {
     ensures Doubling(function_pointers::twice) by {
         unfold(Doubling(function_pointers::twice));
-        solve();
+        close();
     }
 }
 
@@ -722,17 +722,17 @@ order, then one decrease obligation. For a single component that obligation is
 or `post[0] == pre[0] and post[1] < pre[1]`, and so on, where `pre` reads the
 component at the start of the iteration and `post` at the back edge. Choosing
 the pivot is therefore an ordinary proof of one disjunct, closed with
-`known()`, that the proof makes and [`click expand`](../cli/expand.md)
+`close()`, that the proof makes and [`click expand`](../cli/expand.md)
 prints, not a search the kernel
-performs. The back edge closes each of those members with `solve()`, as it
+performs. The back edge closes each of those members with `close()`, as it
 closes each invariant and as a function's exit closes each `ensures`; where
-`solve()` misses one, prove it, or a fact it needs, with `have ... by { ... }`
+`close()` misses one, prove it, or a fact it needs, with `have ... by { ... }`
 before the back edge, for example by `close() using { ... }` naming the guard,
 precondition, and invariant facts it needs. A missed member's diagnostic
 names the ranking obligations the bundle carries.
 
 The iteration's entry values are available as `at(region(N).entry, x)`, the
-same form loop-body premises use. `solve()` at the back edge reads the
+same form loop-body premises use. `close()` at the back edge reads the
 facts in scope: the loop's declared invariants and guard at
 iteration entry, the function's preconditions, and the C branch conditions
 this path took to reach the back edge are among them.
@@ -832,7 +832,7 @@ should then verify, while self-application would still owe descent. See
 
 An unranked loop or callee without a termination proof is an `incomplete
 proof`. Click names the loop or follows the call to the missing proof.
-Failure of `solve()` to prove a supplied measure's nonnegativity or descent
+Failure of `close()` to prove a supplied measure's nonnegativity or descent
 is `unsuccessful search`. A function-level `decreases` clause requires a
 recursive edge to rank. A function that promises to return also needs return
 evidence for its calls. A call authorized by a contract that permits divergence
@@ -957,12 +957,12 @@ close();
 ```
 
 The scoped proof may use `obtain` and `witness`. Its established proposition
-joins the facts of the one path at function exit, so the later `solve()` can
+joins the facts of the one path at function exit, so the later `close()` can
 use it to close the matching postcondition without applying those existential
 steps to other contract claims.
 
 Steps after `step_until(function.exit)` run in source order on that path.
-`solve()` closes the first open goal, and the implicit tail closes the rest.
+`close()` closes the first open goal, and the implicit tail closes the rest.
 Facts established after a closing step do not retroactively affect it. All
 claim proofs for one path use the same finalized specification.
 
@@ -1012,13 +1012,13 @@ See [conversion examples](https://github.com/clicklang/click/blob/master/mdtests
 ```click
 theorem integer_successor(z: Integer) {
     ensures z + 1 > z by {
-        solve();
+        close();
     }
 }
 ```
 
 Equality, disequality, and the ordinary order comparisons are supported.
-`solve()` can produce explicit arithmetic evidence for supported linear
+`close()` can produce explicit arithmetic evidence for supported linear
 comparisons. General multiplication is a valid expression; it does not imply
 a general nonlinear arithmetic solver. Expanded proofs retain the arithmetic
 evidence for ordinary verification to check.
@@ -1060,7 +1060,7 @@ signedness and owe nothing
 a theorem's typed `let` names that native operation in its clauses and in
 every proof step
 (`mdtests/a_theorem_let_names_its_native_operation_in_a_proof_step.md`),
-and `solve` relates its observation to its operands' by the in-range
+and `close()` relates its observation to its operands' by the in-range
 identity, as at 32 and 64 bits, where bounds keep it from wrapping
 (`mdtests/solve_plans_a_narrow_comparison_through_its_operation_identity.md`);
 arithmetic there over an operand of another machine type is refused, naming
@@ -1207,7 +1207,7 @@ outside the type's range, or observations of two different types, have no
 native form. An equality between a machine value and an Integer sum, such as
 `to_integer(refs) == 1 + to_integer(amount)`, is not the C equality
 `refs == 1 + amount`: the two agree only where the C sum is defined, which
-`solve` proves through the operation identity.
+`close()` proves through the operation identity.
 
 An Integer equality over `+`, `-`, `*` and negation of 32-bit (`int32` or
 `uint32`) observations and constants also establishes the equality of the
@@ -1223,13 +1223,13 @@ orders establish no word fact. A term of more than 64 nodes establishes
 nothing.
 
 A population count is an `int32` value like any other, observed as
-`to_integer(count(R(p)))` whatever expression reaches it; `solve` relates
+`to_integer(count(R(p)))` whatever expression reaches it; `close()` relates
 `to_integer(entry + quantity)` to `to_integer(entry) + to_integer(quantity)`
 by the in-range operation identity. A signed definedness fact
 `defined(a + b)` (or `-`, `*`) is exactly the two bounds
-`to_integer(a) + to_integer(b) <= MAX` and `>= MIN`, and `solve` may cite it as
+`to_integer(a) + to_integer(b) <= MAX` and `>= MIN`, and `close()` may cite it as
 either bound
-(`mdtests/solve_reads_a_definedness_premise_as_integer_bounds.md`). `solve`
+(`mdtests/solve_reads_a_definedness_premise_as_integer_bounds.md`). `close()`
 selects Integer equalities over machine observations as rewrite candidates,
 as it selects native equalities. An Integer count premise at entry serves a
 `fold` over the grown count as its machine form does
@@ -1401,7 +1401,7 @@ theorem countdown_is_zero(n: int32) {
             apply(ih(n - 1));
             unfold(countdown(n));
             rewrite(countdown(n - 1), 0);
-            known();
+            close();
         }
     }
 }
@@ -1460,9 +1460,9 @@ checks the same current claim under the proposition and its negation:
 theorem int32_sign_split(x: int32) {
     ensures x <= 0 or x > 0 by {
         if x <= 0 {
-            solve();
+            close();
         } else {
-            solve();
+            close();
         }
     }
 }
@@ -1685,8 +1685,8 @@ theorem lift(callback: int32 (*)()) executes callback() {
     requires Exact(callback);
     ensures Progress(callback) as { cell: k } by {
         step(Exact, { cell: k });
-        have k.revision == old(k.revision) + 1 by known();
-        solve();
+        have k.revision == old(k.revision) + 1 by close();
+        close();
     }
 }
 ```
@@ -2781,7 +2781,7 @@ names the read of the word at the state where it was stated. The program's
 cast reads the word where it executes, so after a store through another
 pointer the two are different reads, and the cast no longer designates
 `parent` (`mdtests/a_parent_cast_fact_is_not_carried_across_a_store_through_another_node.md`).
-Restate the fact before the cast, with `solve()` across plain stores or with
+Restate the fact before the cast, with `close()` across plain stores or with
 `transport` and the store's separation, and through a join's `ensuring`
 clause when a branch lies between
 (`mdtests/a_parent_cast_restated_after_a_store_lets_the_parent_be_dereferenced.md`).
@@ -2820,7 +2820,7 @@ declared resources. Declared `fact` clauses are pure facts.
 Before `fold(uncalled(flag));`, the declared pure body facts must be exact facts
 in the current proof context (or normalize to true without context). `fold`
 then consumes the contained resource facts and returns the abstract token
-resource fact. It does not invoke `solve`; use an explicit `have` first when a
+resource fact. It does not invoke `close()`; use an explicit `have` first when a
 body fact needs derivation. The end of the `by { ... }` block checks the overall
 claim.
 
@@ -3614,7 +3614,7 @@ let { y: y, z: z } = divide(p, { x: x });
 
 An application first proves its argument evaluation obligations and the
 instantiated `requires` clauses at the caller's frontier. It uses the same
-`by` and `requires` proof suffixes as `step`, with implicit `solve()` for
+`by` and `requires` proof suffixes as `step`, with implicit `close()` for
 omitted proofs. Once the obligations are proved, the application consumes the
 mapped inputs, binds produced instances to the names in the `let` pattern, and
 adds the `ensures` facts. No C statement executes and memory stays the same.
@@ -3672,7 +3672,7 @@ function choose(flag: Bool, x: int32) -> Bool {
 theorem three_is_in_range() {
     ensures in_range(3) by {
         unfold(in_range(3));
-        known();
+        close();
     }
 }
 ```
@@ -4505,7 +4505,7 @@ match xs {
 Constructor arities and exhaustiveness are checked, arm bindings are lexical,
 and multiple recursive fields each receive an induction-hypothesis instance.
 Mutual induction across different datatype families is not generated.
-`solve` does not invent induction, and a pure function's `decreases` clause
+`close()` does not invent induction, and a pure function's `decreases` clause
 remains definition-totality evidence rather than a theorem about the result.
 
 Function contracts may also use contract-level `let` bindings:
@@ -4892,7 +4892,7 @@ After function bodies have been proved, program closing has an ordinary goal
 combining the selected return promises, divergence policies, and callback safety.
 An optional top-level `termination by { ... }` block supplies its proof. With no
 block, or with proofs omitted at its end, the implicit solver runs on that goal.
-Ordinary `have`, logical tactics, `known`, and `solve` work inside the block.
+Ordinary `have`, logical tactics, and `close()` work inside the block.
 
 The propositions are `termination_returns("f")`, `termination_divergence("f")`,
 and `termination_callbacks()`. Checked steps also expose `termination_local("f")`,

@@ -30,7 +30,7 @@ int32 make(int32* p, int32 i) {
 } by {
     step_until(function.exit);
     fold(bound(p, i));
-    solve();
+    close();
 }
 ```
 

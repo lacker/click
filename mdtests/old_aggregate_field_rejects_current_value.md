@@ -13,10 +13,10 @@ void redirect(struct packet input, int32* q) {
 } by {
     step();
     have input.data == q by { normalize(); }
-    have old(input.data) == q by { known(); }
+    have old(input.data) == q by { close(); }
 }
 ```
 
 ```expect
-fail: known
+fail: could not establish `old(input->data) == q`
 ```

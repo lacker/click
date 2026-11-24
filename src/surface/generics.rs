@@ -1620,7 +1620,7 @@ mod theorem_statement_tests {
 
     #[test]
     fn application_instantiates_clauses_but_omits_proof_and_proof_locations() {
-        let file = crate::surface::parse("theorem identity<T>(x: T) { requires x == x; ensures x == x by { have x == x by solve(); known(); } }").unwrap();
+        let file = crate::surface::parse("theorem identity<T>(x: T) { requires x == x; ensures x == x by { have x == x by close(); close(); } }").unwrap();
         let definition = &file.theorem_definitions()[0];
         let substitution =
             BTreeMap::from([("T".into(), ClickType::Program(InterfaceType::Int32).into())]);

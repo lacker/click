@@ -35,7 +35,7 @@ int32 add3(int32 x) {
 theorem add3_adds_four() executes add3(int32 x) {
     ensures Adds(&add3, { amount: 4 }) by {
         step();
-        solve();
+        close();
     }
 }
 ```

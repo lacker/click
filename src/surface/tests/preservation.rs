@@ -2,7 +2,7 @@ use super::expansion_tests::mdtest_sources;
 use super::*;
 
 // Smart transport fixtures keep their source and target explicit, but let
-// search choose the derivation. Already-retained facts may expand to known();
+// search choose the derivation. Already-retained facts may expand to close();
 // every expansion must replay without implicit solve or legacy transport.
 
 #[test]
@@ -113,7 +113,7 @@ fn ordinary_equalities_compose_without_search() {
             requires y == z;
             ensures x == z by {
                 rewrite(x, y);
-                known();
+                close();
             }
         }
     "#;
@@ -139,13 +139,13 @@ fn preserve_checks_signed_and_unsigned_64_bit_reads() {
                 requires separate(memory(dest[0..1]), memory(kept[0..1]));
             }} by {{
                 mark before;
-                step() by {{ known(); }}
+                step() by {{ close(); }}
                 mark after;
                 have *kept == at(before, *kept) by {{
                     have separate(statement(0).footprint, memory(*kept)) by {{ normalize() using {{ at(before, separate(memory(dest[0..1]), memory(kept[0..1]))); }}; }}
                     preserve(memory(*kept), statement(0));
                 }}
-                step() by {{ known(); }}
+                step() by {{ close(); }}
                 mark final;
                 have *kept == at(before, *kept) by {{
                     have *kept == at(after, *kept) by {{
@@ -153,10 +153,10 @@ fn preserve_checks_signed_and_unsigned_64_bit_reads() {
                         preserve(memory(*kept), statement(1));
                     }}
                     rewrite(*kept, at(after, *kept));
-                    known();
+                    close();
                 }}
                 step();
-                known(); known(); known(); known();
+                close(); close(); close(); close();
             }}
         "#
         );
@@ -357,9 +357,9 @@ fn preserve_resource_descriptors_follow_call_bindings() {
             owns other: model();
             requires separate(memory(*p), other);
         } by {
-            step() { requires separate(memory(*p), other) by known(); }
+            step() { requires separate(memory(*p), other) by close(); }
             step();
-            known(); known(); known(); known(); known();
+            close(); close(); close(); close(); close();
         }
     "#
     );
@@ -412,7 +412,7 @@ fn preserve_named_resource_is_a_theorem_argument() {
         r#"
         theorem keep_separation(A: Resource, B: Resource) {
             requires separate(A, B);
-            ensures separate(A, B) by { known(); }
+            ensures separate(A, B) by { close(); }
         }
     "#
     )
@@ -475,7 +475,7 @@ fn pointer_rejection_prefixes_expand_and_replay() {
             "joined_pointer_field_read_rejects_different_field",
             "inspect",
             "have model->right == leaf by {\n                                normalize() using { sibling == model; sibling->left == child; child == leaf; };\n                            }",
-            "have child == leaf by { known(); }",
+            "have child == leaf by { close(); }",
         ),
         (
             "mutex_protected_pointer_footprint_stale_read_rejected",
@@ -677,7 +677,7 @@ fn multiple_write_resource_transport_expands_to_ordinary_equalities() {
     have m.value == at(statement(1).entry, m.value) by {
         preserve(m, statement(1));
     }
-    have m.value == at(statement(0).entry, m.value) by { known(); }"#,
+    have m.value == at(statement(0).entry, m.value) by { close(); }"#,
         r#"    have m.value == at(statement(0).entry, m.value) by {
         transport(at(statement(0).entry, m.value) == at(statement(0).entry, m.value),
             m.value == at(statement(0).entry, m.value));
@@ -704,7 +704,7 @@ fn multiple_write_transport_rejects_changed_reads_and_invalid_separation() {
     let c = sources[0].1.replace("*p = 1;", "*q = 1;");
     let overlapping = source.replace("views *q;", "owns *q;");
     assert!(verify_c_sources(&overlapping, &[(sources[0].0.as_str(), c.as_str())]).is_err());
-    let invalid = source.replace("        transport(", "        have separate(statement(0).footprint, memory(*p)) by { known(); }\n        transport(");
+    let invalid = source.replace("        transport(", "        have separate(statement(0).footprint, memory(*p)) by { close(); }\n        transport(");
     let sources = sources
         .iter()
         .map(|(n, s)| (n.as_str(), s.as_str()))
@@ -947,7 +947,7 @@ fn two_read_transport_refuses_changed_reads_and_missing_source() {
         .map(|(n, s)| (n.as_str(), s.as_str()))
         .collect::<Vec<_>>();
     assert!(verify_c_sources(&source.replace("    requires *q == *r;\n", ""), &sources).is_err());
-    let invalid = source.replace("        transport(", "        have separate(statement(0).footprint, memory(*p)) by { known(); }\n        transport(");
+    let invalid = source.replace("        transport(", "        have separate(statement(0).footprint, memory(*p)) by { close(); }\n        transport(");
     assert!(verify_c_sources(&invalid, &sources).is_err());
 }
 
@@ -1032,7 +1032,7 @@ fn conjunction_transport_requires_both_facts_and_preservations() {
         );
         assert!(verify_c_sources(&missing, &sources).is_err());
     }
-    let invalid = source.replace("        transport(", "        have separate(statement(0).footprint, memory(*p)) by { known(); }\n        transport(");
+    let invalid = source.replace("        transport(", "        have separate(statement(0).footprint, memory(*p)) by { close(); }\n        transport(");
     assert!(verify_c_sources(&invalid, &sources).is_err());
 }
 
@@ -1127,7 +1127,7 @@ fn nested_conjunction_transport_checks_deep_leaves_and_all_evidence() {
         .collect::<Vec<_>>();
     for invalid in [
         source.replace("requires *q == 7 and (*r == 8 and *s == 9);", "requires *q == 7 and *r == 8;"),
-        source.replace("        transport(", "        have separate(statement(0).footprint, memory(*p)) by { known(); }\n        transport("),
+        source.replace("        transport(", "        have separate(statement(0).footprint, memory(*p)) by { close(); }\n        transport("),
     ] {
         assert!(verify_c_sources(&invalid, &files).is_err());
     }
@@ -1179,7 +1179,7 @@ fn conjunction_projection_transport_checks_source_and_preservation() {
     for invalid in [
         source.replace("requires *p == 8 and *q == 7;", "requires *p == 8;"),
         source.replace("have *q == 7", "have *q == 9").replace(", *q == 7)", ", *q == 9)"),
-        source.replace("        transport(", "        have separate(statement(0).footprint, memory(*p)) by { known(); }\n        transport("),
+        source.replace("        transport(", "        have separate(statement(0).footprint, memory(*p)) by { close(); }\n        transport("),
     ] {
         assert!(verify_c_sources(&invalid, &files).is_err());
     }
@@ -1261,7 +1261,7 @@ fn conjunction_selection_transport_checks_every_selected_leaf() {
     for invalid in [
         source.replace("requires *q == 7 and (*p == 8 and *r == 8);", "requires *q == 7 and *p == 8;"),
         source.replace("*q == 7 and *r == 8", "*q == 7 and *r == 9"),
-        source.replace("        transport(", "        have separate(statement(0).footprint, memory(*p)) by { known(); }\n        transport("),
+        source.replace("        transport(", "        have separate(statement(0).footprint, memory(*p)) by { close(); }\n        transport("),
     ] {
         assert!(verify_c_sources(&invalid, &files).is_err());
     }
@@ -1379,7 +1379,7 @@ fn implication_transport_rejects_changed_guard_and_conclusion() {
         .collect::<Vec<_>>();
     for invalid in [
         source.replace("    requires *q == 7 implies *r == 8;", ""),
-        source.replace("        transport(", "        have separate(statement(0).footprint, memory(*p)) by { known(); }\n        transport("),
+        source.replace("        transport(", "        have separate(statement(0).footprint, memory(*p)) by { close(); }\n        transport("),
     ] {
         assert!(verify_c_sources(&invalid, &files).is_err());
     }
@@ -1470,7 +1470,7 @@ fn compound_implication_transport_rejects_changed_nested_guards() {
         .collect::<Vec<_>>();
     for invalid in [
         source.replace(&format!("    requires {original};"), ""),
-        source.replace("        transport(", "        have separate(statement(0).footprint, memory(*p)) by { known(); }\n        transport("),
+        source.replace("        transport(", "        have separate(statement(0).footprint, memory(*p)) by { close(); }\n        transport("),
     ] { assert!(verify_c_sources(&invalid, &files).is_err()); }
 }
 
@@ -1606,7 +1606,7 @@ fn returned_have_transport_expansion_replays_without_search() {
             "    requires separate(memory(*p), memory(*q));\n    ensures 1 == 1;",
         )
         .replace("    have *q ==", "    step();\n    have *q ==")
-        .replace("    step();\n}", "    known();\n}");
+        .replace("    step();\n}", "    close();\n}");
     let sources = sources
         .iter()
         .map(|(n, s)| (n.as_str(), s.as_str()))
@@ -1670,7 +1670,7 @@ fn memory_observation_does_not_establish_initialization() {
         } by {
             step_until(function.exit);
             observe(p[0..2]);
-            known();
+            close();
         }
     "#;
     let sources = [("unwritten.c", "void unwritten(int32 *p) {}")];

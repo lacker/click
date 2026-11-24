@@ -35,8 +35,8 @@ void explicit_proof(int32 n) {
     produces c: counter();
 } by {
     let { item: c } = make_counter(n + 1) {
-        requires defined(n + 1) by { solve(); }
-        requires 1 <= ((n + 1) as int32) by { solve(); }
+        requires defined(n + 1) by { close(); }
+        requires 1 <= ((n + 1) as int32) by { close(); }
     }
 }
 
@@ -52,7 +52,7 @@ void resource_proof(int32 n) {
     consumes held: counter();
     requires held.next == n;
 } by {
-    discard_counter(n, { input: held }) by { known(); }
+    discard_counter(n, { input: held }) by { close(); }
 }
 ```
 

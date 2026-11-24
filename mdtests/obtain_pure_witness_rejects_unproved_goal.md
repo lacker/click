@@ -10,7 +10,7 @@ theorem original_goal(x: int32) {
     ensures x < 1000 by {
         let k = obtain(exists (k: int32) { k > x });
         instantiate(forall (j: int32) { j > x implies j > 1000 }, k);
-        solve();
+        close();
     }
 }
 ```

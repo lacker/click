@@ -27,7 +27,7 @@ void broken(struct object* obj) {
         step();
         step();
     }
-    solve();
+    close();
 }
 ```
 

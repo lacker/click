@@ -58,7 +58,7 @@ void rotate(struct node* parent) {
         invariant parent->right != 0;
         invariant parent->right->left != 0;
         decreases 0;
-        initialize by solve();
+        initialize by close();
         maintain by {
             match t.model {
                 Tree::Empty => { contradiction(t.model == Tree::Empty); },
@@ -83,9 +83,9 @@ void rotate(struct node* parent) {
                                     have tmp2 == iid;
                                     mark inner_inputs;
                                     mark before_link_0;
-                                    have separate(memory(sibling->left), memory(sid->right)) by known();
-                                    have separate(memory(sibling->left), memory(iid->left)) by known();
-                                    have separate(memory(sibling->left), memory(parent->left)) by known();
+                                    have separate(memory(sibling->left), memory(sid->right)) by close();
+                                    have separate(memory(sibling->left), memory(iid->left)) by close();
+                                    have separate(memory(sibling->left), memory(parent->left)) by close();
                                     step();
                                     have separate(loop(0).statement(3).footprint, memory(sid->right)) by {
                                         close() using { separate(memory(sibling->left), memory(sid->right)); };
@@ -107,10 +107,10 @@ void rotate(struct node* parent) {
                                     }
                                     have sid->left == tmp1;
                                     mark before_link_1;
-                                    have separate(memory(tmp2->right), memory(sid->right)) by known();
-                                    have separate(memory(tmp2->right), memory(iid->left)) by known();
-                                    have separate(memory(tmp2->right), memory(parent->left)) by known();
-                                    have separate(memory(tmp2->right), memory(sid->left)) by known();
+                                    have separate(memory(tmp2->right), memory(sid->right)) by close();
+                                    have separate(memory(tmp2->right), memory(iid->left)) by close();
+                                    have separate(memory(tmp2->right), memory(parent->left)) by close();
+                                    have separate(memory(tmp2->right), memory(sid->left)) by close();
                                     step();
                                     have separate(loop(0).statement(4).footprint, memory(sid->right)) by {
                                         close() using { separate(memory(tmp2->right), memory(sid->right)); };
@@ -120,7 +120,7 @@ void rotate(struct node* parent) {
                                     }
                                     have sid->right == at(inner_inputs, sid->right) by {
                                         rewrite(sid->right, at(before_link_1, sid->right));
-                                        known();
+                                        close();
                                     }
                                     have separate(loop(0).statement(4).footprint, memory(iid->left)) by {
                                         close() using { separate(memory(tmp2->right), memory(iid->left)); };
@@ -130,7 +130,7 @@ void rotate(struct node* parent) {
                                     }
                                     have iid->left == at(inner_inputs, iid->left) by {
                                         rewrite(iid->left, at(before_link_1, iid->left));
-                                        known();
+                                        close();
                                     }
                                     have separate(loop(0).statement(4).footprint, memory(parent->left)) by {
                                         close() using { separate(memory(tmp2->right), memory(parent->left)); };
@@ -140,7 +140,7 @@ void rotate(struct node* parent) {
                                     }
                                     have parent->left == at(inner_inputs, parent->left) by {
                                         rewrite(parent->left, at(before_link_1, parent->left));
-                                        known();
+                                        close();
                                     }
                                     have separate(loop(0).statement(4).footprint, memory(sid->left)) by {
                                         close() using { separate(memory(tmp2->right), memory(sid->left)); };
@@ -149,13 +149,13 @@ void rotate(struct node* parent) {
                                         preserve(memory(sid->left), loop(0).statement(4));
                                     }
                                     have iid->right == sid;
-                                    have defined(iid->right) by { rewrite(iid, tmp2); known(); }
+                                    have defined(iid->right) by { rewrite(iid, tmp2); close(); }
                                     mark before_parent_store;
-                                    have separate(memory(parent->right), memory(sid->right)) by known();
-                                    have separate(memory(parent->right), memory(iid->left)) by known();
-                                    have separate(memory(parent->right), memory(parent->left)) by known();
-                                    have separate(memory(parent->right), memory(sid->left)) by known();
-                                    have separate(memory(parent->right), memory(iid->right)) by known();
+                                    have separate(memory(parent->right), memory(sid->right)) by close();
+                                    have separate(memory(parent->right), memory(iid->left)) by close();
+                                    have separate(memory(parent->right), memory(parent->left)) by close();
+                                    have separate(memory(parent->right), memory(sid->left)) by close();
+                                    have separate(memory(parent->right), memory(iid->right)) by close();
                                     step();
                                     have separate(loop(0).statement(5).footprint, memory(sid->right)) by {
                                         close() using { separate(memory(parent->right), memory(sid->right)); };
@@ -165,7 +165,7 @@ void rotate(struct node* parent) {
                                     }
                                     have sid->right == at(inner_inputs, sid->right) by {
                                         rewrite(sid->right, at(before_parent_store, sid->right));
-                                        known();
+                                        close();
                                     }
                                     have separate(loop(0).statement(5).footprint, memory(iid->left)) by {
                                         close() using { separate(memory(parent->right), memory(iid->left)); };
@@ -175,7 +175,7 @@ void rotate(struct node* parent) {
                                     }
                                     have iid->left == at(inner_inputs, iid->left) by {
                                         rewrite(iid->left, at(before_parent_store, iid->left));
-                                        known();
+                                        close();
                                     }
                                     have separate(loop(0).statement(5).footprint, memory(parent->left)) by {
                                         close() using { separate(memory(parent->right), memory(parent->left)); };
@@ -185,7 +185,7 @@ void rotate(struct node* parent) {
                                     }
                                     have parent->left == at(inner_inputs, parent->left) by {
                                         rewrite(parent->left, at(before_parent_store, parent->left));
-                                        known();
+                                        close();
                                     }
                                     have separate(loop(0).statement(5).footprint, memory(sid->left)) by {
                                         close() using { separate(memory(parent->right), memory(sid->left)); };
@@ -195,7 +195,7 @@ void rotate(struct node* parent) {
                                     }
                                     have sid->left == at(before_link_1, sid->left) by {
                                         rewrite(sid->left, at(before_parent_store, sid->left));
-                                        known();
+                                        close();
                                     }
                                     have separate(loop(0).statement(5).footprint, memory(iid->right)) by {
                                         close() using { separate(memory(parent->right), memory(iid->right)); };
@@ -211,9 +211,9 @@ void rotate(struct node* parent) {
                                     have sid->left == tmp1;
                                     // Only the parent's store lies between the retained_state and
                                     // this read of a different node's field.
-                                    have sid->right == at(inner_inputs, sid->right) by known();
+                                    have sid->right == at(inner_inputs, sid->right) by close();
                                     let s = fold(tree(iid->right), { model: Tree::Node(sid, irm, srm), left: ir, right: sr });
-                                    have iid->left == at(inner_inputs, iid->left) by known();
+                                    have iid->left == at(inner_inputs, iid->left) by close();
                                     let i = fold(tree(parent->right), { model: Tree::Node(iid, ilm, Tree::Node(sid, irm, srm)), left: il, right: s });
                                     let t = fold(tree(parent), { model: Tree::Node(id, lm, Tree::Node(iid, ilm, Tree::Node(sid, irm, srm))), left: l, right: i });
                                     step(); // Leave the loop.

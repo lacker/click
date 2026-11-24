@@ -42,7 +42,7 @@ int32 unchanged(struct counter *counter) {
     let second_restored = fold(counter_state(counter), { value: counter->value });
     step(pthread_mutex_unlock, { access: access, guard: second_guard, state: second_restored });
     step();
-    solve();
+    close();
 }
 ```
 

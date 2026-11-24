@@ -68,12 +68,12 @@ fn authority_member_local_body_uses_scalar_allocation_ownership() {
             step();
             fold(authority(reference(&x)));
             fold(reference(&x));
-            have count(reference(&x)) == 1 by { solve(); }
+            have count(reference(&x)) == 1 by { close(); }
             unfold(reference(&x));
-            have count(reference(&x)) == 0 by { solve(); }
+            have count(reference(&x)) == 0 by { close(); }
             unfold(authority(reference(&x)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     verify_c_project(&project(click_source), &[("private_body.c", c_source)])
@@ -108,19 +108,19 @@ fn authority_member_private_heap_body_round_trip() {
             branch {
                 true => {
                     step_until(function.exit);
-                    solve();
+                    close();
                 }
                 false => {}
             }
             fold(authority(reference(p)));
             fold(reference(p));
             with(reference(p)) {
-                have count(reference(p)) == 1 by { solve(); }
+                have count(reference(p)) == 1 by { close(); }
             }
             unfold(reference(p));
             unfold(authority(reference(p)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     verify_c_project(&project(click_source), &[("private_body.c", c_source)])
@@ -156,7 +156,7 @@ fn authority_helper_returns_member_with_private_memory_body() {
         } by {
             with(reference(p)) { step(); }
             step_until(function.exit);
-            solve();
+            close();
         }
 
         int32 value() {
@@ -164,7 +164,7 @@ fn authority_helper_returns_member_with_private_memory_body() {
         } by {
             step();
             step();
-            branch { true => { step_until(function.exit); solve(); } false => {} }
+            branch { true => { step_until(function.exit); close(); } false => {} }
             fold(authority(reference(p)));
             fold(reference(p));
             step();
@@ -172,7 +172,7 @@ fn authority_helper_returns_member_with_private_memory_body() {
             unfold(reference(p));
             unfold(authority(reference(p)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     verify_c_project(&project(click_source), &[("private_body.c", c_source)])
@@ -215,7 +215,7 @@ fn authority_helpers_create_and_consume_member_with_private_memory_body() {
             step();
             fold(reference(p));
             step_until(function.exit);
-            solve();
+            close();
         }
 
         int32 release(int32* p) {
@@ -229,7 +229,7 @@ fn authority_helpers_create_and_consume_member_with_private_memory_body() {
             step();
             step();
             step_until(function.exit);
-            solve();
+            close();
         }
 
         int32 value() {
@@ -237,17 +237,17 @@ fn authority_helpers_create_and_consume_member_with_private_memory_body() {
         } by {
             step();
             step();
-            branch { true => { step_until(function.exit); solve(); } false => {} }
+            branch { true => { step_until(function.exit); close(); } false => {} }
             fold(authority(reference(p)));
             step();
             step();
-            have count(reference(p)) == 1 by { solve(); }
+            have count(reference(p)) == 1 by { close(); }
             step();
             step();
-            have count(reference(p)) == 0 by { solve(); }
+            have count(reference(p)) == 0 by { close(); }
             unfold(authority(reference(p)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     verify_c_project(&project(click_source), &[("private_body.c", c_source)])
@@ -279,7 +279,7 @@ fn authority_creating_helper_cannot_outlive_caller_scalar_storage() {
             step();
             fold(reference(p));
             step_until(function.exit);
-            solve();
+            close();
         }
         int32 value() {
             ensures result == 7;
@@ -287,7 +287,7 @@ fn authority_creating_helper_cannot_outlive_caller_scalar_storage() {
             step();
             fold(authority(reference(&x)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let error = verify_c_project(&project(click_source), &[("private_body.c", c_source)])
@@ -318,7 +318,7 @@ fn authority_consuming_helper_cannot_return_the_wrong_private_body() {
         } by {
             unfold(reference(p));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let error = verify_c_project(&project(click_source), &[("private_body.c", c_source)])
@@ -364,7 +364,7 @@ fn authority_member_private_heap_body_cannot_back_two_births() {
         } by {
             step();
             step();
-            branch { true => { step_until(function.exit); solve(); } false => {} }
+            branch { true => { step_until(function.exit); close(); } false => {} }
             fold(authority(reference(p)));
             fold(reference(p));
             fold(reference(p));
@@ -427,7 +427,7 @@ fn authority_control_wrapper_tracks_memory_and_member_count_through_open_scopes(
         verifying "private_body.c";
         int32 value() { ensures result == -1 or result == 0; } by {
             step(); step();
-            branch { true => { step_until(function.exit); solve(); } false => {} }
+            branch { true => { step_until(function.exit); close(); } false => {} }
             step();
             fold(authority(reference(p)));
             fold(control(p));
@@ -441,7 +441,7 @@ fn authority_control_wrapper_tracks_memory_and_member_count_through_open_scopes(
             }
             unfold(control(p));
             unfold(authority(reference(p)));
-            step_until(function.exit); solve();
+            step_until(function.exit); close();
         }
     "#;
     verify_c_project(&project(click_source), &[("private_body.c", c_source)])
@@ -476,7 +476,7 @@ fn authority_control_wrapper_rejects_a_false_close_invariant() {
         verifying "private_body.c";
         int32 value() { ensures result == -1 or result == 0; } by {
             step(); step();
-            branch { true => { step_until(function.exit); solve(); } false => {} }
+            branch { true => { step_until(function.exit); close(); } false => {} }
             step();
             fold(authority(reference(p)));
             fold(control(p));
@@ -524,7 +524,7 @@ fn authority_control_wrapper_requires_its_contained_authority() {
         verifying "private_body.c";
         int32 value() { ensures result == -1 or result == 0; } by {
             step(); step();
-            branch { true => { step_until(function.exit); solve(); } false => {} }
+            branch { true => { step_until(function.exit); close(); } false => {} }
             step();
             fold(control(p));
         }
@@ -561,7 +561,7 @@ fn authority_control_wrapper_requires_its_counter_memory() {
         verifying "private_body.c";
         int32 value() { ensures result == -1 or result == 1; } by {
             step(); step();
-            branch { true => { step_until(function.exit); solve(); } false => {} }
+            branch { true => { step_until(function.exit); close(); } false => {} }
             step();
             fold(authority(reference(p)));
             step();
@@ -613,7 +613,7 @@ fn authority_control_survives_balanced_helper_calls() {
                 step();
                 fold(reference(p));
             }
-            step_until(function.exit); solve();
+            step_until(function.exit); close();
         }
         void release(int32* p) {
             owns control(p);
@@ -624,23 +624,23 @@ fn authority_control_survives_balanced_helper_calls() {
                 unfold(reference(p));
                 step();
             }
-            step_until(function.exit); solve();
+            step_until(function.exit); close();
         }
         int32 value() { ensures result == -1 or result == 0; } by {
             step(); step();
-            branch { true => { step_until(function.exit); solve(); } false => {} }
+            branch { true => { step_until(function.exit); close(); } false => {} }
             step();
             fold(authority(reference(p)));
             fold(control(p));
             step();
             with(control(p)) {
-                have count(reference(p)) == 1 by { solve(); }
-                have p[0] == 1 by { solve(); }
+                have count(reference(p)) == 1 by { close(); }
+                have p[0] == 1 by { close(); }
             }
             step();
             unfold(control(p));
             unfold(authority(reference(p)));
-            step_until(function.exit); solve();
+            step_until(function.exit); close();
         }
     "#;
     verify_c_project(&project(click_source), &[("private_body.c", c_source)])
@@ -694,18 +694,18 @@ fn authority_final_release_helper_retires_population_and_allocation() {
             unfold(reference(obj));
             unfold(authority(reference(obj)));
             step();
-            step_until(function.exit); solve();
+            step_until(function.exit); close();
         }
 
         int32 value() { ensures result == -1 or result == 0; } by {
             step(); step();
-            branch { true => { step_until(function.exit); solve(); } false => {} }
+            branch { true => { step_until(function.exit); close(); } false => {} }
             step();
             fold(authority(reference(obj)));
             fold(reference(obj));
             fold(control(obj));
             step();
-            step_until(function.exit); solve();
+            step_until(function.exit); close();
         }
     "#;
     verify_c_project(&project(click_source), &[("private_body.c", c_source)])

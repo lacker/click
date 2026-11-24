@@ -24,7 +24,7 @@ theorem needs_credits_is_offers_credits(
     ensures OffersCredits(callback) by {
         unfold(NeedsCredits(callback));
         unfold(OffersCredits(callback));
-        solve();
+        close();
     }
 }
 ```

@@ -28,7 +28,7 @@ void mark_one(int32 a[], int32 n, int32 i, int32 m) {
     ensures (if a[m] > 0 { 1 } else { 0 }) == 1;
 } by {
     step();
-    have (if a[m] > 0 { 1 } else { 0 }) == 1 by solve();
+    have (if a[m] > 0 { 1 } else { 0 }) == 1 by close();
 }
 ```
 

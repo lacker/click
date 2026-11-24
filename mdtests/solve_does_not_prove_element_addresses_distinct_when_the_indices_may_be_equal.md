@@ -15,7 +15,7 @@ int32 may_equal(int32* q, int32 j) {
     requires 0 <= j;
     ensures result == 0;
 } by {
-    have &q[j] != &q[0] by solve();
+    have &q[j] != &q[0] by close();
 }
 ```
 

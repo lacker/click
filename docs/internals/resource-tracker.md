@@ -304,7 +304,7 @@ than the edge. `extended_dag_bridging_active` and `explicit_dag_check_active`
 (`src/kernel/memory_history.rs`) are scoped flags, set for the duration of
 the memory-load prover and of explicit certificate validation and cleared
 outside them. The wider answers are confined to those scopes because the
-narrower ones are what execution pruning, load canonicalization and `solve`
+narrower ones are what execution pruning, load canonicalization and `close()`
 planning check a certified form against, and a rule that widened everywhere at
 once would make generation and check of the same query disagree. So the gate
 belongs on the row: outside the scope the cell arm is the pre-arc walk, which
@@ -782,7 +782,7 @@ asks the same question there
 `stored_value_at_equal_pointer` — which used to search only the load's own block
 for a stored cell, and so answered "no stored value" for exactly those reads —
 now filters by `observable_by_load` instead of by block name. A stated
-*disjunction* of equalities needs no rule of its own: `solve` splits it and each
+*disjunction* of equalities needs no rule of its own: `close()` splits it and each
 case holds its exact equality
 (`mdtests/proof_branch_pointer_local.md`). The hop is substitution of equals,
 so it is also what keeps the attack refused: resolving a returned `&x` moves the
@@ -1390,7 +1390,7 @@ it and a call whose checked write set is `visited[0..n]`. Every per-read
 decision is the store, call and history rule above; the frame adds only which
 facts a leaf may read, and like the fold read frame its answer enters no name
 and no assumption-free cache. A source that is a reflexive equality under
-binders and guards needs no proof, and `solve` offers `at(label, x) == x` its
+binders and guards needs no proof, and `close()` offers `at(label, x) == x` its
 reflexive source as it already offered `old(x) == x`.
 
 The attacks are the `mdtests/quantified_frame_rejects_*.md` family: a guard

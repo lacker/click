@@ -10,7 +10,7 @@ theorem carried_nonzero(u: int64, v: {ty}, z: Integer) {{
  ensures u != 0i64 by {{
   rewrite(to_integer(u), z);
   rewrite(z, to_integer(v));
-  known();
+  close();
  }}
 }}"#
     );
@@ -49,7 +49,7 @@ fn check_integer_rewrite_of_nested_native_bounds(ty: &str, suffix: &str) {
         requires y <= 20;
         ensures x <= 10{suffix} and x <= 20{suffix} by {{
             rewrite(to_integer(x), y);
-            all {{ y <= 10 => {{ known(); }} y <= 20 => {{ known(); }} }}
+            all {{ y <= 10 => {{ close(); }} y <= 20 => {{ close(); }} }}
         }}
     }}"#
     );
@@ -99,7 +99,7 @@ theorem prefix_bound(n: uint64) {
        close() using { 0 <= prefix(to_integer(n)); prefix(to_integer(n)) == to_integer(n) - truncating_remainder(to_integer(n), 4); };
       }
       to_integer(n) - truncating_remainder(to_integer(n), 4) <= 22204 => {
-       known();
+       close();
       }
   }
  }
@@ -155,7 +155,7 @@ verifying "identity.c";
 int32 identity(int32 x, int32 d) {
     requires d > 0;
     ensures x < 0 implies truncating_quotient(to_integer(result), to_integer(d)) == truncating_quotient(to_integer(x), to_integer(d));
-} by { step_until(function.exit); intro(); solve(); }
+} by { step_until(function.exit); intro(); close(); }
 "#;
 
 #[test]
@@ -177,7 +177,7 @@ fn conditional_quotient_claim_keeps_its_domain_in_expansion() {
     let sources = [("identity.c", CONDITIONAL_QUOTIENT_C)];
     let position = expansion::position_at_offset(
         CONDITIONAL_QUOTIENT_CLAIM,
-        CONDITIONAL_QUOTIENT_CLAIM.find("solve()").unwrap(),
+        CONDITIONAL_QUOTIENT_CLAIM.find("close()").unwrap(),
     );
     let expanded = expand_c_tactic_source_at(
         CONDITIONAL_QUOTIENT_CLAIM,
@@ -199,7 +199,7 @@ fn integer_certificate_keeps_negative_observation_bounds_when_adding() {
  requires -9223372036854775808 <= to_integer(q);
  requires to_integer(q) <= 9223372036854775807;
  ensures -9223372036854775808 <= to_integer(q + 0i64) by {
-  have defined(q + 0i64) by solve();
+  have defined(q + 0i64) by close();
   have to_integer(q + 0i64) == to_integer(q) + 0;
   close() using {
    to_integer(q + 0i64) == to_integer(q) + 0;
@@ -256,7 +256,7 @@ fn both_and_proves_exact_conjuncts_and_rejects_incomplete_arms() {
     }
     let leaking = r#"theorem leak(x: int32) {
         ensures (x == 0 implies x == 0) and x == 0 by {
-            all { (x == 0 implies x == 0) => { intro(); known(); } x == 0 => { known(); } }
+            all { (x == 0 implies x == 0) => { intro(); close(); } x == 0 => { close(); } }
         }
     }"#;
     assert!(
@@ -271,7 +271,7 @@ fn both_and_outcome_expands_and_rechecks() {
     let c = "int32 identity(int32 x) { return x; }";
     let source = r#"verifying "identity.c";
         int32 identity(int32 x) { ensures result == x and result <= x; } by {
-            step(); all { result == x => { known(); } result <= x => { solve(); } }
+            step(); all { result == x => { close(); } result <= x => { close(); } }
         }
     "#;
     let sources = [("identity.c", c)];
@@ -284,7 +284,7 @@ fn both_and_outcome_expands_and_rechecks() {
         "{expanded}"
     );
     verify_c_sources(&expanded, &sources).expect("expanded child proofs");
-    let position = expansion::position_at_offset(source, source.find("solve();").unwrap());
+    let position = expansion::position_at_offset(source, source.find("close();").unwrap());
     let selected =
         expand_c_tactic_source_at(source, &sources, position.line, position.column).unwrap();
     verify_c_sources(&selected, &sources).expect("selected both expansion");
@@ -372,7 +372,7 @@ fn linear_frontier_branch_uses_the_checked_structural_join() {
                 }
             }
             step();
-            solve();
+            close();
         }
     "#;
 
@@ -425,7 +425,7 @@ fn terminal_frontier_branch_seals_without_a_body_rerun() {
             ensures result == 1 or result == 2;
         } by {
             branch { true => { step(); } false => { step(); } }
-            solve();
+            close();
         }
     "#;
 
@@ -466,7 +466,7 @@ fn successive_shared_continuation_branches_seal_without_path_multiplication() {
             branch { true => {} false => {} }
             branch { true => {} false => {} }
             step();
-            solve();
+            close();
         }
     "#;
 
@@ -505,7 +505,7 @@ fn decided_frontier_branch_retains_the_only_feasible_checked_arm() {
             ensures returns_one: result == 1 by {
                 branch { true => { step(); } false => { step(); } }
                 step();
-                solve();
+                close();
             }
         }
     "#;
@@ -608,7 +608,7 @@ fn empty_proof_if_branches_contribute_only_their_case_split() {
 fn parses_execute_until_proof_tactic() {
     let source = FILL3_CLICK.replace(
         "== 2;",
-        "== 2 by { step_until(region(1).entry); step_until(function.exit); solve(); }",
+        "== 2 by { step_until(region(1).entry); step_until(function.exit); close(); }",
     );
     let file = parse(&source).expect("execute_until explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
@@ -622,7 +622,7 @@ fn parses_execute_until_proof_tactic() {
                     kind: ProgramPointKind::Entry
                 })),
                 ProofTactic::ExecuteUntil(ExecutionPoint::FUNCTION_EXIT),
-                ProofTactic::Solve,
+                ProofTactic::Close,
             ]
             .as_slice()
         )
@@ -634,7 +634,7 @@ fn parses_execute_until_proof_tactic() {
 fn parses_unfold_proof_tactic() {
     let source = FILL3_CLICK.replace(
         "== 2;",
-        "== 2 by { step_until(function.exit); unfold(sorted(p, 2)); solve(); }",
+        "== 2 by { step_until(function.exit); unfold(sorted(p, 2)); close(); }",
     );
     let file = parse(&source).expect("unfold explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
@@ -653,7 +653,7 @@ fn parses_unfold_proof_tactic() {
                         ContractExpression::IntegerLiteral("2".into())
                     ]
                 }),
-                ProofTactic::Solve,
+                ProofTactic::Close,
             ]
             .as_slice()
         )
@@ -665,7 +665,7 @@ fn parses_unfold_proof_tactic() {
 fn parses_apply_theorem_proof_tactic() {
     let source = FILL3_CLICK.replace(
         "== 2;",
-        "== 2 by { step_until(function.exit); apply(nonnegative(result)); solve(); }",
+        "== 2 by { step_until(function.exit); apply(nonnegative(result)); close(); }",
     );
     let file = parse(&source).expect("apply explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
@@ -679,7 +679,7 @@ fn parses_apply_theorem_proof_tactic() {
                     name: "nonnegative".to_string(),
                     arguments: vec![current_var("result")],
                 }),
-                ProofTactic::Solve,
+                ProofTactic::Close,
             ]
             .as_slice()
         )
@@ -694,7 +694,7 @@ fn rejects_apply_theorem_with_explicit_premises() {
         "== 2 by {
             step_until(function.exit);
             apply(nonnegative(result)) using { 0 <= result; };
-            solve();
+            close();
         }",
     );
     let error = parse(&source).expect_err("named theorem application uses the facts in scope");
@@ -716,7 +716,7 @@ fn parses_transport_with_explicit_premises() {
                 old(p[0]) == 0;
             }
             step_until(function.exit);
-            solve();
+            close();
         }",
     );
     let file = parse(&source).expect("explicit-premise transport should parse");
@@ -899,8 +899,14 @@ fn canonical_tactic_printer_round_trips_nested_surface_certificate() {
     );
     let parsed = parse(&source).expect("printed certificate should parse");
     assert_eq!(
-        parsed.function_blocks()[0].grouped_proof(),
-        Some(&SourceProof::Script(tactics))
+        crate::surface::printing::format_partial_tactic_sequence(
+            parsed.function_blocks()[0]
+                .grouped_proof()
+                .unwrap()
+                .tactics()
+                .unwrap()
+        ),
+        crate::surface::printing::format_partial_tactic_sequence(&tactics)
     );
 }
 
@@ -947,8 +953,14 @@ fn canonical_tactic_printer_round_trips_cases_certificate() {
     );
     let parsed = parse(&source).expect("printed cases certificate should parse");
     assert_eq!(
-        parsed.function_blocks()[0].grouped_proof(),
-        Some(&SourceProof::Script(tactics))
+        crate::surface::printing::format_partial_tactic_sequence(
+            parsed.function_blocks()[0]
+                .grouped_proof()
+                .unwrap()
+                .tactics()
+                .unwrap()
+        ),
+        crate::surface::printing::format_partial_tactic_sequence(&tactics)
     );
 }
 
@@ -1220,9 +1232,9 @@ const ORDERED_PAIR_CLICK: &str = r#"
         step_until(function.exit);
         have ordered_pair(pair) by {
             unfold(ordered_pair(pair));
-            solve();
+            close();
         }
-        solve();
+        close();
     }
 "#;
 
@@ -1290,9 +1302,9 @@ fn fixed_state_have_certifies_a_post_call_fact_across_a_later_store() {
         } by {
             step();
             step();
-            have pair->low == 0 by solve();
+            have pair->low == 0 by close();
             step();
-            solve();
+            close();
         }
     "#;
 
@@ -1341,7 +1353,7 @@ fn grouped_outcome_solve_splits_an_unfold_active_conjunction_ensure() {
         } by {
             unfold(ordered_pair(pair));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
 
@@ -1369,7 +1381,7 @@ fn parses_execute_until_assignment_and_preserves_same_spelled_labels() {
         let source = FILL3_CLICK.replace(
             "== 2;",
             &format!(
-                "== 2 by {{ step_until({spelling}.entry); step_until(function.exit); solve(); }}"
+                "== 2 by {{ step_until({spelling}.entry); step_until(function.exit); close(); }}"
             ),
         );
         let file = parse(&source).unwrap();
@@ -1403,7 +1415,7 @@ fn parses_execute_until_read_and_preserves_read_labels() {
         let source = FILL3_CLICK.replace(
             "== 2;",
             &format!(
-                "== 2 by {{step_until({spelling}.entry); step_until(function.exit); solve();}}"
+                "== 2 by {{step_until({spelling}.entry); step_until(function.exit); close();}}"
             ),
         );
         let file = parse(&source).unwrap();

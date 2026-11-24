@@ -15,7 +15,7 @@ int32 zero(int32 n) {
     ensures (0..n).any(|k| { k == result }) by {
         step_until(function.exit);
         witness(0)
-        solve();
+        close();
     }
 }
 ```

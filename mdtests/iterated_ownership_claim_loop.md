@@ -78,7 +78,7 @@ void claim_run(int32* data, int32* occupied, int32 capacity, int32 start, int32 
         invariant w.next == i;
         decreases end - i;
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             let { next: n } = unfold(w);
             have n == i;
@@ -96,18 +96,18 @@ void claim_run(int32* data, int32* occupied, int32 capacity, int32 start, int32 
                 have i <= k;
                 have n <= k by {
                     rewrite(n, i);
-                    known();
+                    close();
                 }
                 instantiate(forall (k: int32) {
                     n <= k and k < end implies occupied[k] == 0
                 }, k);
-                known();
+                close();
             }
             have occupied[i] == 0 by {
                 instantiate(forall (k: int32) {
                     n <= k and k < end implies occupied[k] == 0
                 }, i);
-                known();
+                close();
             }
             unfold(arena_window(data, occupied, capacity, start, end)[i]);
             have start <= i;
@@ -126,16 +126,16 @@ void claim_run(int32* data, int32* occupied, int32 capacity, int32 start, int32 
                     instantiate(forall (k: int32) {
                         to_integer(at(opened, i) + 1) <= to_integer(k) and k < end implies at(opened, occupied[k]) == 0
                     }, k);
-                    known();
+                    close();
                 }
                 have at(opened, i) < end;
                 have at(opened, i) < at(opened, i) + 1;
                 have at(opened, i) < k;
-                have 0 <= at(opened, i) by known();
-                have at(opened, i) < capacity by known();
+                have 0 <= at(opened, i) by close();
+                have at(opened, i) < capacity by close();
                 have 0 <= k;
                 have k < capacity;
-                have i < k by { known(); }
+                have i < k by { close(); }
                 have i != k by { close() using { i < k; }; }
                 have separate(memory(occupied[i]), memory(occupied[k])) by {
                     apply(click::separation::separate_elements(occupied, i, k));
@@ -164,7 +164,7 @@ void claim_run(int32* data, int32* occupied, int32 capacity, int32 start, int32 
                 have occupied[k] == at(loop(0).statement(1).entry, occupied[k]) by {
                     preserve(memory(occupied[k]), loop(0).statement(1));
                 }
-                known();
+                close();
             }
             step();
             let w = fold(arena_window(data, occupied, capacity, start, end), {
@@ -190,7 +190,7 @@ void claim_run(int32* data, int32* occupied, int32 capacity, int32 start, int32 
     step_until(function.exit);
     fold(arena_cells(data, occupied, capacity));
     fold(region(data, start, end));
-    solve();
+    close();
 }
 ```
 

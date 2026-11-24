@@ -8,7 +8,7 @@
 //! `2^32` and so modulo its own `2^w`), and `+`, `-` and `*` respect the
 //! congruence. When the exact result lies in `F` it is the one element of
 //! `F` in its residue class, so it is the machine result. The certificate
-//! rule `integer_operation_identity` and the root-local `known()` rule check
+//! rule `integer_operation_identity` and the root-local `close()` rule check
 //! this statement for the observation's format using its exact range pair.
 //! The latter accepts only a written operation, without memory resolution.
 

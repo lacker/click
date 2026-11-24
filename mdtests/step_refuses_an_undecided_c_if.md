@@ -24,7 +24,7 @@ int32 sign(int32 x) {
 } by {
     step();
     step();
-    solve();
+    close();
 }
 ```
 

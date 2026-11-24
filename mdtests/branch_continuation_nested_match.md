@@ -50,7 +50,7 @@ int32 f(int32* p, int32 x) {
             branch {
                 true => {
                     step();
-                    solve();
+                    close();
                 }
                 false => {}
             }

@@ -4,7 +4,7 @@
 function opaque(x: int32) -> int32 { x }
 theorem unrelated(x: int32, y: int32) {
     requires opaque(x) == 1;
-    ensures opaque(y) == 1 by known();
+    ensures opaque(y) == 1 by close();
 }
 ```
 

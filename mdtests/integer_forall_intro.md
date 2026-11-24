@@ -4,7 +4,7 @@
 theorem integer_forall_intro(x: Integer) {
     ensures forall (z: Integer) { z + x == x + z } by {
         intro();
-        solve();
+        close();
     }
 }
 ```

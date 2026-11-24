@@ -7,13 +7,13 @@ bundle states that member under its definedness guard:
 `else` arm the bundle is a conjunction whose first conjunct is that
 implication.
 
-Every leaf is already a fact: the body states the disjunction with `known()`
+Every leaf is already a fact: the body states the disjunction with `close()`
 and proves the two ranking inequalities over exact Integers. The member
 compares `to_integer(2 + run)` with `to_integer(i)`, so the `else` arm first
 derives `defined(2 + run)` from the incremented `run`'s Integer bounds. It also
 records the corresponding equality with addition in Integer arithmetic for
 expansion replay. The closing proof is
-an `all` block with `intro(); known();` in its guarded arm, and the back edge's closer
+an `all` block with `intro(); close();` in its guarded arm, and the back edge's closer
 must find it by splitting the bundle and closing each conjunct with the
 direct logical steps, before the premise-selecting and rewriting strategies
 run over the whole bundle. Before that, this arm fell through to the indexed
@@ -55,7 +55,7 @@ int32 count_run(int32 n) {
         invariant 0 <= run and run <= i;
         invariant (i <= 2 and run == 0) or (2 <= i and to_integer(2 + run) == to_integer(i));
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             mark iteration;
             if i < 2 {
@@ -64,14 +64,14 @@ int32 count_run(int32 n) {
                 have 0 <= i and i <= n;
                 have 0 <= run and run <= i;
                 have i <= 2 and run == 0;
-                have (i <= 2 and run == 0) or (2 <= i and to_integer(2 + run) == to_integer(i)) by known();
+                have (i <= 2 and run == 0) or (2 <= i and to_integer(2 + run) == to_integer(i)) by close();
                 have 0 <= to_integer(n) - to_integer(i) by {
                     close() using { i <= n; };
                 }
                 have to_integer(n) - to_integer(i) < to_integer(n) - to_integer(at(iteration, i)) by {
                     have to_integer(i) == to_integer(at(iteration, i)) + 1;
                     rewrite(to_integer(i), to_integer(at(iteration, i)) + 1);
-                    known();
+                    close();
                 }
             } else {
                 have 2 <= i by { close() using { not (i < 2); }; }
@@ -85,7 +85,7 @@ int32 count_run(int32 n) {
                         }
                         (2 <= i and to_integer(2 + run) == to_integer(i)) => {
                             have to_integer(2 + run) == to_integer(i);
-                            known();
+                            close();
                         }
                     }
                 }
@@ -107,7 +107,7 @@ int32 count_run(int32 n) {
                 have to_integer(2) + to_integer(run) >= -2147483648;
                 have defined(2 + run);
                 have 2 <= i and to_integer(2 + run) == to_integer(i);
-                have (i <= 2 and run == 0) or (2 <= i and to_integer(2 + run) == to_integer(i)) by known();
+                have (i <= 2 and run == 0) or (2 <= i and to_integer(2 + run) == to_integer(i)) by close();
                 have to_integer(2 + run) == 2 + to_integer(run) by {
                     normalize() using {
                         to_integer(2) + to_integer(run) >= -2147483648;
@@ -116,7 +116,7 @@ int32 count_run(int32 n) {
                 }
                 have (i <= 2 and run == 0) or (2 <= i and 2 + to_integer(run) == to_integer(i)) by {
                     rewrite(2 + to_integer(run), to_integer(2 + run));
-                    known();
+                    close();
                 }
                 have 0 <= to_integer(n) - to_integer(i) by {
                     close() using { i <= n; };
@@ -124,13 +124,13 @@ int32 count_run(int32 n) {
                 have to_integer(n) - to_integer(i) < to_integer(n) - to_integer(at(iteration, i)) by {
                     have to_integer(i) == to_integer(at(iteration, i)) + 1;
                     rewrite(to_integer(i), to_integer(at(iteration, i)) + 1);
-                    known();
+                    close();
                 }
             }
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

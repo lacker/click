@@ -20,8 +20,8 @@ uint8 set_and_read(int32* value, const uint8* bytes, uint64 length, uint64 index
     ensures result == old(bytes[index]);
     ensures value[0] == 7;
 } by {
-        have separate(memory(value[0..1]), memory(bytes[0..length])) by { known(); }
-        step() by { known(); }
+        have separate(memory(value[0..1]), memory(bytes[0..length])) by { close(); }
+        step() by { close(); }
 }
 ```
 

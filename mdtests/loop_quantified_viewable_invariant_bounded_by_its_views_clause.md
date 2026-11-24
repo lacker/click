@@ -37,9 +37,9 @@ int32 count_up(int32 *a, int32 n) {
             have forall (k: int32) { 0 <= k and k <= n implies viewable(a[0..k]) } by {
                 intro();
                 intro();
-                solve();
+                close();
             }
-            solve();
+            close();
         }
         maintain by {
             step();
@@ -47,7 +47,7 @@ int32 count_up(int32 *a, int32 n) {
             have forall (k: int32) { 0 <= k and k <= n implies viewable(a[0..k]) } by {
                 intro();
                 intro();
-                solve();
+                close();
             }
         }
     }

@@ -97,7 +97,7 @@ void child_release(struct child* obj) {
         unfold(child_ref(obj));
         unfold(authority(child_ref(obj)));
         step_until(function.exit);
-        solve();
+        close();
     } else {
         unfold(child_ref(obj));
         have 1 < obj->refs by {
@@ -108,7 +108,7 @@ void child_release(struct child* obj) {
         step();
         fold(child_control(obj));
         step_until(function.exit);
-        solve();
+        close();
     }
 }
 
@@ -141,7 +141,7 @@ void parent_detach(struct parent* p) {
         },
         ParentLink::Linked(entry_child) => {
             unfold(link);
-            have old(p->kid) == entry_child by solve();
+            have old(p->kid) == entry_child by close();
             if p->kid->refs > 1 {
                 step_until(function.exit);
             } else {
@@ -165,7 +165,7 @@ int32 caller(struct child* kid) {
         true => {
             step(child_release);
             step();
-            solve();
+            close();
         }
         false => {}
     }
@@ -178,7 +178,7 @@ int32 caller(struct child* kid) {
     step(child_release);
     step(parent_detach, { link: link });
     step();
-    solve();
+    close();
 }
 
 ```

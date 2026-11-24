@@ -39,7 +39,7 @@ void probe(struct node *p, struct node *q, struct node *value) {
         owns a: link(p, value);
         invariant parent == p;
         invariant successor == value;
-        initialize by solve();
+        initialize by close();
         maintain by { step(); step(); step(); }
     }
     match a.model ensuring {
@@ -54,17 +54,17 @@ void probe(struct node *p, struct node *q, struct node *value) {
         },
         Tag::At(id) => {
             unfold(a);
-            have parent == id by known();
+            have parent == id by close();
             have parent->next == id->next by {
                 rewrite(parent, id);
-                known();
+                close();
             }
             have parent->next == successor;
             let b = fold(frame(p), {model: Tag::At(id)});
             have parent->next == successor;
         },
     }
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }
 ```
 

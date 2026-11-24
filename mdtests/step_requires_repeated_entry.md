@@ -32,17 +32,17 @@ int32 caller(int32 a, int32 b) {
                 have is_positive(a) == 1 by {
                     unfold(is_positive(a)); normalize() using { a > 0; };
                 }
-                known();
+                close();
             }
             requires is_positive(a) == 1 or is_positive(b) == 1 by {
                 have is_positive(a) == 1 by {
                     unfold(is_positive(a)); normalize() using { a > 0; };
                 }
-                known();
+                close();
             }
         }
         step();
-        solve();
+        close();
     }
 }
 ```

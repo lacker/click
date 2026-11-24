@@ -25,14 +25,14 @@ int32 count() {
         invariant i <= 3;
         maintain by {
             mark outer_head;
-            have at(outer_head, i) < 3 by { solve(); }
+            have at(outer_head, i) < 3 by { close(); }
             step_until(loop(1).entry);
             loop {
                 decreases 2 - j;
                 invariant j <= 2;
                 invariant at(outer_head, i) < 3;
                 maintain by {
-                    have at(outer_head, i) < 3 by { known(); }
+                    have at(outer_head, i) < 3 by { close(); }
                     step_until(loop.back_edge);
                 }
             }

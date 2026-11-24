@@ -242,7 +242,7 @@ a family of copies. The two ways to do that are:
    checked as today.
 
 Under Integer-default arithmetic most of the 110 width lemmas are bridges
-nothing needs: the rules above are kernel facts, and `solve` uses them
+nothing needs: the rules above are kernel facts, and `close()` uses them
 directly. What survives is decided family by family in
 `roadmap/standard-library.md`, then stated once, in one `click::integer`
 module: `click::machine_integer` merges into it (maintainer, 2026-10-22).
@@ -341,7 +341,7 @@ Done 2026-10-23. What changed:
 - `integer_cast_identity` accepts a widening of an 8- or 16-bit value into
   a containing format through the same word or its 32-to-64-bit
   extension, when the word is built as a canonical carrier or is a binder
-  whose stated `int32` range the certificate cites, and `solve` plans it by
+  whose stated `int32` range the certificate cites, and `close()` plans it by
   matching the word, so every C widening of a narrow value
   verifies with no premise (`mdtests/solve_widens_*`,
   `mdtests/integer_cast_identity_widens_a_narrow_value.md`).
@@ -850,7 +850,7 @@ Progress:
      (`root_width`). A promoted `int32` comparison of widenings has one
      Integer reading, the comparison of its sides' values (`0 <= widen(x)`
      is `0 <= to_integer(x)`), which the Integer engines, the certificate
-     premise check and `solve` read like any native comparison's. An 8- or
+     premise check and `close()` read like any native comparison's. An 8- or
      16-bit read of a canonical projection is joined to the same read of its
      recorded source by one indexed edge (`Node::NarrowRead`), as a
      four-byte read is. Specification and Rust narrow comparisons stay
@@ -1322,7 +1322,7 @@ entry "`bool` is logical; C's `_Bool` is an integer":
   before the switch.
 - **Rust** comparisons and connectives are `Bool` values with no path
   split. Generic instantiation at `Bool` is supported only if the census
-  needs it. Teaching `solve` that `b or not b` is a separate proposal.
+  needs it. Teaching `close()` that `b or not b` is a separate proposal.
 
 Maintainer direction, 2026-10-28 (Stage 5 complete), superseding the
 2026-10-21 entry "`bool` is logical; C's `_Bool` is an integer" as built,

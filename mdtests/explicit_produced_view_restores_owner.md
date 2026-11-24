@@ -33,7 +33,7 @@ void update(int32* a, int32* b) {
     release_view(*a);
     step();
     step_until(function.exit);
-    solve();
+    close();
 }
 ```
 

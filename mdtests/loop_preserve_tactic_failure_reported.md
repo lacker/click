@@ -35,14 +35,14 @@ int32 count_down(int32 n) {
     loop {
         invariant i >= 0;
 
-        initialize by solve();
+        initialize by close();
         maintain by {
-            have i < 0 by solve();
+            have i < 0 by close();
             step();
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

@@ -35,7 +35,7 @@ int32 f(int32 n) {
         invariant i <= n;
     }
     step();
-    solve();
+    close();
 }
 ```
 

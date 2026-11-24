@@ -35,11 +35,11 @@ int32 peek(struct node* p) {
     match x.model {
         Cell::Missing => {
             step_until(function.exit);
-            solve();
+            close();
         },
         Cell::Present(identity) => {
             match x.model {
-                Cell::Missing => { step_until(function.exit); solve(); },
+                Cell::Missing => { step_until(function.exit); close(); },
                 Cell::Present(child) => {
                     contradiction(x.model == Cell::Present(child));
                 },

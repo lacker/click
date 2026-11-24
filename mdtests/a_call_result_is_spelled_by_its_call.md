@@ -10,7 +10,7 @@ result only by the store's equation.
 The call's result is named where it is introduced: a region has `entry` and
 `exit` points and, for a call, a `result`, so `statement(0).call(make, 0).result`
 is `make`'s result. The written fact lowers to the very fact the call produced,
-so `known()` closes it.
+so `close()` closes it.
 
 ```c filename=call_result.c
 struct holder { int32* p; };
@@ -33,7 +33,7 @@ void f(struct holder* h) {
 } by {
     step();
     have statement(0).call(make, 0).result[0] == 7 by {
-        known();
+        close();
     }
     step_until(function.exit);
 }

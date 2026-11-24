@@ -10,7 +10,7 @@ theorem q(x: int32) {
     requires x > 0;
     ensures forall (k: int32) {
         (5 <= k and k < 3 implies k == 1) and (x > 0 implies x == 7)
-    } by { solve(); }
+    } by { close(); }
 }
 ```
 

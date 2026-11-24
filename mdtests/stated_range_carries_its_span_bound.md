@@ -22,7 +22,7 @@ theorem a_prefix_of_a_stated_range(v: int32[], lo: int32, hi: int32) {
         have 0 < hi by { close() using { 0 <= lo; lo < hi; }; }
         have to_integer(lo) <= to_integer(hi - 1) by { close() using { lo < hi; 0 < hi; }; }
         have to_integer(hi - 1) < to_integer(hi) by { close() using { 0 < hi; }; }
-        solve();
+        close();
     }
 }
 
@@ -34,10 +34,10 @@ theorem a_wrapped_range_cannot_supply_it(v: int32[], n: int32) {
         have n >= 0 by { close() using { n == 1073741824; }; }
         have n >= 0 and viewable(v[0..n]) by {
             have viewable(v[0..n]);
-            known();
+            close();
         }
         apply(a_prefix_of_a_stated_range(v, 0, n));
-        known();
+        close();
     }
 }
 ```

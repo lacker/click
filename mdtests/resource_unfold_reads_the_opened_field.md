@@ -48,12 +48,12 @@ int32 claim(int32* data, int32* occupied, int32 capacity) {
         decreases p - i;
         invariant 0 <= i and i <= old(before.prefix);
         owns occupied[0..capacity];
-        initialize by solve();
+        initialize by close();
         maintain by {
             mark iteration;
             have i < p by {
                 if i < p {
-                    known();
+                    close();
                 } else {
                     have i == p;
                     have p <= i by {
@@ -62,13 +62,13 @@ int32 claim(int32* data, int32* occupied, int32 capacity) {
                     }
                     have i < capacity by {
                         rewrite(i, p);
-                        known();
+                        close();
                     }
                     have occupied[i] == 0 by {
                         instantiate(forall (k: int32) {
                             p <= k and k < capacity implies occupied[k] == 0
                         }, i);
-                        known();
+                        close();
                     }
                     have not (occupied[i] == 1) by {
                         rewrite(occupied[i], 0);
@@ -81,7 +81,7 @@ int32 claim(int32* data, int32* occupied, int32 capacity) {
             have 0 <= i + 1;
             step();
             have 0 <= i and i <= p;
-            have 0 <= p by known();
+            have 0 <= p by close();
             have 0 <= 0 - at(iteration, i) + p - 1 by {
                 close() using {
                     0 <= at(iteration, i);
@@ -109,7 +109,7 @@ int32 claim(int32* data, int32* occupied, int32 capacity) {
             contradiction(occupied[i] == 1);
         } else {
             have i == p;
-            known();
+            close();
         }
     }
     mark before_store;
@@ -132,12 +132,12 @@ int32 claim(int32* data, int32* occupied, int32 capacity) {
                         at(before_store, j) < at(before_store, p) implies
                         at(before_store, occupied[j]) == at(before_store, 1)
                 }, k);
-                known();
+                close();
             }
             have k != p;
             have k != i by {
                 rewrite(i, p);
-                known();
+                close();
             }
             have separate(memory(occupied[i]), memory(occupied[k])) by {
                 apply(click::separation::separate_elements(occupied, i, k));
@@ -148,12 +148,12 @@ int32 claim(int32* data, int32* occupied, int32 capacity) {
             have occupied[k] == at(before_store, occupied[k]) by {
                 preserve(memory(occupied[k]), statement(3));
             }
-            known();
+            close();
         } else {
             have k <= p;
             have k == p;
             rewrite(k, p);
-            solve();
+            close();
         }
     }
     have forall (k: int32) {
@@ -174,11 +174,11 @@ int32 claim(int32* data, int32* occupied, int32 capacity) {
                     at(before_store, j) < at(before_store, capacity) implies
                     at(before_store, occupied[j]) == at(before_store, 0)
             }, k);
-            known();
+            close();
         }
         have i < k by {
             rewrite(i, p);
-            known();
+            close();
         }
         have i != k;
         have separate(memory(occupied[i]), memory(occupied[k])) by {
@@ -190,11 +190,11 @@ int32 claim(int32* data, int32* occupied, int32 capacity) {
         have occupied[k] == at(before_store, occupied[k]) by {
             preserve(memory(occupied[k]), statement(3));
         }
-        known();
+        close();
     }
     let after = fold(claimed_prefix(data, occupied, capacity), { prefix: p + 1 });
     step();
-    solve();
+    close();
 }
 ```
 

@@ -14,8 +14,8 @@ int32 distinct(int32* p, int32* q) {
     owns *q;
     ensures result == 1;
 } by {
-    have separate(memory(*p), memory(*q)) by { known(); }
-    have p != q by { known(); }
+    have separate(memory(*p), memory(*q)) by { close(); }
+    have p != q by { close(); }
     step();
 }
 ```

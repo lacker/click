@@ -15,7 +15,7 @@ theorem checked_strict_lower(n: Integer, d: Integer, bound: Integer) {
         have bound * d <= n by { close() using { bound * d < n; }; }
         apply(integer::positive_divisor_quotient_lower(n, d, bound));
         if bound < truncating_quotient(n, d) {
-            known();
+            close();
         } else {
             have truncating_quotient(n, d) == bound by { close() using {
                 bound <= truncating_quotient(n, d); not (bound < truncating_quotient(n, d));
@@ -26,7 +26,7 @@ theorem checked_strict_lower(n: Integer, d: Integer, bound: Integer) {
                 apply(integer::truncation_identity(n, d));
                 have n == bound * d + truncating_remainder(n, d) by {
                     rewrite(bound, truncating_quotient(n, d));
-                    known();
+                    close();
                 }
                 have not (bound * d < n) by { close() using {
                     n == bound * d + truncating_remainder(n, d); truncating_remainder(n, d) <= 0;
@@ -54,7 +54,7 @@ theorem checked_strict_upper(n: Integer, d: Integer, bound: Integer) {
         have n <= bound * d by { close() using { n < bound * d; }; }
         apply(integer::positive_divisor_quotient_upper(n, d, bound));
         if truncating_quotient(n, d) < bound {
-            known();
+            close();
         } else {
             have truncating_quotient(n, d) == bound by { close() using {
                 truncating_quotient(n, d) <= bound; not (truncating_quotient(n, d) < bound);
@@ -65,7 +65,7 @@ theorem checked_strict_upper(n: Integer, d: Integer, bound: Integer) {
                 apply(integer::truncation_identity(n, d));
                 have n == bound * d + truncating_remainder(n, d) by {
                     rewrite(bound, truncating_quotient(n, d));
-                    known();
+                    close();
                 }
                 have not (n < bound * d) by { close() using {
                     n == bound * d + truncating_remainder(n, d); 0 <= truncating_remainder(n, d);

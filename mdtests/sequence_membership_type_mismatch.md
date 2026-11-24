@@ -5,7 +5,7 @@ does not apply C's arithmetic conversions across the specification boundary.
 
 ```click
 theorem mismatched_membership(value: int32) {
-    ensures value in [0u8] by solve();
+    ensures value in [0u8] by close();
 }
 ```
 

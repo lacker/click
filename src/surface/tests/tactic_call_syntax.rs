@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn smart_proof_calls_have_identical_meaning_with_optional_braces() {
-    for tactic in ["solve", "known", "normalize"] {
+    for tactic in ["close", "normalize"] {
         let call = format!("by {tactic}();");
         let block = format!("by {{ {tactic}(); }}");
         let source = |proof: &str| {
@@ -32,11 +32,11 @@ fn smart_proof_calls_have_identical_meaning_with_optional_braces() {
 #[test]
 fn bare_smart_tactics_are_rejected_in_proofs_and_scripts() {
     for proof in [
-        "by solve;",
-        "by { solve; }",
-        "by { have x == 7 by known(); solve; }",
-        "by { have x == 7 by solve; known(); }",
-        "by solve using { x == 7; };",
+        "by close;",
+        "by { close; }",
+        "by { have x == 7 by close(); close; }",
+        "by { have x == 7 by close; close(); }",
+        "by close using { x == 7; };",
     ] {
         let source =
             format!("theorem fact(x: int32) {{ requires x == 7; ensures x == 7 {proof} }}");
@@ -46,7 +46,7 @@ fn bare_smart_tactics_are_rejected_in_proofs_and_scripts() {
             "{proof}: {error:?}"
         );
     }
-    for proof in ["by solve(1);", "by { solve(1); }"] {
+    for proof in ["by close(1);", "by { close(1); }"] {
         let error =
             parser::parse(&format!("theorem fact() {{ ensures true {proof} }}")).unwrap_err();
         assert!(
@@ -63,8 +63,8 @@ fn nested_single_tactic_calls_keep_their_checked_scopes() {
         requires x == 7;
         ensures x == 7 by {
             have first: x == 7;
-            have second: x == 7 by { solve(); }
-            have x == 7 by known();
+            have second: x == 7 by { close(); }
+            have x == 7 by close();
             close() using { first; second; };
         }
     }",
@@ -73,8 +73,8 @@ fn nested_single_tactic_calls_keep_their_checked_scopes() {
 }
 
 #[test]
-fn whole_proof_solve_call_cannot_be_shadowed_by_a_user_tactic() {
-    let error = parser::parse("tactic solve() { ensures true; } by solve();").unwrap_err();
+fn close_cannot_be_shadowed_by_a_user_tactic() {
+    let error = parser::parse("tactic close() { ensures true; } by close();").unwrap_err();
     assert!(error.message().contains("built-in"), "{error:?}");
 }
 
@@ -108,10 +108,10 @@ fn binary_splits_use_their_own_join_interface_syntax() {
         format!("verifying \"split.c\"; int32 split(int32 x) {{ ensures true by {{ {body} }} }}")
     };
     for (head, arms, interface_separator) in [
-        ("if x == 0", "{ known(); } else { known(); }", "then "),
+        ("if x == 0", "{ close(); } else { close(); }", "then "),
         (
             "branch",
-            "{ true => { known(); } false => { known(); } }",
+            "{ true => { close(); } false => { close(); } }",
             "",
         ),
     ] {
@@ -151,12 +151,12 @@ fn binary_splits_use_their_own_join_interface_syntax() {
 #[test]
 fn removed_tactic_spellings_name_their_replacement() {
     for (proof, replacement) in [
-        ("by assumption();", "`known()`"),
-        ("by { assumption(); }", "`known()`"),
+        ("by assumption();", "`close()`"),
+        ("by { assumption(); }", "`close()`"),
         ("by auto();", "the omitted proof"),
         ("by { auto(); }", "the omitted proof"),
         (
-            "by { have x == 7 by auto(); known(); }",
+            "by { have x == 7 by auto(); close(); }",
             "the omitted proof",
         ),
         ("by arithmetic();", "`close() using {}`"),
@@ -164,6 +164,10 @@ fn removed_tactic_spellings_name_their_replacement() {
             "by { arithmetic() using { x == 7; }; }",
             "`close() using { ... }`",
         ),
+        ("by known();", "`close()`"),
+        ("by { known(); }", "`close()`"),
+        ("by solve();", "`close()`"),
+        ("by { solve(); }", "`close()`"),
         ("by solve() using { x == 7; };", "`close() using { ... }`"),
         (
             "by { solve() using { x == 7; } }",

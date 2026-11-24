@@ -2148,10 +2148,10 @@ mod logical_wrapper_search_tests {
         crate::surface::verify_click_theorems(
             r#"
             theorem guarded_equality(x: Integer, y: Integer) {
-                ensures x == y implies x + 1 == y + 1 by { solve(); }
+                ensures x == y implies x + 1 == y + 1 by { close(); }
             }
             theorem quantified_guarded_equality(x: Integer, y: Integer) {
-                ensures forall (k: Integer) { x == y implies x + k == y + k } by { solve(); }
+                ensures forall (k: Integer) { x == y implies x + k == y + k } by { close(); }
             }
         "#,
         )

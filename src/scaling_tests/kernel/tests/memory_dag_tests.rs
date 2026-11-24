@@ -131,7 +131,7 @@ fn checked_order_store_crossing_ignores_unrelated_order_facts() {
             let base = SymbolicMemory::new().with_block(format!("arg-memory-{size}"), 64);
             let separated = base.clone().store_with_context(written, int32(7), &context);
             let load = |memory: &SymbolicMemory| {
-                MachineTerm::MemoryLoad(
+                MachineTerm::read_named(
                     ProgramPoint::at(&(crate::kernel::intern_memory_ref(memory))),
                     Box::new(kept.clone()),
                     crate::kernel::LoadKind::Int32,

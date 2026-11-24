@@ -28,13 +28,13 @@ int32 uprec_phases(int32 a, int32* p) {
     loop {
         invariant a >= 0;
         invariant a <= 10;
-        initialize by solve();
+        initialize by close();
         maintain by {
             step();
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

@@ -10,7 +10,7 @@ theorem set_low_bit_is_nonzero(word: uint64) {
     requires (word & 1u64) == 1u64;
 
     ensures (word & 1u64) != 0u64 by {
-        solve();
+        close();
     }
 }
 ```

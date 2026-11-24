@@ -14,7 +14,7 @@ verifying "not_widen.c";
 
 signed char narrow(int x) {
     ensures to_integer(result) == to_integer(x);
-} by { step_until(function.exit); solve(); }
+} by { step_until(function.exit); close(); }
 ```
 
 ```expect

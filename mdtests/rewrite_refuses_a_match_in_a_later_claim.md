@@ -15,8 +15,8 @@ int32 f(int32 x, int32 y, int32 z) {
 } by {
     step_until(function.exit);
     rewrite(y, x);
-    known();
-    known();
+    close();
+    close();
 }
 ```
 

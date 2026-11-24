@@ -57,7 +57,7 @@ void walk(struct Node* p, int32* marker) {
         decreases t;
         invariant p != 0;
         invariant p == q;
-        initialize by solve();
+        initialize by close();
         maintain by {
             match t.model {
                 Chain::Empty => { unfold(t); contradiction(p == 0); },
@@ -70,7 +70,7 @@ void walk(struct Node* p, int32* marker) {
             }
         }
     }
-    have c.model != Path::Top by solve();
+    have c.model != Path::Top by close();
     match c.model {
         Path::Top => { contradiction(c.model == Path::Top); },
         Path::Step(identity, before) => {
@@ -83,7 +83,7 @@ void walk(struct Node* p, int32* marker) {
             }
             have separate(memory(q->next), memory(marker[0])) by {
                 rewrite(q, identity);
-                known();
+                close();
             }
             mark before_store;
             step();
@@ -93,8 +93,8 @@ void walk(struct Node* p, int32* marker) {
             have marker[0] == at(before_store, marker[0]) by {
                 preserve(memory(marker[0]), statement(2));
             }
-            have marker[0] == 9 by { known(); }
-            step_until(function.exit); solve();
+            have marker[0] == 9 by { close(); }
+            step_until(function.exit); close();
         },
     }
 }

@@ -9,7 +9,7 @@ theorem false_successor_bound(length: uint64) {
     ensures to_integer(length) + 1 <= 2147483647 by {
         have to_integer(length) < to_integer(18446744073709551615u64);
         have to_integer(length) + 1 <= 2147483647;
-        known();
+        close();
     }
 }
 ```

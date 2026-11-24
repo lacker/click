@@ -373,8 +373,8 @@ fn increment_first(bytes: &mut [u8]) {
 fn empty(bytes: &[u8]) -> bool {
     ensures result == (bytes.len() == 0);
 } by {
-    if bytes.len() == 0 { step_until(function.exit); solve(); }
-    else { step_until(function.exit); solve(); }
+    if bytes.len() == 0 { step_until(function.exit); close(); }
+    else { step_until(function.exit); close(); }
 }
 ```
 
@@ -423,9 +423,9 @@ theorem literal_forms(word: u16, index: usize, signed_word: i32) {
     requires word == 0xff_ff;
     requires index == 0b1_010;
     requires signed_word == -0x8000_0000;
-    ensures word == 65_535u16 by { known(); }
-    ensures index == 0o12usize by { known(); }
-    ensures signed_word == -2_147_483_648i32 by { known(); }
+    ensures word == 65_535u16 by { close(); }
+    ensures index == 0o12usize by { close(); }
+    ensures signed_word == -2_147_483_648i32 by { close(); }
 }
 ```
 
@@ -457,7 +457,7 @@ function, `fn half(bytes: &[u8]) -> &[u8]`, a type argument, `Option<&[u8]>`,
 and an enum field, `Window(&[u8], usize)`. Rust's methods read it:
 `half(bytes).len()`, `half(bytes)[i]` (a read under the caller's `views`) and
 `half(bytes).as_ptr()`. They reduce without an `unfold` when the slice is
-built, so `half(bytes).len() == bytes.len() / 2u64` closes by `solve`. A
+built, so `half(bytes).len() == bytes.len() / 2u64` closes by `close()`. A
 slice value passes to a slice parameter as one argument,
 `size(half(bytes))`. Failures print these forms, each reading back as
 the same term: a written subslice as `bytes[1..3]` and its length as
@@ -471,12 +471,12 @@ body of `half` unfolded, prints as its constructor at its element type,
 written in Click syntax, the library's calls print as calls,
 `slice::len(Slice<uint8>::Slice(p, n))`. `.len()` and `.as_ptr()` of a
 constructed slice, such as a subslice, stay the calls written; `unfold`
-opens one to the constructor's field, and `solve` opens it itself. A subslice,
+opens one to the constructor's field, and `close()` opens it itself. A subslice,
 `bytes[a..b]`, `bytes[a..]` or `bytes[..b]` of a slice parameter or a slice
 value, is the slice value with data `bytes.as_ptr() + a` and length `b - a`
 (`b` defaults to the length). It has no memory effect: `bytes[1..3][0]` reads
 `bytes[1]` under the caller's `views`, and `bytes[1..3].len() == 2u64` closes
-by `solve`. Its bounds are `usize`s, and they are Rust's: where Rust panics
+by `close()`. Its bounds are `usize`s, and they are Rust's: where Rust panics
 unless `a <= b <= bytes.len()`, a subslice owes those bounds where it is
 evaluated, as signed arithmetic owes its range. Under a guard, it owes them
 only where the guard holds: `forall (k: usize) { k <= 2 implies ... bytes[k..2]
@@ -576,7 +576,7 @@ contract, which Click checks at the call from `twice`'s own contract. When
 the two contracts agree only by a proof, a refinement theorem shows it,
 naming the crate function as a value by its path, as Rust passes it:
 `theorem twice_is_doubling() { ensures Doubling(function_pointers::twice) by
-{ unfold(Doubling(function_pointers::twice)); solve(); } }`, and the caller's proof applies it,
+{ unfold(Doubling(function_pointers::twice)); close(); } }`, and the caller's proof applies it,
 `apply(twice_is_doubling());`. The diagnostic that refuses the call suggests
 that theorem. The importer reads Charon's `CastKind::FnPtr` of a
 crate function item and its `FnOperand::Dynamic` call through a local, and
@@ -980,7 +980,7 @@ sidecar can selectively import the helper with
 [Panics](#panics). The library
 function is opaque until `unfold` gives its definition, so a claim that needs
 the value, `result <= a`, unfolds it, and a proof of one arm states the value
-there: `have u32::min(a, b) == a by { unfold(u32::min(a, b)); solve(); }`.
+there: `have u32::min(a, b) == a by { unfold(u32::min(a, b)); close(); }`.
 Each contract is an assumption, listed in [trust](../concepts/trust.md); each
 library function is checked at the edge of its type in
 `mdtests/stdlib_every_symbol.md`.
@@ -1623,7 +1623,7 @@ fn count(n: u32) -> u32 {
         }
     }
     step_until(function.exit);
-    solve();
+    close();
 }
 ```
 
@@ -1871,7 +1871,7 @@ Option<u32>::None;`, and `or_zero`, whose contract is `ensures result ==
 (match o { Option::Some(v) => v, Option::None => 0u32 });`, each by running
 its body and closing the goal, and a caller, `round(x) = or_zero(some_if(x,
 true))`, whose `ensures result == x` follows from the two contracts by
-`solve`. A fact
+`close()`. A fact
 the caller learns that matches on a value it already knows is a constructor,
 `result == match o { .. }` after `o == Option::Some(x)`, is also kept reduced
 at that constructor, `result == x`. In the same fixture `flag(o: Option<bool>)`
@@ -1974,7 +1974,7 @@ error type with `From`").
 `exists (value: T) { r == Result<T, E>::Ok(value) }` and ensures
 `r == Result<T, E>::Ok(result)`; the panic on `Err` is that requirement, and
 `expect`'s message is not passed. A caller that knows `r ==
-Result<u32, u8>::Ok(5u32)` meets the requirement by `solve`, which takes the
+Result<u32, u8>::Ok(5u32)` meets the requirement by `close()`, which takes the
 known constructor's payload as the witness, and a contract that reads the
 result through `match r { .. }` reduces the `match` by the call's
 `r == Ok(result)`.
@@ -2032,7 +2032,7 @@ without its requirement is refused as the index panic
 (`tests/rust_import.rs::charon_vec_values_read_as_the_library_vec`).
 
 An element before the last after two pushes, `pair`'s `result[0u64] == x`,
-needs the push contract's `forall` instantiated at that index, which `solve`
+needs the push contract's `forall` instantiated at that index, which `close()`
 does not do on its own. A `Vec` of anything but an integer or `bool`, a
 `Vec` field or `Vec` parameter taken by value and then borrowed, `&v` as a
 slice, iteration, and the other `Vec` methods remain later work.

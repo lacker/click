@@ -76,7 +76,7 @@ fn pointer_cast_goal_keeps_its_written_operands_in_diagnostics() {
         } by {
             step();
             have result == (p as (uint8 *) as (void *) as (float *)) + 1 by {
-                known();
+                close();
             }
         }
     "#;
@@ -166,14 +166,14 @@ fn implicit_tail_handles_unsigned_statement_cases_with_tracing() {
             step(); step(); step(); step(); step(); step(); step();
             if x < 4u32 {{
                 step();
-                if x == 0u32 {{ step(); step(); solve(); }} else {{
-                    if x == 1u32 {{ step(); step(); solve(); }} else {{
-                        if x == 2u32 {{ step(); step(); solve(); }} else {{
-                            step(); step(); solve();
+                if x == 0u32 {{ step(); step(); close(); }} else {{
+                    if x == 1u32 {{ step(); step(); close(); }} else {{
+                        if x == 2u32 {{ step(); step(); close(); }} else {{
+                            step(); step(); close();
                         }}
                     }}
                 }}
-            }} else {{ step(); step(); step(); solve(); }}
+            }} else {{ step(); step(); step(); close(); }}
         }}"
     );
     verify_c_sources(&explicit, &sources).unwrap();
@@ -185,7 +185,7 @@ fn unclosed_have_script_retains_its_remaining_goal_and_introduced_premise() {
     let source = r#"verifying "f.c";
         int32 f(int32 x) { ensures result == x; } by {
             have x == 42 implies x == 43 by { intro(); }
-            step_until(function.exit); solve();
+            step_until(function.exit); close();
         }"#;
     with_proof_trace("f", || {
         let error = verify_c_sources(source, &[("f.c", "int f(int x) { return x; }")]).unwrap_err();
@@ -199,7 +199,7 @@ fn unclosed_have_script_retains_its_remaining_goal_and_introduced_premise() {
     });
     let corrected = source
         .replace("x == 43", "x == 42")
-        .replace("intro();", "intro(); known();");
+        .replace("intro();", "intro(); close();");
     verify_c_sources(&corrected, &[("f.c", "int f(int x) { return x; }")]).unwrap();
 }
 
@@ -220,7 +220,7 @@ fn unclosed_theorem_script_retains_its_remaining_goal_and_introduced_premise() {
     });
     let corrected = source
         .replace("x == 43", "x == 42")
-        .replace("intro();", "intro(); known();");
+        .replace("intro();", "intro(); close();");
     verify_c_sources(&corrected, &[]).unwrap();
 }
 
@@ -272,7 +272,7 @@ fn first_operation_failure_retains_the_required_access_and_empty_resources() {
 #[cfg_attr(feature = "fast-gate", ignore = "covered by diagnostic_batch_01")]
 fn execution_tactic_in_a_have_names_the_proposition_context() {
     let c = "int f(void) { return 7; }";
-    let source = r#"verifying "f.c"; int32 f() { ensures result == 7; } by { have 1 == 1 by { step_until(function.exit); } step_until(function.exit); solve(); }"#;
+    let source = r#"verifying "f.c"; int32 f() { ensures result == 7; } by { have 1 == 1 by { step_until(function.exit); } step_until(function.exit); close(); }"#;
     let error = verify_c_sources(source, &[("f.c", c)]).unwrap_err();
     let report = error.concise_report();
     assert!(
@@ -339,7 +339,7 @@ fn failed_written_have_keeps_its_goal_and_actual_queries() {
     let c = "void f(int *p, int i) { p[i] = 9; }";
     let source = r#"verifying "f.c"; void f(int32* p, int32 i) {
             owns p[0..2]; requires 0 <= i; requires i < 2;
-        } by { step(); have p[0] == old(p[0]) by solve(); step_until(function.exit); }"#;
+        } by { step(); have p[0] == old(p[0]) by close(); step_until(function.exit); }"#;
     let ordinary = verify_c_sources(source, &[("f.c", c)])
         .unwrap_err()
         .concise_report();
@@ -420,7 +420,7 @@ fn implicit_loop_closure_is_smart() {
         verifying "f.c";
         int32 f(int32 n) { requires n == 2; ensures result == 0; } by {
             loop { invariant n == 2; maintain by { step(); } }
-            step_until(function.exit); solve();
+            step_until(function.exit); close();
         }
     "#;
     let (result, events) = collect(|| verify_c_sources(source, &[("f.c", c)]));
@@ -458,7 +458,7 @@ fn implicit_solve_is_a_smart_tactic_at_the_simple_tactic_site() {
         } by {
             fold(either(x, y));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let (result, events) =
@@ -502,7 +502,7 @@ fn solve_have_budget_failure_keeps_the_exhaustion_reason() {
         verifying "bound.c";
         uint64 bound(uint64 a, uint64 b) { ensures result == a; } by {
             have a <= b - b % 4u64;
-            step_until(function.exit); solve();
+            step_until(function.exit); close();
         }
     "#;
     let error = crate::instrumentation::with_tactic_work_limits(
@@ -529,7 +529,7 @@ fn solve_have_budget_failure_keeps_the_exhaustion_reason() {
     );
 }
 
-/// A smart closer inside a nested `have` script, `have P by { solve(); }`
+/// A smart closer inside a nested `have` script, `have P by { close(); }`
 /// within another `have`'s proof, spends a smart tactic's search: its work
 /// is charged to the smart budget and a miss gets the smart advice. It was
 /// once charged to the `have`'s control budget and reported as an engine
@@ -541,10 +541,10 @@ fn smart_closer_inside_a_have_script_spends_the_smart_budget() {
         verifying "bound.c";
         uint64 bound(uint64 a, uint64 b) { ensures result == a; } by {
             have a <= b - b % 4u64 by {
-                have a <= b - b % 4u64 by { solve(); }
-                known();
+                have a <= b - b % 4u64 by { close(); }
+                close();
             }
-            step_until(function.exit); solve();
+            step_until(function.exit); close();
         }
     "#;
     let error = crate::instrumentation::with_tactic_work_limits(
@@ -1045,7 +1045,7 @@ fn failed_algebraic_solve_reports_claim_without_internal_schema_dump() {
             ensures match value {
                 Maybe::None => Maybe<int32>::Some(0),
                 Maybe::Some(x) => Maybe<int32>::Some(x),
-            } == value by solve();
+            } == value by close();
         }
     "#;
     let error = verify_c_sources(source, &[]).unwrap_err();
@@ -1092,7 +1092,7 @@ fn failed_compound_algebraic_solve_renders_the_goal_once_without_a_debug_dump() 
 
         theorem color_bit_is_two(t: RbTree) {
             ensures color_bit(root_color(t)) == 2 and root_color(t) == Color::Red by {
-                solve();
+                close();
             }
         }
     "#;
@@ -1213,7 +1213,7 @@ int32 pick(struct node* node) {
     ensures 0 <= result;
 } by {
     step();
-    solve();
+    close();
 }
 "#;
     let error = verify_c_sources(click_source, &[("pick.c", c_source)]).unwrap_err();
@@ -1784,22 +1784,22 @@ fn statement_sites_change_nothing_but_the_location_line() {
     let header = "verifying \"f.c\";\n";
     let cases = [
         (
-            "int32 store() {\n    ensures result == 0;\n} by {\n    step(); step(); step();\n    loop { decreases 5 - i; invariant i >= 0; invariant i <= 4; }\n    step_until(function.exit); solve();\n}\n",
+            "int32 store() {\n    ensures result == 0;\n} by {\n    step(); step(); step();\n    loop { decreases 5 - i; invariant i >= 0; invariant i <= 4; }\n    step_until(function.exit); close();\n}\n",
             Some(("f.c:8:9: `items[i].x = 7;`", "f.c:11:11: `items[i].x = 7;`")),
         ),
         (
-            "int32 add(int32 a, int32 b) {\n    ensures result == a + b;\n} by {\n    step(); step(); step(); solve();\n}\n",
+            "int32 add(int32 a, int32 b) {\n    ensures result == a + b;\n} by {\n    step(); step(); step(); close();\n}\n",
             Some(("f.c:16:5: `total = a + b;`", "f.c:19:7: `total = a + b;`")),
         ),
         (
-            "int32 callee(int32 n) {\n    requires n >= 0;\n    ensures result == n;\n}\nint32 caller(int32 n) {\n    ensures result == n + 1;\n} by {\n    step(); step(); step(); solve();\n}\n",
+            "int32 callee(int32 n) {\n    requires n >= 0;\n    ensures result == n;\n}\nint32 caller(int32 n) {\n    ensures result == n + 1;\n} by {\n    step(); step(); step(); close();\n}\n",
             Some((
                 "f.c:26:5: `r = callee(n) + 1;`",
                 "f.c:29:7: `r = callee(n) + 1;`",
             )),
         ),
         (
-            "int32 inc(int32 n) {\n    requires n <= 100;\n    ensures to_integer(result) == to_integer(n + 1);\n} by {\n    step(); solve();\n}\n",
+            "int32 inc(int32 n) {\n    requires n <= 100;\n    ensures to_integer(result) == to_integer(n + 1);\n} by {\n    step(); close();\n}\n",
             None,
         ),
     ];
@@ -1873,7 +1873,7 @@ fn failed_generated_loop_closer_reports_a_short_summary_at_the_loop_tactic() {
                 invariant state >= 0;
             }
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let error = verify_c_sources(click_source, &[("settle.c", c_source)])
@@ -1901,8 +1901,8 @@ fn a_passing_theorem_retains_its_accepted_trace_path() {
 theorem good(x: int32, y: int32) {
     requires x == y;
     ensures y == x by {
-        have y == x by { solve(); }
-        known();
+        have y == x by { close(); }
+        close();
     }
 }
 theorem split(x: int32) {
@@ -1921,7 +1921,7 @@ theorem split(x: int32) {
     }
 }
 theorem unproved(x: int32) { ensures x == 0 by { normalize(); } }
-int32 f() { ensures result == 2; } by { step(); solve(); }
+int32 f() { ensures result == 2; } by { step(); close(); }
 "#;
     let project = ClickProject::new(
         "entry.click",
@@ -1954,7 +1954,7 @@ int32 f() { ensures result == 2; } by { step(); solve(); }
         let trace = accepted_proof_trace(&locate, &arm, &|_, _, _| false, None).unwrap();
         assert_eq!(
             trace,
-            "proof trace (checked tactics and branch facts):\ntactic@5: have y == x\n  adds: y == x\ntactic@6: known()"
+            "proof trace (checked tactics and branch facts):\ntactic@5: have y == x\n  adds: y == x\ntactic@6: close()"
         );
     });
     with_proof_trace("split", || {
@@ -2037,7 +2037,7 @@ fn unfolded_algebraic_field_keeps_its_captured_model() {
         insertion,
         r#"        Wrap::Wrap(entry_model) => {
             unfold(w);
-            have w.model == Wrap::Wrap(entry_model) by { solve(); }
+            have w.model == Wrap::Wrap(entry_model) by { close(); }
             fold(w);"#,
         1,
     );
@@ -2281,7 +2281,7 @@ fn callback_script_tails_complete_or_report_a_bounded_failure() {
             (
                 source
                     .replace("step_until(function.exit);", "step(); step(); step();")
-                    .replace("solve();", ""),
+                    .replace("close();", ""),
                 fixture.c_sources,
             )
         } else {
@@ -2361,8 +2361,8 @@ fn struct_field_frame_failure_names_the_read_and_written_members() {
             ensures result == old(p[0].left);
         } by {
             step();
-            have p[0].left == old(p[0].left) by { solve(); }
-            step_until(function.exit); solve();
+            have p[0].left == old(p[0].left) by { close(); }
+            step_until(function.exit); close();
         }
     "#;
     let error = verify_c_sources(source, &[("field.c", c_source)])
@@ -2386,7 +2386,7 @@ fn pure_theorem_tactics_emit_claims_and_nested_written_source_paths() {
         requires x <= 100;
         ensures x <= 1000 by {
             have x <= 1000 by { close() using { x <= 100; } }
-            known();
+            close();
         }
         ensures x == x by { normalize(); }
     }"#;
@@ -2458,7 +2458,7 @@ fn pure_theorem_arithmetic_obeys_its_tactic_budget() {
 fn wide_conjunction_expansion_stays_parseable_and_checked() {
     let conjuncts: Vec<_> = (1..=40).map(|i| format!("x <= {i}")).collect();
     let source = format!(
-        "theorem wide(x: int32) {{ requires x <= 0; ensures {} by {{ solve(); }} }}",
+        "theorem wide(x: int32) {{ requires x <= 0; ensures {} by {{ close(); }} }}",
         conjuncts.join(" and ")
     );
     verify_click_theorems(&source).unwrap();
@@ -2518,11 +2518,11 @@ fn induction_failure_trace_retains_the_constructor_equation() {
                 match xs {
                     Chain::End => {
                         unfold(empty(Chain::End));
-                        known();
+                        close();
                     },
                     Chain::Next(tail) => {
                         unfold(empty(Chain::Next(tail)));
-                        known();
+                        close();
                     },
                 }
             }
@@ -2580,11 +2580,11 @@ void run(int32 n, int32 x) { requires n >= 0; requires x == 7; ensures x == 7; }
         invariant x == 7;
         maintain by {
             step();
-            have n >= 0 by { solve(); }
-            have x == 7 by { known(); }
+            have n >= 0 by { close(); }
+            have x == 7 by { close(); }
         }
     }
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }
 "#;
     let sources = [("reuse.c", c)];
@@ -2621,7 +2621,7 @@ void run(int32 total) {{ requires 0 <= total; requires total <= 1000; ensures 0 
   {invariants}
   maintain by {{ step();  }}
  }}
- step_until(function.exit); solve();
+ step_until(function.exit); close();
 }}
 "#
     );
@@ -2678,7 +2678,7 @@ fn linear_function_proofs_execute_once_at_multiple_sizes() {
     for size in [16, 64, 256] {
         let premises = "have 0 == 0 by { normalize(); }\n".repeat(size);
         let source = format!(
-            "verifying \"f.c\"; int32 f() {{ ensures result == 0; }} by {{ {premises} step_until(function.exit); solve(); }}"
+            "verifying \"f.c\"; int32 f() {{ ensures result == 0; }} by {{ {premises} step_until(function.exit); close(); }}"
         );
         let (result, events) =
             collect(|| verify_c_sources(&source, &[("f.c", "int32 f() { return 0; }")]));
@@ -2727,10 +2727,10 @@ void f(struct node* p) {
         Tree::Node(id, link, lm, rm) => {
             let { left: l, right: r } = unfold(t);
             mark before_store;
-            have p->right == link by { known(); }
+            have p->right == link by { close(); }
             step();
             let t = fold(tree(id), { model: Tree::Node(id, link, lm, rm), left: l, right: r });
-            step_until(function.exit); solve();
+            step_until(function.exit); close();
         },
     }
 }
@@ -2780,7 +2780,7 @@ fn execute_failure_trace_retains_checked_call_facts() {
     for execution in ["step_until(function.exit);", "step(); step();"] {
         let source = format!(
             "verifying \"f.c\"; int32 helper() {{ ensures result == 1; }} \
-             int32 f() {{ ensures result == 2; }} by {{ {execution} solve(); }}"
+             int32 f() {{ ensures result == 2; }} by {{ {execution} close(); }}"
         );
         with_proof_trace("f", || {
             let error = verify_c_sources(&source, &[("f.c", c)])
@@ -2810,7 +2810,7 @@ fn fold_over_a_hidden_record_names_the_failed_fact() {
                   resource pair(p: struct pair*) { owns p->a; owns p->n; owns first: counted(p->a); \
                   fact p->n == first.v; fact first.v >= 0; } \
                   verifying \"f.c\"; void clear(struct pair* p) { owns x: pair(p); } by { \
-                  let { first: c } = unfold(x); step_until(function.exit); let x = fold(pair(p), { first: c }); solve(); }";
+                  let { first: c } = unfold(x); step_until(function.exit); let x = fold(pair(p), { first: c }); close(); }";
     let error = verify_c_sources(source, &[("f.c", c)]).unwrap_err();
     let report = error.concise_report();
     // The instance reads the field the body stored to; the read keeps its
@@ -3018,7 +3018,7 @@ fn long_theorem_traces_retain_every_step_and_reach_late_targets() {
                 " have x <= {index} by {{ rewrite(x, 0); normalize(); }}\n"
             ));
         }
-        source.push_str(" known();\n }\n}\n");
+        source.push_str(" close();\n }\n}\n");
         let project = ClickProject::new(
             "entry.click",
             [ClickModuleSource::new("entry.click", source, [])],
@@ -3047,7 +3047,7 @@ fn long_theorem_traces_retain_every_step_and_reach_late_targets() {
                 );
                 assert_eq!(trace.matches(": have x <= ").count(), size);
                 assert!(trace.contains("tactic@4: have x <= 0"));
-                assert!(trace.ends_with(&format!("tactic@{}: known()", size + 4)));
+                assert!(trace.ends_with(&format!("tactic@{}: close()", size + 4)));
                 assert!(!trace.contains("limit reached"));
                 assert!(!trace.contains("no recorded checked step"));
                 if size >= 2048 {
@@ -3078,7 +3078,7 @@ void retarget(int32* p, int32* q, int32* anchor) {
 } by {
     unfold(a);
     let b = fold(cursor(q, anchor), { tag: old(a.tag) });
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }
 void call(int32* p, int32* q, int32* anchor) {
     requires p != q;
@@ -3088,7 +3088,7 @@ void call(int32* p, int32* q, int32* anchor) {
     let { b: c } = step(retarget, { a: c });
     let { b: d } = step(retarget, { a: c });
     unfold(d);
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }
 "#;
     for tracing in [false, true] {
@@ -3156,12 +3156,12 @@ fn call_resource_diagnostic_read_shows_state_and_access() {
 fn smart_have_budget_refusal_retains_checked_trace_prefix() {
     for nested in [false, true] {
         let body = if nested {
-            "have value == value by { normalize(); } solve();"
+            "have value == value by { normalize(); } close();"
         } else {
-            "solve();"
+            "close();"
         };
         let source = format!(
-            "verifying \"f.c\"; void f(int32 *cell, int32 value) {{ owns cell[0..1]; requires value < 100; requires defined(value * 2); ensures cell[0] == value; }} by {{ step(); have to_integer(cell[0]) < to_integer(value) by {{ {body} }} step_until(function.exit); solve(); }}"
+            "verifying \"f.c\"; void f(int32 *cell, int32 value) {{ owns cell[0..1]; requires value < 100; requires defined(value * 2); ensures cell[0] == value; }} by {{ step(); have to_integer(cell[0]) < to_integer(value) by {{ {body} }} step_until(function.exit); close(); }}"
         );
         let c = [("f.c", "void f(int32 *cell, int32 value) { *cell = value; }")];
         let (baseline, work) = with_proof_trace("f", || {
@@ -3225,10 +3225,10 @@ fn loop_have_budget_refusal_retains_checked_store_trace() {
                 initialize by { normalize(); }
                 maintain by {
                     step();
-                    have cell[0] == value + 1 by { solve(); }
+                    have cell[0] == value + 1 by { close(); }
                 }
             }
-            step_until(function.exit); solve();
+            step_until(function.exit); close();
         }
     "#;
     with_proof_trace("f", || {
@@ -3279,7 +3279,7 @@ fn loop_certification_refusal_retains_the_loop_frontier_trace() {
                 invariant b->offset <= b->length;
                 maintain by {
                     step();
-                    have b->offset <= b->length by { solve(); }
+                    have b->offset <= b->length by { close(); }
                 }
             }
         }
@@ -3364,14 +3364,14 @@ uint64 drain(uint64 len) {
   decreases to_integer(len);
   invariant len == 0u64 or len == 16u64;
   invariant len == 16u64;
-  initialize by { solve(); }
+  initialize by { close(); }
   maintain by {
    step();
-   have len == 0u64 by solve();
+   have len == 0u64 by close();
    have to_integer(len) == 0 by close() using { len == 0u64; };
   }
  }
- step_until(function.exit); solve();
+ step_until(function.exit); close();
 }
 "#;
 
@@ -3453,8 +3453,8 @@ fn failed_invariant_closure_trace_prefix_is_lazy_and_scales() {
     for size in [16, 32, 64] {
         let repeated = "   have len == len by normalize();\n".repeat(size);
         let source = CLOSURE_TRACE_CLICK.replace(
-            "   have len == 0u64 by solve();\n",
-            &format!("{repeated}   have len == 0u64 by solve();\n"),
+            "   have len == 0u64 by close();\n",
+            &format!("{repeated}   have len == 0u64 by close();\n"),
         );
         with_proof_trace("drain", || {
             let error = verify_c_sources(&source, &[("loop.c", CLOSURE_TRACE_C)])
@@ -3488,19 +3488,19 @@ fn failed_invariant_closure_trace_keeps_its_branch_guard() {
         } by {
             loop {
                 invariant len == 16u64;
-                initialize by known();
+                initialize by close();
                 maintain by {
                     if flag == 0 {
                         step();
                         step();
-                        have len == 0u64 by solve();
+                        have len == 0u64 by close();
                     } else {
                         step();
                         step();
                     }
                 }
             }
-            step_until(function.exit); solve();
+            step_until(function.exit); close();
         }
     "#;
     with_proof_trace("branch_drain", || {
@@ -3520,8 +3520,8 @@ fn failed_invariant_closure_trace_keeps_its_branch_guard() {
 fn native_view_solve_selects_only_coverage_premises() {
     let extra_bounds = 63;
     for body in [
-        "solve();",
-        "have viewable(p[0u64..1u64]) by { solve(); } known();",
+        "close();",
+        "have viewable(p[0u64..1u64]) by { close(); } close();",
     ] {
         let mut source = String::from(
             "target \"x86_64-unknown-linux-gnu\"; theorem broad_view(p: uint8[], n: uint64) { views p[0u64..n]; requires 1u64 <= n;",
@@ -3540,7 +3540,7 @@ fn native_view_solve_selects_only_coverage_premises() {
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by diagnostic_batch_18")]
 fn native_view_solve_distinguishes_a_rejected_kernel_query() {
-    let source = "target \"x86_64-unknown-linux-gnu\"; theorem false_view(p: uint8[], n: uint64) { views p[0u64..n]; requires n == 0u64; ensures viewable(p[0u64..1u64]) by { solve(); } }";
+    let source = "target \"x86_64-unknown-linux-gnu\"; theorem false_view(p: uint8[], n: uint64) { views p[0u64..n]; requires n == 0u64; ensures viewable(p[0u64..1u64]) by { close(); } }";
     let error = verify_c_sources(source, &[]).expect_err("an empty view cannot cover one byte");
     let report = error.concise_report();
     assert!(
@@ -3657,7 +3657,7 @@ void symbolic(int *p, const struct callbacks *cb) { cb->call(p); }
             r#"
 void concrete(int32* p) { ensures true; } by {
     step(); step(); step(); step();
-    have false by { known(); }
+    have false by { close(); }
 }
 "#,
         ),
@@ -3668,7 +3668,7 @@ void symbolic(int32* p, const struct callbacks* cb) {
     views cb->call;
 } by {
     step(); step();
-    have false by { known(); }
+    have false by { close(); }
 }
 "#,
         ),
@@ -3787,10 +3787,10 @@ fn failed_final_known_preserves_its_checked_trace_context() {
             ensures cell[0] == value + 1;
         } by {
             step(); step();
-            have cell[0] == value by { solve(); }
-            known();
-            known();
-            known();
+            have cell[0] == value by { close(); }
+            close();
+            close();
+            close();
         }
     "#;
     with_proof_trace("f", || {
@@ -3799,17 +3799,13 @@ fn failed_final_known_preserves_its_checked_trace_context() {
             &[("f.c", "void f(int32 *cell, int32 value) { *cell = value; }")],
         )
         .expect_err("the false remaining claim must reject");
+        let failed_claim = "`f.ensures_1`";
         assert!(
-            error.message().contains("found no available fact"),
+            error.message().contains(failed_claim),
             "{}",
             error.message()
         );
-        assert!(
-            error
-                .concise_report_parts()
-                .0
-                .contains("found no available fact")
-        );
+        assert!(error.concise_report_parts().0.contains(failed_claim));
         let trace = error
             .trace_context_report()
             .expect("retain the failed focused goal's existing context");
@@ -3828,7 +3824,7 @@ fn known_transport_trace_retains_its_written_source_occurrence() {
             void f(int32 *p) {{ owns p[0]; requires p[0] == 7; ensures true; }} by {{
                 step(); mark saved;
                 transport(at(saved, p[0] == 7), p[0] == 7){suffix};
-                step_until(function.exit); known();
+                step_until(function.exit); close();
             }}
         "#
         );
@@ -3881,7 +3877,7 @@ fn a_trace_marks_searched_steps_and_their_chosen_arguments() {
             void f(int32 *p) {{ owns p[0]; requires p[0] == 7; ensures true; }} by {{
                 step(); mark saved;
                 transport(at(saved, p[0] == 7), p[0] == 7){suffix};
-                step_until(function.exit); known();
+                step_until(function.exit); close();
             }}
         "#
         );
@@ -3951,7 +3947,7 @@ fn rejected_transport_prints_checked_reads_and_retains_prefix() {
             void f(int32 *p) {{ owns p[0..10]; requires p[0] == 7; ensures true; }} by {{
                 {steps} mark stored; step();
                 {transport}
-                step_until(function.exit); known();
+                step_until(function.exit); close();
             }}
         "#
         );
@@ -4012,7 +4008,7 @@ fn failed_normalize_using_retains_actual_wide_read_resolution() {
         void f(uint64 *p) { owns p[0]; ensures true; } by {
             step();
             have p[0] == 7u64 by { normalize() using {}; };
-            step_until(function.exit); known();
+            step_until(function.exit); close();
         }
     "#;
     with_proof_trace("f", || {
@@ -4058,7 +4054,7 @@ fn rejected_loop_transport_premise_uses_shared_exact_diagnostic() {
                     };
                 }
             }
-            step_until(function.exit); known();
+            step_until(function.exit); close();
         }
     "#;
     with_proof_trace("f", || {
@@ -4177,7 +4173,7 @@ fn a_failed_retain_names_the_population_count_requirement() {
 fn have_failure_trace_retains_checked_call_prefix() {
     let c = "int helper(void) { return 1; } int f(void) { int x; x = helper(); return x; }";
     let source = "verifying \"f.c\"; int32 helper() { ensures result == 1; } \
-                  int32 f() { ensures result == 1; } by { step(); step(); step(); have x == 2; step_until(function.exit); solve(); }";
+                  int32 f() { ensures result == 1; } by { step(); step(); step(); have x == 2; step_until(function.exit); close(); }";
     with_proof_trace("f", || {
         let error =
             verify_c_sources(source, &[("f.c", c)]).expect_err("the false have must still fail");
@@ -4204,7 +4200,7 @@ fn budget_stopped_transport_retains_its_checked_loop_prefix() {
                 owns p[0];
                 invariant p[0] == 7;
                 decreases 0;
-                initialize by { known(); }
+                initialize by { close(); }
                 maintain by {
                     mark before;
                     step();
@@ -4249,7 +4245,7 @@ fn budget_stopped_known_transport_retains_its_checked_prefix_and_completed_fact(
             transport(old(p[0]) == old(p[0]), p[0] == old(p[0])) using {
                 separate(memory(p[0]), memory(q[0]));
             };
-            solve();
+            close();
         }
     "#;
     let c = [("f.c", "void f(int32 **p, int32 **q) { *q = *p; }")];
@@ -4369,7 +4365,7 @@ fn failed_branch_interface_retains_its_arm_and_written_requirement() {
                 ensures result == result by {{
                     step();
                     branch ensuring {{ fact {requirement}; }} {{ true => {{ step(); }} false => {{ step(); }} }}
-                    step(); solve();
+                    step(); close();
                 }}
             }}
         "#
@@ -4429,7 +4425,7 @@ fn resource_separation_matches_written_goal_with_pointer_alias() {
             views cb->call;
             owns out->call;
         } by {
-            have separate(memory(out->call), memory(cb->call)) by known();
+            have separate(memory(out->call), memory(cb->call)) by close();
         }"#;
     // Resource admission and the written goal must retain the same pointer
     // carrier, even when a precondition equates its address to a global object.
@@ -4487,10 +4483,10 @@ fn failed_invariant_after_branch_join_reports_the_join() {
             } by {
                 loop {
                     invariant len == 16u64;
-                    initialize by known();
+                    initialize by close();
                     maintain by { branch { true => { step(); } false => { step(); } } }
                 }
-                step_until(function.exit); solve();
+                step_until(function.exit); close();
             }
         "#;
         with_proof_trace("branch_drain", || {
@@ -4782,7 +4778,7 @@ fn an_open_callback_obligation_through_a_static_object_reads_back() {
         source.replace(
             step,
             &format!(
-                "    fold(callbacks_storage(&suite));\n    step() {{\n        requires Propagate({propagate}) by {{ known(); }}\n        requires Copy({copy}) by {{ known(); }}\n    }}\n"
+                "    fold(callbacks_storage(&suite));\n    step() {{\n        requires Propagate({propagate}) by {{ close(); }}\n        requires Copy({copy}) by {{ close(); }}\n    }}\n"
             ),
         )
     };

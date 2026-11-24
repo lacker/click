@@ -58,7 +58,7 @@ theorem selected_tag(p: Switch) {
     ensures choose_tag(p) == Decision::Yes by {
         unfold(choose_tag(p));
         rewrite(p, Switch::Hold(true));
-        solve();
+        close();
     }
 }
 
@@ -67,7 +67,7 @@ theorem selected_true_literal(p: Switch) {
     ensures choose_literal(p) == Box::Value(7) by {
         unfold(choose_literal(p));
         rewrite(p, Switch::Hold(true));
-        solve();
+        close();
     }
 }
 
@@ -76,7 +76,7 @@ theorem selected_false_literal(p: Switch) {
     ensures choose_literal(p) == Box::Value(8) by {
         unfold(choose_literal(p));
         rewrite(p, Switch::Hold(false));
-        solve();
+        close();
     }
 }
 
@@ -85,7 +85,7 @@ theorem selected_number(p: NumberInput, a: Integer) {
     ensures choose_number(p) == Box::Value(a) by {
         unfold(choose_number(p));
         rewrite(p, NumberInput::Hold(true, a));
-        solve();
+        close();
     }
 }
 
@@ -94,7 +94,7 @@ theorem selected_capture(p: BoxInput, a: Box, b: Box) {
     ensures choose_capture(p, a) == a by {
         unfold(choose_capture(p, a));
         rewrite(p, BoxInput::Hold(true, b));
-        solve();
+        close();
     }
 }
 
@@ -103,7 +103,7 @@ theorem selected_flag(p: FlagInput, a: Bool) {
     ensures choose_flag(p) == Flag::Value(a) by {
         unfold(choose_flag(p));
         rewrite(p, FlagInput::Hold(false, a));
-        solve();
+        close();
     }
 }
 
@@ -112,7 +112,7 @@ theorem selected_word(p: WordInput, a: uint64) {
     ensures choose_word(p) == Word::Value(a) by {
         unfold(choose_word(p));
         rewrite(p, WordInput::Hold(true, a));
-        solve();
+        close();
     }
 }
 
@@ -121,7 +121,7 @@ theorem selected_nested_match(p: BoxInput, a: Integer) {
     ensures choose_nested(p) == Box::Value(a) by {
         unfold(choose_nested(p));
         rewrite(p, BoxInput::Hold(true, Box::Value(a)));
-        solve();
+        close();
     }
 }
 
@@ -130,7 +130,7 @@ theorem selected_second_guard(p: DoubleInput) {
     ensures choose_twice(p) == Box::Value(2) by {
         unfold(choose_twice(p));
         rewrite(p, DoubleInput::Hold(true, false));
-        solve();
+        close();
     }
 }
 
@@ -142,7 +142,7 @@ theorem selected_both_sides(p: NumberInput, q: Switch) {
         unfold(choose_literal(q));
         rewrite(p, NumberInput::Hold(true, 7));
         rewrite(q, Switch::Hold(true));
-        solve();
+        close();
     }
 }
 ```

@@ -125,7 +125,7 @@ fn charon_refinement_theorems_name_crate_functions_as_values() {
     let error = ProgramVerificationSession::new_program_prepared(&equivalent, &prepared)
         .err()
         .expect("an inexact contract needs an explicit refinement proof");
-    let theorem = "theorem twice_is_doubling() {\n    ensures Doubling(function_pointers::twice) by {\n        unfold(Doubling(function_pointers::twice));\n        solve();\n    }\n}";
+    let theorem = "theorem twice_is_doubling() {\n    ensures Doubling(function_pointers::twice) by {\n        unfold(Doubling(function_pointers::twice));\n        close();\n    }\n}";
     let shown = click::languages::rust::names::display_rust_names(error.message()).into_owned();
     assert!(shown.contains(theorem), "{shown}");
     let applied = |sidecar: &str| {

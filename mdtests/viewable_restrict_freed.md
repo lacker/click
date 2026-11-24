@@ -12,11 +12,11 @@ void dispose(int32 *p) {
     ensures viewable(memory(p[0..1])) by {
         step();
         step();
-        known();
+        close();
     }
 }
 ```
 
 ```expect
-fail: known
+fail: `ensures viewable(memory(p[0..1]))` failed for `dispose.ensures_0` path 0
 ```

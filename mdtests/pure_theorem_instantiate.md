@@ -14,7 +14,7 @@ theorem bounded_value(value: int32) {
         instantiate(forall (k: int32) {
             0 <= k and k < 3 implies k <= value
         }, 2);
-        known();
+        close();
     }
 }
 
@@ -28,7 +28,7 @@ theorem instantiate_bound(x: int32, limit: int32, upper: int32) {
         instantiate(forall (k: int32) {
             0 <= k and k < limit implies k <= upper
         }, x);
-        known();
+        close();
     }
 }
 

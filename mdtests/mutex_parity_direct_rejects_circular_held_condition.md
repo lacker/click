@@ -56,7 +56,7 @@ int32 alternate_mutex(struct parity_mutex *object, int32 n) {
             invariant n < 0;
         }
     } else {
-        have n >= 0 by solve();
+        have n >= 0 by close();
         loop {
             if held(&object->mutex) {
                 owns mutex_guard(&object->mutex);
@@ -64,7 +64,7 @@ int32 alternate_mutex(struct parity_mutex *object, int32 n) {
             owns mutex_live(&object->mutex);
             decreases n - i;
             invariant 0 <= i and i <= n;
-            initialize by solve();
+            initialize by close();
             maintain by {
                 have i < 2147483647 by { close() using { i < n; }; }
                 if i % 2 == 0 {

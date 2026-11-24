@@ -23,10 +23,10 @@ int32 f(int32 x, int32 y, int32 z) {
 } by {
     if y > 3 {
         step_until(function.exit);
-        solve();
+        close();
     } else {
         step_until(function.exit);
-        solve();
+        close();
     }
 }
 ```

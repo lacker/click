@@ -52,7 +52,7 @@ int32 write_one(struct buffer* buffer) {
                 instantiate(forall (k: int32) {
                     0 <= k and k < end implies buffer->data[k] == 0
                 }, 0);
-                known();
+                close();
             }
             unfold(prefix);
             step();
@@ -60,7 +60,7 @@ int32 write_one(struct buffer* buffer) {
                 tag: PrefixTag::End(end)
             });
             step();
-            solve();
+            close();
         },
     }
 }

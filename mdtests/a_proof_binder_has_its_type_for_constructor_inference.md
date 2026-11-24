@@ -13,7 +13,7 @@ theorem introduced() {
     ensures forall (y: int32) { list::contains(List::Cons(y, List::Nil), y) } by {
         intro();
         unfold(list::contains(List::Cons(y, List::Nil), y));
-        solve();
+        close();
     }
 }
 
@@ -21,7 +21,7 @@ theorem introduced_as(x: int64) {
     ensures forall (y: int32) { list::contains(List::Cons(y, List::Nil), y) } by {
         let z = intro();
         unfold(list::contains(List::Cons(z, List::Nil), z));
-        solve();
+        close();
     }
 }
 
@@ -31,10 +31,10 @@ theorem obtained() {
         let z = obtain(exists (z: int32) { z == 3 });
         have list::contains(List::Cons(z, List::Nil), z) by {
             unfold(list::contains(List::Cons(z, List::Nil), z));
-            solve();
+            close();
         }
         witness(z);
-        known();
+        close();
     }
 }
 
@@ -42,7 +42,7 @@ theorem introduced_hides_a_parameter(y: int64) {
     ensures forall (y: int32) { list::contains(List::Cons(y, List::Nil), y) } by {
         intro();
         unfold(list::contains(List::Cons(y, List::Nil), y));
-        solve();
+        close();
     }
 }
 ```

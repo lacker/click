@@ -14,9 +14,9 @@ int32 scoped_premise(int32 x) {
     step_until(function.exit);
     intro() {
         rewrite(x, 0);
-        known();
+        close();
     }
-    known();
+    close();
 }
 ```
 

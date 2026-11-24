@@ -2,7 +2,7 @@
 
 `x - 1 <u x` follows from `0 <u x`, which is a requirement here, but
 `close() using {}` lists no premise and uses exactly what it lists. The goal
-stays open, where a bare `solve()` would close it from the available fact.
+stays open, where a bare `close()` would close it from the available fact.
 
 ```click
 theorem unlisted(x: uint32) {

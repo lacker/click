@@ -41,7 +41,7 @@ void user(struct pr* p) {
 } by {
     step();
     step();
-    solve();
+    close();
 }
 ```
 

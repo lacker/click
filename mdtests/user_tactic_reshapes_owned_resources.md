@@ -61,7 +61,7 @@ int32 user(struct pr* p) {
     unfold(z);
     step();
     let z = fold(second(p), { tag: 0 });
-    solve();
+    close();
 }
 ```
 

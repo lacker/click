@@ -49,7 +49,7 @@ pub fn check(root: &Path, import: &PreparedCppImport) {
                 r#"    step(is_empty, { state: copied });
     have exists (backing: int32*) { viewable(backing[0..1]) } by {
         witness(input.data);
-        known();
+        close();
     }"#,
             ),
             "current goal is a memory-viewability fact",

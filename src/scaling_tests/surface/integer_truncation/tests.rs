@@ -13,7 +13,7 @@ fn integer_truncation_pure_aliases_preserve_shared_scaling() {
             source.push_str(&format!("let a{index}: Integer = truncating_quotient(a{}, 3) + truncating_remainder(a{}, 3);\n", index - 1, index - 1));
         }
         source.push_str(&format!(
-            "requires a{depth} == a{depth}; ensures a{depth} == a{depth} by {{ known(); }} }}"
+            "requires a{depth} == a{depth}; ensures a{depth} == a{depth} by {{ close(); }} }}"
         ));
         let (result, work) =
             crate::instrumentation::measure_deterministic_work(|| verify_c_sources(&source, &[]));

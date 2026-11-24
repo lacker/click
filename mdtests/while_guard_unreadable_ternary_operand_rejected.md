@@ -27,7 +27,7 @@ int32 uternary(int32 a, int32* p) {
         invariant a <= 10;
     }
     step();
-    solve();
+    close();
 }
 ```
 

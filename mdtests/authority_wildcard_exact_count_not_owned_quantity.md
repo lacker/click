@@ -11,7 +11,7 @@ void inspect(int32* pool, int32* p) {
     owns authority(slot(pool, _));
     owns slot(pool, p);
 } by {
-    have count(slot(pool, p)) == 1 by solve();
+    have count(slot(pool, p)) == 1 by close();
 }
 ```
 

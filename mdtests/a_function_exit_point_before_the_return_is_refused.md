@@ -16,7 +16,7 @@ verifying "early_exit_state.c";
 int32 is_less(uint32 a, uint32 b) {
     ensures result == 0 or result == 1;
 } by {
-    have at(function.exit, a == a) by { solve(); }
+    have at(function.exit, a == a) by { close(); }
 }
 ```
 

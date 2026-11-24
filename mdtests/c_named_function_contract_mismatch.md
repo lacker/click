@@ -61,7 +61,7 @@ int32 apply_difference(int32 (*callback)(int32, int32), int32 left, int32 right)
 theorem proposed_sum_contract() {
     ensures Difference(&sum) by {
         unfold(Difference(&sum));
-        solve();
+        close();
     }
 }
 

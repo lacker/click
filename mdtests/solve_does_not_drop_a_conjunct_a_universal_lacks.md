@@ -18,11 +18,11 @@ void keep(uint8* dst) {
     ensures (0u64..4u64).all(|k| { dst[k] == 7u8 });
 } by {
     step_until(function.exit);
-    known();
-    solve();
+    close();
+    close();
 }
 ```
 
 ```expect
-fail: `solve` search did not retain a complete proof
+fail: `close` search did not retain a complete proof
 ```

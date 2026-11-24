@@ -6,7 +6,7 @@ theorem wrapped_predecessor(n: uint64) {
     ensures n == n by {
         let ih = induct(n);
         apply(ih(n - 1u64));
-        solve();
+        close();
     }
 }
 ```

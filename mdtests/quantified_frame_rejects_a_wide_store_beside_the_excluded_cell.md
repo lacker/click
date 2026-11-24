@@ -27,7 +27,7 @@ void clear_pair(int32 *a, int32 n, int32 j) {
     step();
     step();
     step();
-    have forall (k: int32) { 0 <= k and k < n and k != j implies a[k] == old(a[k]) } by { solve(); }
+    have forall (k: int32) { 0 <= k and k < n and k != j implies a[k] == old(a[k]) } by { close(); }
 }
 ```
 

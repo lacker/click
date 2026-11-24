@@ -187,7 +187,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         false
     }
 
-    /// `have <guard> by { solve(); }`, or the proof unchanged when the guard
+    /// `have <guard> by { close(); }`, or the proof unchanged when the guard
     /// is already available.
     pub(in crate::surface::proof) fn prove_guard(
         search_input: &Proof<'a>,

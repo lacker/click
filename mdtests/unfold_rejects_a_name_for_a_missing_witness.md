@@ -29,7 +29,7 @@ void bump(struct holder* h) {
     let { target: p } = unfold(holder_of(h));
     step_until(function.exit);
     fold(holder_of(h));
-    solve();
+    close();
 }
 ```
 

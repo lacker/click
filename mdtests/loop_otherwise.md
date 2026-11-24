@@ -2,7 +2,7 @@
 
 The false guard and loop invariant give the proof a lower and upper bound.
 The `otherwise` block proves equality from those bounds, and the exact
-equality is available to `known()` after the loop. The same proof covers an
+equality is available to `close()` after the loop. The same proof covers an
 initially false guard. A post-tested loop checks the block in the state
 reached after executing its body. A short-circuit guard may be false on either
 operand.
@@ -36,10 +36,10 @@ void count_down(int32 n) {
         invariant n >= 0;
         decreases n;
         otherwise {
-            have n == 0 by solve();
+            have n == 0 by close();
         }
     }
-    have n == 0 by known();
+    have n == 0 by close();
 }
 
 void post_test(int32 n) {
@@ -48,10 +48,10 @@ void post_test(int32 n) {
     loop {
         decreases 0;
         otherwise {
-            have n == 0 by known();
+            have n == 0 by close();
         }
     }
-    have n == 0 by known();
+    have n == 0 by close();
 }
 
 void short_circuit(int32 n, int32 m) {
@@ -62,7 +62,7 @@ void short_circuit(int32 n, int32 m) {
         invariant n >= 0;
         decreases n;
         otherwise {
-            have n <= 0 or m <= 0 by known();
+            have n <= 0 or m <= 0 by close();
         }
     }
 }

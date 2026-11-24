@@ -42,7 +42,7 @@ void keep(struct counter *counter) {
     owns h: holding(counter);
 } by {
     unfold(h);
-    have held(&counter->mu) by solve();
+    have held(&counter->mu) by close();
     let first = fold(holding(counter), { tag: 0 });
     let second = fold(holding(counter), { tag: 0 });
 }
@@ -65,7 +65,7 @@ int32 read_counter(struct counter *counter) {
     step();
     step();
     step();
-    solve();
+    close();
 }
 ```
 

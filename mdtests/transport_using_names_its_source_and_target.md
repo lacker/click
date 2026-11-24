@@ -14,11 +14,11 @@ verifying "transport_using_names_its_source_and_target.c";
 theorem t(a: int32, b: int32) {
     requires a == 1;
     ensures b == 1 by {
-        known();
+        close();
     }
 }
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: could not establish `b == 1`
 ```

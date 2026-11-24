@@ -11,11 +11,11 @@ void f(int32 *p, int32 n) {
     consumes allocation(p, n * 4);
     consumes p[0..n];
 } by {
-    have forall (j: int32) { 0 <= j and j < n implies defined(p[j]) } by { known(); }
+    have forall (j: int32) { 0 <= j and j < n implies defined(p[j]) } by { close(); }
     step();
-    have forall (j: int32) { 0 <= j and j < n implies defined(p[j]) } by { known(); }
+    have forall (j: int32) { 0 <= j and j < n implies defined(p[j]) } by { close(); }
 }
 ```
 ```expect
-fail: `known`
+fail: could not establish `forall (j: int32) { 0 <= j and j < n implies defined(p[j]) }`
 ```

@@ -17,11 +17,11 @@ uint32 at(uint32* xs, uint64 n, uint64 r) {
 } by {
     have xs[n - r] <= 100u32 by {
         instantiate(forall (k: uint64) { k < n implies xs[k] <= 100u32 }, n - r);
-        known();
+        close();
     }
 }
 ```
 
 ```expect
-fail: `known` requires
+fail: could not establish `xs[(n - r)] <= 100u32`
 ```

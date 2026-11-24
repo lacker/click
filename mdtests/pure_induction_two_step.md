@@ -20,7 +20,7 @@ theorem by_two_is_zero(n: int32) {
             apply(ih(n - 2));
             unfold(by_two(n));
             rewrite(by_two(n - 2), 0);
-            known();
+            close();
         }
     }
 }

@@ -6,7 +6,7 @@ contract void Raw(int32* data) { owns data[0..2]; }
 contract void Buffered(int32* data) { owns Buffer(data); }
 theorem lift(callback: void (*)(int32*)) executes callback(int32* data) {
  requires Raw(callback);
- ensures Buffered(callback) by { unfold(Buffer(data)); step(Raw); fold(Buffer(data)); solve(); }
+ ensures Buffered(callback) by { unfold(Buffer(data)); step(Raw); fold(Buffer(data)); close(); }
 }
 ```
 

@@ -48,14 +48,14 @@ int32 in_arm(int32 x) {
         branch {
             true => {
                 step();
-                solve();
+                close();
             }
             false => {
                 have to_integer(x + 1) >= 1;
             }
         }
         step();
-        solve();
+        close();
     }
 }
 ```

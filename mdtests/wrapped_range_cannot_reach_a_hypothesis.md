@@ -27,9 +27,9 @@ theorem a_cell_from_a_wrapped_hypothesis(v: int32[], n: int32) {
         have 1073741824 < n by { close() using { 1073741825 <= n; }; }
         have viewable(v[0..1073741824]);
         have 1073741824 >= 0;
-        have 1073741824 >= 0 and viewable(v[0..1073741824]) by known();
+        have 1073741824 >= 0 and viewable(v[0..1073741824]) by close();
         apply(ih(1073741824));
-        known();
+        close();
     }
 }
 ```

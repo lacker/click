@@ -117,7 +117,7 @@ void overwrite(struct node* p) {
     let c7 = fold(layer7(p), { tag: t7, child: c6 });
     let c8 = fold(layer8(p), { tag: t8, child: c7 });
     let w = fold(layer9(p), { tag: t9, child: c8 });
-    solve();
+    close();
 }
 
 void caller(struct node* p) {
@@ -135,7 +135,7 @@ void caller(struct node* p) {
     let { tag: t1, child: c0 } = unfold(c1);
     let { tag: t0 } = unfold(c0);
     step();
-    have p->value == 0 by solve();
+    have p->value == 0 by close();
     let c0 = fold(layer0(p), { tag: t0 });
     let c1 = fold(layer1(p), { tag: t1, child: c0 });
     let c2 = fold(layer2(p), { tag: t2, child: c1 });
@@ -159,7 +159,7 @@ void caller(struct node* p) {
     let { tag: at1, child: ac0 } = unfold(ac1);
     let { tag: at0 } = unfold(ac0);
     have p->value == at(before, p->value) by {
-        solve();
+        close();
     }
     let ac0 = fold(layer0(p), { tag: at0 });
     let ac1 = fold(layer1(p), { tag: at1, child: ac0 });

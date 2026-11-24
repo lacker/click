@@ -40,16 +40,16 @@ int32 copy_name(char buf[], int32 n) {
     have forall (k: uint64) { 0u64 <= k and k < n as uint64 implies tmp[k] != 0u8 } by {
         intro();
         intro();
-        have k < 2u64 by { solve(); }
+        have k < 2u64 by { close(); }
         instantiate(forall (k: uint64) { 0u64 <= k and k < 2u64 implies tmp[k] != 0u8 }, k);
-        known();
+        close();
     }
     have forall (k: uint64) { 0u64 <= k and k < n as uint64 + 1u64 implies defined(tmp[k]) } by {
         intro();
         intro();
-        have k < 3u64 by { solve(); }
+        have k < 3u64 by { close(); }
         instantiate(forall (k: uint64) { 0u64 <= k and k < 3u64 implies defined(tmp[k]) }, k);
-        known();
+        close();
     }
     step(snprintf, { n0: n as uint64 });
 }

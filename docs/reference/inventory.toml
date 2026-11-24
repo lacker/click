@@ -1298,10 +1298,6 @@ id = "tactic.loop"
 path = "reference/tactics/index.md#execution"
 
 [[item]]
-id = "tactic.solve"
-path = "reference/tactics/index.md#proposition-reasoning"
-
-[[item]]
 id = "tactic.check_termination_local"
 path = "reference/tactics/index.md#termination-checks"
 
@@ -1315,10 +1311,6 @@ path = "reference/tactics/index.md#termination-checks"
 
 [[item]]
 id = "tactic.close"
-path = "reference/tactics/index.md#proposition-reasoning"
-
-[[item]]
-id = "tactic.known"
 path = "reference/tactics/index.md#proposition-reasoning"
 
 [[item]]
@@ -1532,9 +1524,6 @@ id = "tactic-form.close"
 path = "reference/tactics/index.md#proposition-reasoning"
 
 [[item]]
-id = "tactic-form.known"
-path = "reference/tactics/index.md#proposition-reasoning"
-[[item]]
 id = "tactic-form.outcomes"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
@@ -1572,9 +1561,6 @@ id = "tactic-form.transport-using"
 path = "reference/tactics/index.md#resources-and-transport"
 [[item]]
 id = "tactic-form.instantiate"
-path = "reference/tactics/index.md#proposition-reasoning"
-[[item]]
-id = "tactic-form.solve"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
 id = "tactic-form.close-using"

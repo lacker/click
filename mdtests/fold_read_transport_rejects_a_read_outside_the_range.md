@@ -25,11 +25,11 @@ void set_end(int32 *v, int32 i, int32 n) {
     ensures peek(v, 0, i) == old(peek(v, 0, i));
 } by {
     mark entry;
-    have peek(at(entry, v), 0, i) == peek(at(entry, v), 0, i) by known();
+    have peek(at(entry, v), 0, i) == peek(at(entry, v), 0, i) by close();
     step();
     have peek(at(entry, v), 0, i) == peek(v, 0, i) by {
-        solve();
-        known();
+        close();
+        close();
     }
 }
 ```

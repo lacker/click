@@ -26,10 +26,10 @@ uint64 probe(uint8* bytes, uint64 n) {
     requires n > 0u64;
     ensures result == n;
 } by {
-    step() by { known(); }
+    step() by { close(); }
 }
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: could not establish `forall
 ```

@@ -21,7 +21,7 @@ function adjacent(xs: List<int32>, first: int32, second: int32) -> int32
 theorem right_position(xs: List<int32>, tail: List<int32>, first: int32, second: int32, flag: int32) {
     requires xs == List<int32>::Cons(first, List<int32>::Cons(second, tail));
     ensures flag != 0 implies adjacent(xs, first, second) == 1 by {
-        solve();
+        close();
     }
 }
 ```

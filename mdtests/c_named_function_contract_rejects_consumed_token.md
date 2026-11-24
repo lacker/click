@@ -42,7 +42,7 @@ int32 apply_token(int32 (*callback)(int32), int32 key) {
 theorem proposed_consume_token_contract() {
     ensures PreserveToken(&consume_token) by {
         unfold(PreserveToken(&consume_token));
-        solve();
+        close();
     }
 }
 

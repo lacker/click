@@ -6,29 +6,11 @@ use super::diagnostics::{
 use super::*;
 
 thread_local! {
-    static EXPANSION_CLOSE_OUTPUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static CONTRACT_VALUE_PARAMETERS: std::cell::RefCell<Option<std::sync::Arc<ContractValueParameters>>> =
         const { std::cell::RefCell::new(None) };
 }
 
-/// Use the trial spelling of a checked goal closure when rendering expansion
-/// output. Checked certificates still carry the same `Known` operation.
-pub fn with_expansion_close_output<R>(operation: impl FnOnce() -> R) -> R {
-    struct Restore(bool);
-
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            EXPANSION_CLOSE_OUTPUT.with(|output| output.set(self.0));
-        }
-    }
-
-    let _restore = Restore(EXPANSION_CLOSE_OUTPUT.with(|output| output.replace(true)));
-    operation()
-}
-
-pub(super) fn known_call() -> &'static str {
-    EXPANSION_CLOSE_OUTPUT.with(|output| if output.get() { "close();" } else { "known();" })
-}
+pub(super) const CLOSE_CALL: &str = "close();";
 
 /// The contract declaration names available while writing a checked proof.
 pub(super) struct ContractValueParameterScope(Option<std::sync::Arc<ContractValueParameters>>);
@@ -1353,8 +1335,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             &prefix,
             &format!("apply({});", source_click_proposition(fact)),
         ),
-        ProofTactic::Close => line(output, &prefix, "close();"),
-        ProofTactic::Known => line(output, &prefix, known_call()),
+        ProofTactic::Close | ProofTactic::Known => line(output, &prefix, CLOSE_CALL),
         ProofTactic::CompatibilityNormalize(_) => {
             line(output, &prefix, COMPATIBILITY_NORMALIZATION)
         }
@@ -1363,7 +1344,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             write_using_premises(output, "normalize()", premises, indent)
         }
         ProofTactic::ArithmeticUsing(premises) => {
-            write_using_premises(output, "solve()", premises, indent)
+            write_using_premises(output, "close()", premises, indent)
         }
         ProofTactic::IntroBlock { binder, body } => {
             let name = binder.as_ref().map(ToString::to_string).unwrap_or_default();
@@ -1502,9 +1483,9 @@ fn write_proof(output: &mut String, proof: &SourceProof, indent: usize) {
     if tactics.is_empty() {
         // A `by` block must hold a tactic. A generated proof with no step,
         // such as the `initialize` phase of a loop with no invariant, keeps
-        // `known();`, the step a phase with nothing to prove is
+        // `close();`, the step a phase with nothing to prove is
         // checked by.
-        line(output, &"    ".repeat(indent + 1), known_call());
+        line(output, &"    ".repeat(indent + 1), CLOSE_CALL);
     }
     write_tactics(output, tactics, indent + 1);
     output.push_str(&"    ".repeat(indent));
@@ -1889,7 +1870,7 @@ mod tests {
             let sidecar = format!(
                 r#"verifying "null.c"; void f() {{
                     ensures {source};
-                }} by {{ step_until(function.exit); solve(); }}"#
+                }} by {{ step_until(function.exit); close(); }}"#
             );
             verify_c_sources(&sidecar, &[("null.c", "void f(void) {}")])
                 .expect("the generated proposition should prove a fact about the null address");
@@ -2086,7 +2067,7 @@ mod tests {
                 requires index == 1;
                 views p[0..4];
                 ensures {printed};
-            }} by {{ step_until(function.exit); rewrite(index, 1); solve(); }}
+            }} by {{ step_until(function.exit); rewrite(index, 1); close(); }}
         "#
         );
         let sources = [(

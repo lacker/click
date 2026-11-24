@@ -18,10 +18,10 @@ An omitted proof closes the statement where it holds:
 
 - `ensures P;` on a C function holds at function exit, so the implicit tail
   runs the C to it first, then closes the claim on each path with the
-  implicit closer: direct closure, then `solve`'s search. A script that ends
+  implicit closer: direct closure, then bounded proof search. A script that ends
   with the claim still open closes it the same way.
-- `have P;` holds where it is written. It is `have P by solve();` and never
-  executes C. On a linear `Integer` bound, `solve` refutes its integer
+- `have P;` holds where it is written. It is `have P by close();` and never
+  executes C. On a linear `Integer` bound, `close()` refutes its integer
   negation from the facts connected to it
   (`mdtests/have_by_solve_refutes_a_linear_bound.md`), and its last strategy
   is a short chain of `rewrite` steps by the connected equalities
@@ -29,7 +29,7 @@ An omitted proof closes the statement where it holds:
   write `have P;`, whose omitted proof is the same proof.
 
 When a simple tactic leaves an obligation open, omitting its proof calls the
-same solver as writing `by solve();`. The driver schedules these calls and
+same solver as writing `by close();`. The driver schedules these calls and
 retains their explicit proofs for expansion; it adds no private witness rule
 or extra premise list. For example, both forms prove the existential call
 requirement in `mdtests/explicit_solve_proves_an_existential_call_requirement.md`
@@ -81,7 +81,7 @@ this section shows how they appear in scripts.
 Smart tactics plan or search. `close()` checks the goal directly before
 searching and `close() using { ... }` searches from listed premises. The implicit tail, which runs the C a
 script leaves and closes what is open, is smart work too, including the
-`solve()` closure of each loop-bundle member at a back edge, as are the
+`close()` closure of each loop-bundle member at a back edge, as are the
 searches behind elided arguments. An elided form
 such as bare `apply(...)` or bare `transport(...)` is a smart site: a search
 looks up the argument its `using` form writes, and a fact it does not find is a
@@ -111,8 +111,8 @@ proof `if`.
 `close() using { ... }` is still smart: the listed facts restrict its search,
 it tries arithmetic over them last, and expansion replaces it with named
 simple rules. A miss adds arithmetic's reason. Common simple proposition
-tactics are `known()`, `normalize()`, `rewrite(...)`, `intro()`, and
-`contradiction(...)`. `known()` also closes a conjunction whose sides
+tactics are `close()`, `normalize()`, `rewrite(...)`, `intro()`, and
+`contradiction(...)`. `close()` also closes a conjunction whose sides
 are facts and a disjunction with one side a fact. A successful
 expansion contains only those explicit rules, ordinary arithmetic proofs, and named
 theorem applications.
@@ -248,7 +248,7 @@ match c.model {
         unfold(c);
         step_until(function.exit);
         let c = fold(cell(node), { model: Maybe::Some(value) });
-        solve();
+        close();
     },
 }
 ```
@@ -310,7 +310,7 @@ let { result: r } = step(classify);
 ```
 
 `r` is then an ordinary value name in `have`, `rewrite`, `normalize() using`,
-and `solve` premises, on both sides of the `branch` written at the C `if`. It
+and `close() using` premises, on both sides of the `branch` written at the C `if`. It
 denotes the value the call returned, so it keeps its meaning after later
 statements. Naming the result of a call whose result the C discards is an
 error, as is reusing a name that is already a C local or a proof-local
@@ -342,8 +342,8 @@ extract a partial result from a proof whose later tactics fail.
 A `have` whose body neither closes the goal nor reports a failure of its own is
 a declined body, and the message names the goal and what declined: the written
 step, or "its body ran to the end with the goal still open", or that the body's
-shape is not one the checked driver runs. The last case is usually a `solve()`
-with something written after it; `solve()` closes a goal and is checked only as
+shape is not one the checked driver runs. The last case is usually a `close()`
+with something written after it; `close()` closes a goal and is checked only as
 a body's last step (`mdtests/have_body_declines_names_the_goal.md`).
 
 The [proof tactics reference](../reference/tactics/index.md) is the exhaustive inventory

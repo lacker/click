@@ -1368,7 +1368,7 @@ fn advance_checked_linear_continuation<'a>(
         return decline();
     };
     for (offset, indexed) in tactics.iter().enumerate() {
-        // A written `solve();` at a live frontier first executes the C that
+        // A written `close();` at a live frontier first executes the C that
         // remains, as the implicit tail does, then closes the open goals at
         // function exit like the `solve` an omitted proof stands for.
         if matches!(indexed.tactic, ProofTactic::ImplicitSolve) && !proof.is_at_function_exit() {
@@ -3600,11 +3600,12 @@ fn advance_focused_execution_arm<'a>(
             continue;
         }
         if !SourceContext::ExecutionFrontier.admits(&indexed.tactic) {
-            if matches!(indexed.tactic, ProofTactic::Solve) {
+            if matches!(indexed.tactic, ProofTactic::Close | ProofTactic::Solve) {
+                let name = tactic_name(&indexed.tactic);
                 return Err(proof
                     .at_source_tactic(indexed.source_index)
-                    .step_error(solve_before_exit_reason(&proof))
-                    .with_failed_tactic(tactic_name(&indexed.tactic)));
+                    .step_error(closer_before_exit_reason(&proof, name))
+                    .with_failed_tactic(name));
             }
             return decline();
         }
@@ -5670,11 +5671,11 @@ pub(in crate::surface::proof) fn add_proof_branch_path(
     error
 }
 
-/// Why `solve` cannot run at an execution frontier that has not reached the
+/// Why a closer cannot run at an execution frontier that has not reached the
 /// function exit: what still lies ahead, and the two ways to get there.
-fn solve_before_exit_reason(proof: &Proof<'_>) -> String {
+fn closer_before_exit_reason(proof: &Proof<'_>, name: &str) -> String {
     format!(
-        "`solve` closes the outcome claims at function exit and does not execute: {}. Step to the exit first with `step_until(function.exit)` or `step()` (the end of the body is one step), or omit the proof, whose implicit tail runs the C and closes the claims.",
+        "`{name}` closes the outcome claims at function exit and does not execute: {}. Step to the exit first with `step_until(function.exit)` or `step()` (the end of the body is one step), or omit the proof, whose implicit tail runs the C and closes the claims.",
         frontier_ahead_of_exit(proof)
     )
 }
@@ -5754,13 +5755,15 @@ fn post_exit_execution_tactic_error(tactic: &ProofTactic) -> Option<String> {
 
 /// The diagnostic for a function-exit tactic written before execution
 /// reached function exit.
-/// `solve` gets the same diagnostic here as in an execution arm.
+/// A closer gets the same diagnostic here as in an execution arm.
 fn pre_exit_outcome_tactic_error(proof: &Proof<'_>, tactic: &ProofTactic) -> Option<String> {
     let name = match tactic {
         ProofTactic::Induct { .. } => return Some(INDUCT_EXECUTION_REFUSAL.to_owned()),
         ProofTactic::Witness(_) => "witness",
         ProofTactic::Choose(_) => "choose",
-        ProofTactic::Solve => return Some(solve_before_exit_reason(proof)),
+        ProofTactic::Close | ProofTactic::Solve => {
+            return Some(closer_before_exit_reason(proof, tactic_name(tactic)));
+        }
         // Any other tactic that only works on the outcome claims, such as a
         // closer: execution has to reach function exit before it has a goal.
         _ if flat_post_execution_tactic(tactic).is_some() => {
@@ -5825,7 +5828,7 @@ mod tests {
             ));
             steps(&mut proof, indent + 4, index + 2);
             proof.push_str(&format!(
-                "{:w$}solve();\n{:indent$}}} else {{\n",
+                "{:w$}close();\n{:indent$}}} else {{\n",
                 "",
                 "",
                 w = indent + 4
@@ -5834,7 +5837,7 @@ mod tests {
                 steps(&mut proof, indent + 4, 4);
             } else {
                 steps(&mut proof, indent + 4, count + 3);
-                proof.push_str(&format!("{:w$}solve();\n", "", w = indent + 4));
+                proof.push_str(&format!("{:w$}close();\n", "", w = indent + 4));
             }
             statement += index + 5;
         }

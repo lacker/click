@@ -49,7 +49,7 @@ with "step not proved separate from the queried bytes", even though
 `memory(dst.y) separate memory(*src)` is among the premises.
 `try_direct_structural_closure_inner` splits the conjunction and closes each
 leaf structurally. That closure doesn't use the stated separation, while the
-`solve` a `have` runs does (`src/surface/proof/smart_closures/search.rs`,
+`close()` a `have` runs does (`src/surface/proof/smart_closures/search.rs`,
 `src/surface/proof/driver/claims.rs` `close_claim_directly_from_outcome`).
 
 The same shape is what a whole-struct claim lowers to: `ensures *dst == *src`

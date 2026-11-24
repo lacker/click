@@ -20,9 +20,9 @@ int32 g(int32 p[]) {
     ensures result == 7;
 } by {
     step_until(function.exit);
-    known();
-    known();
-    known(); known(); known();
+    close();
+    close();
+    close(); close(); close();
     normalize();
 }
 ```

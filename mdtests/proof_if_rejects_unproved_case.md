@@ -7,9 +7,9 @@ claim. The true case proves `x == 0`, but the false case cannot.
 theorem not_always_zero(x: int32) {
     ensures x == 0 by {
         if x == 0 {
-            solve();
+            close();
         } else {
-            solve();
+            close();
         }
     }
 }

@@ -45,7 +45,7 @@ int32 loop_resource_lifetime_join(int32* p) {
     }
     step();
     step();
-    solve();
+    close();
 }
 ```
 

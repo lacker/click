@@ -15,7 +15,7 @@ void inspect(int32* p) {
 } by {
     unfold(cell(p)); step_until(function.exit); fold(cell(p));
     let tag = fold(marker(), { value: 1 });
-    solve();
+    close();
 }
 ```
 

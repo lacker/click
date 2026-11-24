@@ -93,7 +93,7 @@ theorem equal_literal_boxes(p: Number, q: Slot) {
         unfold(box_of(q));
         rewrite(p, Number::Hold(7));
         rewrite(q, Slot::Right(Envelope::Hold(Box::Value(7))));
-        solve();
+        close();
     }
 }
 
@@ -105,7 +105,7 @@ theorem equal_symbolic_boxes(p: Number, q: Slot, a: Integer, b: Integer) {
         unfold(box_of(q));
         rewrite(p, Number::Hold(a));
         rewrite(q, Slot::Right(Envelope::Hold(Box::Value(a))));
-        solve();
+        close();
     }
 }
 
@@ -117,7 +117,7 @@ theorem equal_opaque_boxes(p: Slot, q: Slot, a: Box, b: Box) {
         unfold(capture_or_return(q, a));
         rewrite(p, Slot::Left(Envelope::Hold(a)));
         rewrite(q, Slot::Right(Envelope::Hold(b)));
-        solve();
+        close();
     }
 }
 
@@ -129,7 +129,7 @@ theorem equal_flags(p: FlagInput, q: FlagSlot, a: Bool) {
         unfold(flag_of(q));
         rewrite(p, FlagInput::Hold(a));
         rewrite(q, FlagSlot::Right(FlagEnvelope::Hold(Flag::Value(a))));
-        solve();
+        close();
     }
 }
 
@@ -141,7 +141,7 @@ theorem equal_words(p: WordInput, q: WordSlot, a: uint64) {
         unfold(word_of(q));
         rewrite(p, WordInput::Hold(a));
         rewrite(q, WordSlot::Right(WordEnvelope::Hold(Word::Value(a))));
-        solve();
+        close();
     }
 }
 
@@ -153,7 +153,7 @@ theorem equal_pairs(p: PairInput, q: PairSlot, a: Integer, b: Integer) {
         unfold(pair_of(q));
         rewrite(p, PairInput::Hold(a, b));
         rewrite(q, PairSlot::Right(PairEnvelope::Hold(Pair::Both(Box::Value(a), Box::Value(b)))));
-        solve();
+        close();
     }
 }
 
@@ -165,7 +165,7 @@ theorem capture_equals_binding(p: Slot, q: Slot, a: Box, b: Box) {
         unfold(box_of(q));
         rewrite(p, Slot::Left(Envelope::Hold(b)));
         rewrite(q, Slot::Right(Envelope::Hold(a)));
-        solve();
+        close();
     }
 }
 
@@ -177,7 +177,7 @@ theorem rebuilt_equals_binding(p: Slot, q: Slot, a: Integer) {
         unfold(box_of(q));
         rewrite(p, Slot::Left(Envelope::Hold(Box::Value(0))));
         rewrite(q, Slot::Right(Envelope::Hold(Box::Value(a))));
-        solve();
+        close();
     }
 }
 
@@ -189,7 +189,7 @@ theorem variant_equals_binding(p: ChoiceSlot, q: Slot, a: Integer, other: Box) {
         unfold(box_of(q));
         rewrite(p, ChoiceSlot::Hold(Choice::Right(Box::Value(a))));
         rewrite(q, Slot::Right(Envelope::Hold(Box::Value(a))));
-        solve();
+        close();
     }
 }
 
@@ -201,7 +201,7 @@ theorem shadow_equals_binding(p: PairInput, q: Slot, a: Integer, b: Integer) {
         unfold(box_of(q));
         rewrite(p, PairInput::Hold(a, b));
         rewrite(q, Slot::Right(Envelope::Hold(Box::Value(a))));
-        solve();
+        close();
     }
 }
 ```

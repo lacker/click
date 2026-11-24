@@ -36,7 +36,7 @@ void release(struct object *obj, struct object *other) {
     let restored = fold(control(obj), { refs: obj->refs });
     step(pthread_mutex_unlock, { access: access, guard: guard, state: restored });
     step();
-    solve();
+    close();
 }
 ```
 

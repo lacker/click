@@ -23,7 +23,7 @@ int32 f(int32* p) {
     fold(zero(p));
     step();
     step();
-    solve();
+    close();
 }
 ```
 

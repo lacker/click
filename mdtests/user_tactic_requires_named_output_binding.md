@@ -31,7 +31,7 @@ void user(int32* p) {
 } by {
     let output = rename_cell(p, { before: input });
     step_until(function.exit);
-    solve();
+    close();
 }
 ```
 

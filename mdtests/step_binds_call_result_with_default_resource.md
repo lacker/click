@@ -31,8 +31,8 @@ int32 run(int32* p) {
     step();
     let { result: saved } = step();
     step_until(function.exit);
-    have saved == 7 by { known(); }
-    known();
+    have saved == 7 by { close(); }
+    close();
 }
 ```
 

@@ -52,7 +52,7 @@ void spin(struct cell* node, int32 n) {
         invariant i <= n;
         invariant c.model == old(c.model);
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             match c.model {
                 Sign::Neg(value) => {
@@ -71,7 +71,7 @@ void spin(struct cell* node, int32 n) {
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

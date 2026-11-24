@@ -108,7 +108,7 @@ theorem equal_words_keep_mask(left: uint64, right: uint64, mask: uint64) {
     requires left == right;
     ensures (left & mask) == (right & mask) by {
         rewrite(left, right);
-        known();
+        close();
     }
 }
 
@@ -134,7 +134,7 @@ void rb_link_node(struct rb_node* node, struct rb_node* parent, struct rb_node**
 } by {
     step();
     step();
-    have separate(memory(node->rb_left), memory(node->__rb_parent_color)) by { known(); }
+    have separate(memory(node->rb_left), memory(node->__rb_parent_color)) by { close(); }
     have separate(statement(1).footprint, memory(node->__rb_parent_color)) by {
         normalize() using { separate(memory(node->rb_left), memory(node->__rb_parent_color)); };
     }
@@ -142,14 +142,14 @@ void rb_link_node(struct rb_node* node, struct rb_node* parent, struct rb_node**
         preserve(memory(node->__rb_parent_color), statement(1));
     }
     step();
-    have separate(memory(node->rb_right), memory(node->__rb_parent_color)) by { known(); }
+    have separate(memory(node->rb_right), memory(node->__rb_parent_color)) by { close(); }
     have separate(statement(2).footprint, memory(node->__rb_parent_color)) by {
         normalize() using { separate(memory(node->rb_right), memory(node->__rb_parent_color)); };
     }
     have node->__rb_parent_color == at(statement(2).entry, node->__rb_parent_color) by {
         preserve(memory(node->__rb_parent_color), statement(2));
     }
-    have separate(memory(node->rb_right), memory(node->rb_left)) by { known(); }
+    have separate(memory(node->rb_right), memory(node->rb_left)) by { close(); }
     have separate(statement(2).footprint, memory(node->rb_left)) by {
         normalize() using { separate(memory(node->rb_right), memory(node->rb_left)); };
     }
@@ -157,21 +157,21 @@ void rb_link_node(struct rb_node* node, struct rb_node* parent, struct rb_node**
         preserve(memory(node->rb_left), statement(2));
     }
     step();
-    have separate(memory(rb_link[0]), memory(node->__rb_parent_color)) by { known(); }
+    have separate(memory(rb_link[0]), memory(node->__rb_parent_color)) by { close(); }
     have separate(statement(3).footprint, memory(node->__rb_parent_color)) by {
         normalize() using { separate(memory(rb_link[0]), memory(node->__rb_parent_color)); };
     }
     have node->__rb_parent_color == at(statement(3).entry, node->__rb_parent_color) by {
         preserve(memory(node->__rb_parent_color), statement(3));
     }
-    have separate(memory(rb_link[0]), memory(node->rb_left)) by { known(); }
+    have separate(memory(rb_link[0]), memory(node->rb_left)) by { close(); }
     have separate(statement(3).footprint, memory(node->rb_left)) by {
         normalize() using { separate(memory(rb_link[0]), memory(node->rb_left)); };
     }
     have node->rb_left == at(statement(3).entry, node->rb_left) by {
         preserve(memory(node->rb_left), statement(3));
     }
-    have separate(memory(rb_link[0]), memory(node->rb_right)) by { known(); }
+    have separate(memory(rb_link[0]), memory(node->rb_right)) by { close(); }
     have separate(statement(3).footprint, memory(node->rb_right)) by {
         normalize() using { separate(memory(rb_link[0]), memory(node->rb_right)); };
     }
@@ -179,7 +179,7 @@ void rb_link_node(struct rb_node* node, struct rb_node* parent, struct rb_node**
         preserve(memory(node->rb_right), statement(3));
     }
     step();
-    solve();
+    close();
 }
 
 struct rb_node* parent_of(struct rb_node* node) {
@@ -196,7 +196,7 @@ struct rb_node* parent_of(struct rb_node* node) {
         };
     }
     fold(linked(node));
-    solve();
+    close();
 }
 
 unsigned long color_of(struct rb_node* node) {
@@ -241,7 +241,7 @@ struct rb_node* red_parent_of(struct rb_node* red) {
         };
     }
     fold(linked(red));
-    solve();
+    close();
 }
 
 int32 cleared_is_empty(struct rb_node* node) {
@@ -269,11 +269,11 @@ int32 relinked_is_empty(struct rb_node* node, struct rb_node* parent) {
         if node->__rb_parent_color == address(node) {
             apply(equal_words_keep_mask(node->__rb_parent_color, address(node), ~3u64));
             have address(parent) == address(node) by {
-                known();
+                close();
             }
             contradiction(address(parent) == address(node));
         } else {
-            known();
+            close();
         }
     }
 }

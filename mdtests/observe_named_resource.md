@@ -19,9 +19,9 @@ int32 read_cell(int32* p) {
     ensures c.tag == old(c.tag);
 } by {
     observe(c);
-    have *p == c.tag by { known(); }
+    have *p == c.tag by { close(); }
     step_until(function.exit);
-    solve();
+    close();
 }
 ```
 

@@ -18,7 +18,7 @@ int32 f(int32 n) {
     requires n == 5;
     ensures result == 5 or result == 7;
 } by {
-    branch { true => { step(); solve(); } false => { step(); solve(); } }
+    branch { true => { step(); close(); } false => { step(); close(); } }
 }
 ```
 

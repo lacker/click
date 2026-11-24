@@ -61,12 +61,12 @@ void mark_and_swap(struct arena* arena, int32 start, int32 end) {
         };
         decreases end - i;
         initialize by {
-            solve();
+            close();
         }
         maintain by {
             step();
             step();
-            have arena->occupied == old(arena->occupied) by { known(); }
+            have arena->occupied == old(arena->occupied) by { close(); }
         }
     }
 }

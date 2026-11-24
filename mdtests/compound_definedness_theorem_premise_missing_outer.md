@@ -10,7 +10,7 @@ theorem missing(a: int32, b: int32, c: int32) {
     requires defined(a + b);
     ensures a == a by {
         apply(add_observation(a + b, c));
-        known();
+        close();
     }
 }
 ```

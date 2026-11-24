@@ -16,16 +16,16 @@ void overwrite(int32 *p) {
     ensures *p == 0;
 } by {
     step();
-    have separate(memory(*p), memory(p[0..-1073741823])) by { known(); }
+    have separate(memory(*p), memory(p[0..-1073741823])) by { close(); }
     have separate(statement(0).footprint, memory(p[0..-1073741823])) by {
-        known();
+        close();
     }
     have *p == old(*p) by {
         preserve(memory(p[0..-1073741823]), statement(0));
     }
     step();
     rewrite(*p, old(*p));
-    known();
+    close();
 }
 ```
 

@@ -28,7 +28,7 @@ uint32 cleanup(struct counter* p) {
     fold(control(p));
     with(control(p)) { unfold(2 of remaining(p)); }
     step();
-    solve();
+    close();
 }
 ```
 

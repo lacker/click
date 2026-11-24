@@ -5269,23 +5269,23 @@ pub(in crate::surface) fn contract_expression_to_program_expression(
 mod tests {
     #[test]
     fn integer_result_context_does_not_create_a_binding() {
-        let source = "function constant() -> Integer { 4294967296 } function choose(x: Integer) -> Integer { if x == 0 { 1 } else { 2 } } theorem check() { ensures constant() == 4294967296 by { unfold(constant()); solve(); } ensures choose(0) == 1 by { unfold(choose(0)); solve(); } }";
+        let source = "function constant() -> Integer { 4294967296 } function choose(x: Integer) -> Integer { if x == 0 { 1 } else { 2 } } theorem check() { ensures constant() == 4294967296 by { unfold(constant()); close(); } ensures choose(0) == 1 by { unfold(choose(0)); close(); } }";
         crate::surface::verify_c_sources(source, &[]).unwrap();
-        let annotated = "theorem check(__click_integer_result: Integer) { ensures ((__click_integer_result + 1) : Integer) == __click_integer_result + 1 by solve(); }";
+        let annotated = "theorem check(__click_integer_result: Integer) { ensures ((__click_integer_result + 1) : Integer) == __click_integer_result + 1 by close(); }";
         crate::surface::verify_c_sources(annotated, &[]).unwrap();
     }
 
     #[test]
     fn integer_context_preserves_unbounded_arithmetic_and_rejects_machine_claims() {
         for source in [
-            "theorem check() { ensures (4294967296 + 4294967296 : Integer) == 8589934592 by solve(); }",
-            "theorem check() { ensures (1 : Integer) == 1 by solve(); }",
+            "theorem check() { ensures (4294967296 + 4294967296 : Integer) == 8589934592 by close(); }",
+            "theorem check() { ensures (1 : Integer) == 1 by close(); }",
         ] {
             crate::surface::verify_c_sources(source, &[]).unwrap();
         }
         assert!(
             crate::surface::verify_c_sources(
-                "theorem bad() { ensures (1 : Integer) == 2 by solve(); }",
+                "theorem bad() { ensures (1 : Integer) == 2 by close(); }",
                 &[]
             )
             .is_err()

@@ -15,13 +15,13 @@ int read(int* p) {
 } by {
     step_until(function.exit);
     match old(c.model) {
-        Tri::Zero => { solve(); },
-        Tri::One => { solve(); },
+        Tri::Zero => { close(); },
+        Tri::One => { close(); },
         Tri::Other(payload) => {
-            have old(c.model) == Tri::Other(payload) by { known(); }
+            have old(c.model) == Tri::Other(payload) by { close(); }
             cases {
-                payload == 0 => { solve(); }
-                payload != 0 => { solve(); }
+                payload == 0 => { close(); }
+                payload != 0 => { close(); }
             }
         },
     }

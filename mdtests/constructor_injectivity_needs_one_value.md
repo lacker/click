@@ -10,7 +10,7 @@ spec enum Box { Full(int32), Empty }
 theorem unrelated_values(x: Box, y: Box, a: int32, b: int32) {
     requires x == Box::Full(a);
     requires y == Box::Full(b);
-    ensures a == b by solve();
+    ensures a == b by close();
 }
 ```
 

@@ -71,7 +71,7 @@ void arena_write(struct region* region, int32 value, int32 k) {
     let { start: s, end: e } = unfold(r);
     have to_integer(s + 1) <= to_integer(e);
     have to_integer(region->start + 1) <= to_integer(e) by {
-        rewrite(region->start, s); known();
+        rewrite(region->start, s); close();
     }
     step_until(statement(2).entry);
     step();

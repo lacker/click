@@ -9,7 +9,7 @@ void advance(bool empty, int32& cursor) {
         step_until(function.exit);
         have empty implies cursor == old(cursor) by {
             intro();
-            known();
+            close();
         }
         have not empty implies cursor == 7 by {
             intro();
@@ -23,7 +23,7 @@ void advance(bool empty, int32& cursor) {
         }
         have not empty implies cursor == 7 by {
             intro();
-            known();
+            close();
         }
     }
 }

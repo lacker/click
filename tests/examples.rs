@@ -490,8 +490,8 @@ fn bounded_audit_batches_only_claims_that_fit_the_remaining_cap() {
          int32 first(int32 x) { return x; }\n\
          int32 second(int32 x) { return x; }\n```\n\n```click\n\
          verifying \"two.c\";\n\
-         int32 first(int32 x) { ensures result == x; } by { step_until(function.exit); solve(); }\n\
-         int32 second(int32 x) { ensures result == x; } by { step_until(function.exit); solve(); }\n\
+         int32 first(int32 x) { ensures result == x; } by { step_until(function.exit); close(); }\n\
+         int32 second(int32 x) { ensures result == x; } by { step_until(function.exit); close(); }\n\
          ```\n\n```expect\npass\n```\n",
     )
     .unwrap();
@@ -530,7 +530,7 @@ fn bounded_audit_batches_only_claims_that_fit_the_remaining_cap() {
         "{}:{}:{}",
         path.display(),
         line + 1,
-        text.find("solve()").unwrap() + 1
+        text.find("close()").unwrap() + 1
     );
     let output = Command::new(env!("CARGO_BIN_EXE_click"))
         .args([
@@ -612,7 +612,7 @@ fn rbtree_solve_recolor_expansion_rechecks() {
             (depth == 0).then_some(open + offset + character.len_utf8())
         })
         .expect("the written proof block ends");
-    source.replace_range(start..end, "by solve();");
+    source.replace_range(start..end, "by close();");
     let c_sources = read_verifying_sources(&path, &source).unwrap();
     let project = read_click_project(&path, &source).unwrap();
     let line = source[..start]
@@ -679,7 +679,7 @@ void rb_set_parent_color(struct rb_node* rb, struct rb_node* p, int32 color) {
     ensures ((rb->__rb_parent_color & ~3) as (struct rb_node *)) == 0;
 } by {
     step();
-    have rb->__rb_parent_color == (address(p) | color) by { known(); }
+    have rb->__rb_parent_color == (address(p) | color) by { close(); }
     have rb->__rb_parent_color == 1 by {
         rewrite(rb->__rb_parent_color, (address(p) | color));
         rewrite(p, 0);
@@ -688,11 +688,11 @@ void rb_set_parent_color(struct rb_node* rb, struct rb_node* p, int32 color) {
     }
     have (rb->__rb_parent_color & ~3) == 0u64 by {
         rewrite(rb->__rb_parent_color, 1u64);
-        known();
+        close();
     }
-    have ((rb->__rb_parent_color & ~3) as (struct rb_node *)) == 0 by known();
+    have ((rb->__rb_parent_color & ~3) as (struct rb_node *)) == 0 by close();
     step();
-    solve();
+    close();
 }
 "#;
     let c_sources = read_verifying_sources(&path, source).unwrap();
@@ -958,10 +958,10 @@ fn rbtree_erase_general_explicit_closers_preserve_ownership() {
     let (line, text) = source
         .lines()
         .enumerate()
-        .filter(|(_, line)| line.trim() == "solve();")
+        .filter(|(_, line)| line.trim() == "close();")
         .last()
         .unwrap();
-    let column = text.find("solve").unwrap() + 1;
+    let column = text.find("close").unwrap() + 1;
     limits::spawn(
         "general unlink closer expansion",
         "click-general-erase-expansion".into(),

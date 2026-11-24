@@ -44,7 +44,7 @@ void keep_low_bit(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have (a[0] & 1) == 1 by solve();
+    have (a[0] & 1) == 1 by close();
 }
 
 void keep_positive_flag(int32 p[], int32 i, int32 j, int32 n) {
@@ -67,8 +67,8 @@ void keep_positive_flag(int32 p[], int32 i, int32 j, int32 n) {
     have separate(memory((p + i)[0..1]), memory(p[j..j + 1])) by {
         apply(separation::separate_restrict(memory(p[i..i + 1]), memory(p[j..j + 1]), memory((p + i)[0..1]), memory(p[j..j + 1])));
     }
-    step() by { known(); }
-    have (if p[j] > 0 { 1 } else { 0 }) == 1 by solve();
+    step() by { close(); }
+    have (if p[j] > 0 { 1 } else { 0 }) == 1 by close();
 }
 
 void keep_bitwise_or(int32 a[], int32 n) {
@@ -81,7 +81,7 @@ void keep_bitwise_or(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have (a[0] | 1) == 3 by solve();
+    have (a[0] | 1) == 3 by close();
 }
 
 void keep_read_bound(int32 a[], int32 n) {
@@ -94,7 +94,7 @@ void keep_read_bound(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have a[0] <= 7 by solve();
+    have a[0] <= 7 by close();
 }
 
 void keep_reversed_condition(int32 p[], int32 i, int32 j, int32 n) {
@@ -117,8 +117,8 @@ void keep_reversed_condition(int32 p[], int32 i, int32 j, int32 n) {
     have separate(memory((p + i)[0..1]), memory(p[j..j + 1])) by {
         apply(separation::separate_restrict(memory(p[i..i + 1]), memory(p[j..j + 1]), memory((p + i)[0..1]), memory(p[j..j + 1])));
     }
-    step() by { known(); }
-    have (if 0 < p[j] { 1 } else { 0 }) == 1 by solve();
+    step() by { close(); }
+    have (if 0 < p[j] { 1 } else { 0 }) == 1 by close();
 }
 ```
 

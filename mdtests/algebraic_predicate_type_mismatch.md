@@ -11,7 +11,7 @@ predicate has_int(value: Maybe<int32>) {
 }
 
 theorem mismatched(value: Maybe<uint32>) {
-    ensures has_int(value) by solve();
+    ensures has_int(value) by close();
 }
 ```
 

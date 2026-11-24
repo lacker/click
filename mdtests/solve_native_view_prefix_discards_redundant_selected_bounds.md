@@ -48,9 +48,9 @@ void prefix(const uint8* p, uint64 held) {
  views p[0u64..held];
  ensures viewable(p[0u64..1u64]);
 } by {
- have viewable(p[0u64..held]) by solve();
- have viewable(p[0u64..1u64]) by solve();
- step_until(function.exit); known();
+ have viewable(p[0u64..held]) by close();
+ have viewable(p[0u64..1u64]) by close();
+ step_until(function.exit); close();
 }
 ```
 

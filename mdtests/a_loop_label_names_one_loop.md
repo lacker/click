@@ -34,7 +34,7 @@ int32 two(int32 i, int32 n, int32 j) {
         invariant 0 <= j and j <= 5;
     }
     step();
-    solve();
+    close();
 }
 ```
 

@@ -21,7 +21,7 @@ void set_at(int32* p, const struct S* s, uint64 i, int32 v) {
     requires i < s->e.n;
     ensures forall (k: uint64) { k < s->e.n implies p[k] == old(p[k]) };
 } by {
-    have 0u64 <= i by { known(); }
+    have 0u64 <= i by { close(); }
     have contains(memory(p[0u64..s->e.n]), memory(p[i])) by {
         apply(click::separation::contains_element(p, 0u64, s->e.n, i));
     }

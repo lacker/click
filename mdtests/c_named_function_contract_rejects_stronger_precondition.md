@@ -50,7 +50,7 @@ int32 apply_step(int32 (*callback)(int32), int32 input) {
 theorem proposed_increment_from_ten_contract() {
     ensures PositiveStep(&increment_from_ten) by {
         unfold(PositiveStep(&increment_from_ten));
-        solve();
+        close();
     }
 }
 

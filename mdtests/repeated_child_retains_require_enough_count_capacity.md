@@ -65,7 +65,7 @@ void retain_many(struct child* obj) {
     step(child_retain);
     step(child_retain);
     step();
-    solve();
+    close();
 }
 ```
 

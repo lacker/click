@@ -16,9 +16,9 @@ theorem continuation(xs: Chain) {
             Chain::Nil => {}
             Chain::Link(tail) => { apply(ih(tail)); }
         }
-        have xs == xs by known();
+        have xs == xs by close();
         unfold(copy_chain(xs));
-        solve();
+        close();
     }
 }
 ```

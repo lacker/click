@@ -16,7 +16,7 @@ theorem icount_of_an_empty_range(p: int32[], lo: int32, hi: int32, x: int32) {
     requires hi >= 0 and viewable(p[lo..hi]);
     ensures icount(p, lo, hi, x) == 0 by {
         unfold(icount(p, lo, hi, x));
-        solve();
+        close();
     }
 }
 ```

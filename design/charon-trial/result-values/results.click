@@ -52,7 +52,7 @@ fn result_values::must(r: Result<u32, u8>) -> u32 {
     ensures result == (match r { Result::Ok(v) => v, Result::Err(e) => 0u32 });
 }
 
-// A caller that knows the payload meets the requirement: `solve` takes the
+// A caller that knows the payload meets the requirement: `close()` takes the
 // payload of the constructor it knows as the witness.
 fn result_values::must_say(r: Result<u32, u8>) -> u32 {
     requires r == Result<u32, u8>::Ok(5u32);

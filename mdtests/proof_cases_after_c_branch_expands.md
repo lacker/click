@@ -55,11 +55,11 @@ int use_pick(int x) {
     have result == 18 by {
         cases {
             result == 18 => {
-                solve();
+                close();
             }
             result == -1 => {
                 have result < 0 by {
-                    solve();
+                    close();
                 }
                 contradiction(result < 0);
             }

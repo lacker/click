@@ -14,12 +14,12 @@ int32 reuse_name(int32 n) {
     step_until(function.exit);
     if result == n {
         let k = obtain(exists (k: int32) { k < n });
-        have k < n by known();
+        have k < n by close();
     } else {
     }
     let k = obtain(exists (k: int32) { k < n });
     witness(k);
-    solve();
+    close();
 }
 ```
 

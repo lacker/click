@@ -516,7 +516,7 @@ mod tests {
                 fn signed(words: &[i32; {length}]) -> i32 {{
                     views words[0..{length}];
                     ensures result == {expected};
-                }} by {{ step_until(function.exit); solve(); }}"#
+                }} by {{ step_until(function.exit); close(); }}"#
             );
             let prepared = crate::languages::rust::import::prepared_for_test(export).unwrap();
             let claim = "signed.contract";

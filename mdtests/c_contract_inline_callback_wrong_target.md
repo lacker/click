@@ -15,7 +15,7 @@ contract int32 One() { ensures result == 1; }
 int32 one() { ensures result == 1; } by { step_until(function.exit); normalize(); }
 int32 two() { ensures result == 2; } by { step_until(function.exit); normalize(); }
 theorem one_contract() {
-    ensures One(&one) by { unfold(One(&one)); solve(); }
+    ensures One(&one) by { unfold(One(&one)); close(); }
 }
 resource callback_table(p: const struct callbacks*) {
     views p->run;

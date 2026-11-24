@@ -5,7 +5,7 @@ theorem needs_nonnegative(x: int32) {
     requires x >= 0;
 
     ensures x >= 0 by {
-        known();
+        close();
     }
 }
 
@@ -14,7 +14,7 @@ theorem positive_premise(x: int32) {
 
     ensures x >= 0 by {
         apply(needs_nonnegative(x));
-        known();
+        close();
     }
 }
 ```

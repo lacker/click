@@ -6,11 +6,11 @@ theorem bound_names(x: int32) {
     ensures forall (k: int32) { k == x } by {
         let k = obtain(exists (k: int32) { k == x });
         intro();
-        known();
+        close();
     }
 }
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: could not establish `k == x`
 ```

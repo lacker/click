@@ -21,7 +21,7 @@ void lifecycle() { ensures 1 == 1; } by {
     fold(authority(slot(&pool, _)));
     fold(slot(&pool, &member));
     step();
-    have count(slot(&pool, _)) == 0 by solve();
+    have count(slot(&pool, _)) == 0 by close();
     unfold(slot(&pool, &member));
     unfold(authority(slot(&pool, _)));
 }

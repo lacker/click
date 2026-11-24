@@ -19,7 +19,7 @@ void mutate(int32* p) { owns item(p); } by {
     unfold(item(p));
     step_until(function.exit);
     fold(item(p));
-    solve();
+    close();
 }
 int32 observe(int32* p, int32* q) {
     views *q;

@@ -45,11 +45,11 @@ void box_release(struct box* box, struct box* other, int32* q) {
     views q[0..1];
 } by {
     unfold(boxed(box));
-    have separate(memory(((box->data as (void *)) as (uint8 *))[0..4]), memory(q[0..1])) by { solve(); }
+    have separate(memory(((box->data as (void *)) as (uint8 *))[0..4]), memory(q[0..1])) by { close(); }
     fold(boxed(box));
     step() {
-        requires separate(memory((box as (int32 *))[0..2]), memory((q as (int32 *))[0..1])) by { solve(); }
-        requires separate(memory(((box->data as (void *)) as (uint8 *))[0..4]), memory(q[0..1])) by { known(); }
+        requires separate(memory((box as (int32 *))[0..2]), memory((q as (int32 *))[0..1])) by { close(); }
+        requires separate(memory(((box->data as (void *)) as (uint8 *))[0..4]), memory(q[0..1])) by { close(); }
     }
 }
 void aliased(struct box* box, struct box* other) {

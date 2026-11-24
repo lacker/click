@@ -3,10 +3,10 @@
 ```click
 theorem consequent_unknown(a: int32, b: int32) {
     requires b >= 0;
-    ensures a > 3 implies b > 0 by { known(); }
+    ensures a > 3 implies b > 0 by { close(); }
 }
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: could not establish `a > 3 implies b > 0`
 ```

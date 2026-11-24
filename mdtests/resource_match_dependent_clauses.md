@@ -33,11 +33,11 @@ int32 unchanged(int32* occupied, int32 capacity) {
 } by {
     match part.tag {
         PrefixTag::End(prefix) => {
-            have 0 <= prefix by known();
-            have prefix <= capacity by known();
+            have 0 <= prefix by close();
+            have prefix <= capacity by close();
             have forall (k: int32) {
                 0 <= k and k < prefix implies occupied[k] == 1
-            } by { known(); }
+            } by { close(); }
             have forall (i: int32) {
                 0 <= i and i < prefix implies occupied[i] == 1
             } by {
@@ -46,14 +46,14 @@ int32 unchanged(int32* occupied, int32 capacity) {
                 instantiate(forall (k: int32) {
                     0 <= k and k < prefix implies occupied[k] == 1
                 }, i);
-                known();
+                close();
             }
             unfold(part);
             let part = fold(partition(occupied, capacity), {
                 tag: PrefixTag::End(prefix)
             });
             step();
-            solve();
+            close();
         },
     }
 }

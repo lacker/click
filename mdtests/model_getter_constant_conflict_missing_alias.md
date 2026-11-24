@@ -9,7 +9,7 @@ function pending(w: Walk) -> int32 { match w { Walk::Active => 1, Walk::Done => 
 theorem conflicting_aliases(a: Walk, b: Walk, flag: int32) {
     requires pending(a) == 1;
     requires pending(b) == 0;
-    ensures flag == 42 by { solve(); }
+    ensures flag == 42 by { close(); }
 }
 ```
 

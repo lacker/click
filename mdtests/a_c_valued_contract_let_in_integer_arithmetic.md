@@ -25,7 +25,7 @@ void grow(struct box* b) {
 } by {
     step();
     step();
-    solve();
+    close();
 }
 ```
 

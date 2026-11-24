@@ -38,14 +38,14 @@ void bump(struct object *obj) {
         let grown = fold(control(obj), { refs: obj->refs });
         step(pthread_mutex_unlock, { access: access, guard: guard, state: grown });
         step();
-        solve();
+        close();
     } else {
         step();
         step();
         let same = fold(control(obj), { refs: obj->refs });
         step(pthread_mutex_unlock, { access: access, guard: guard, state: same });
         step();
-        solve();
+        close();
     }
 }
 ```

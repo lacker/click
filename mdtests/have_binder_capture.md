@@ -26,9 +26,9 @@ int32 bad(int32 x) {
                 intro();
                 have forall (w: int32) { w == 5 } by {
                     intro();
-                    known();
+                    close();
                 }
-                known();
+                close();
             }
             have x == 5 by {
                 have 5 == 5;
@@ -42,9 +42,9 @@ int32 bad(int32 x) {
                     forall (z: int32) { z == 5 },
                     x
                 );
-                known();
+                close();
             }
-            known();
+            close();
         }
         maintain by {
             have forall (u: int32) {
@@ -54,9 +54,9 @@ int32 bad(int32 x) {
                 intro();
                 have forall (w: int32) { w == 5 } by {
                     intro();
-                    known();
+                    close();
                 }
-                known();
+                close();
             }
             have x == 5 by {
                 have 5 == 5;
@@ -70,16 +70,16 @@ int32 bad(int32 x) {
                     forall (z: int32) { z == 5 },
                     x
                 );
-                known();
+                close();
             }
-            known();
+            close();
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 
 ```expect
-fail: have body tactic 2: `known` requires the current goal as an available semantic fact
+fail: could not establish `w == 5`
 ```

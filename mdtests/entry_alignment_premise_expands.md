@@ -2,7 +2,7 @@
 
 This is `arena_init` from `examples/arena`, its C unchanged, with only the
 resources its own contract names. `consumes *arena` gives the
-function-entry fact `aligned(arena, 8)`. Expanding the `solve()` that closes
+function-entry fact `aligned(arena, 8)`. Expanding the `close()` that closes
 the loop's `maintain` proof once cited that fact as a premise read at
 function entry.
 
@@ -157,7 +157,7 @@ int32 arena_init(struct arena* arena, int32 capacity) {
                 result
             ));
             fold(arena_init_result(arena, result));
-            solve();
+            close();
         }
         false => {}
     }
@@ -177,28 +177,7 @@ int32 arena_init(struct arena* arena, int32 capacity) {
                 result
             ));
             fold(arena_init_result(arena, result));
-            solve();
-        }
-        false => {}
-    }
-    step();
-    branch {
-        true => {
-            step();
-            fold(arena_initialized_storage(
-                arena->data,
-                arena->occupied,
-                arena->capacity,
-                result
-            ));
-            fold(arena_initialized_access(
-                arena->data,
-                arena->occupied,
-                arena->capacity,
-                result
-            ));
-            fold(arena_init_result(arena, result));
-            solve();
+            close();
         }
         false => {}
     }
@@ -206,6 +185,27 @@ int32 arena_init(struct arena* arena, int32 capacity) {
     branch {
         true => {
             step();
+            fold(arena_initialized_storage(
+                arena->data,
+                arena->occupied,
+                arena->capacity,
+                result
+            ));
+            fold(arena_initialized_access(
+                arena->data,
+                arena->occupied,
+                arena->capacity,
+                result
+            ));
+            fold(arena_init_result(arena, result));
+            close();
+        }
+        false => {}
+    }
+    step();
+    branch {
+        true => {
+            step();
             step();
             fold(arena_initialized_storage(
                 arena->data,
@@ -220,7 +220,7 @@ int32 arena_init(struct arena* arena, int32 capacity) {
                 result
             ));
             fold(arena_init_result(arena, result));
-            solve();
+            close();
         }
         false => {}
     }
@@ -243,7 +243,7 @@ int32 arena_init(struct arena* arena, int32 capacity) {
         };
         owns occupied[0..capacity];
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             mark iteration;
             step();
@@ -264,7 +264,7 @@ int32 arena_init(struct arena* arena, int32 capacity) {
                     capacity <= 536870911;
                 };
             }
-            solve();
+            close();
         }
     }
     have i == capacity;
@@ -277,7 +277,7 @@ int32 arena_init(struct arena* arena, int32 capacity) {
         instantiate(forall (j: int32) {
             0 <= j and j < i implies occupied[j] == 0
         }, k);
-        known();
+        close();
     }
     step();
     step();
@@ -288,19 +288,19 @@ int32 arena_init(struct arena* arena, int32 capacity) {
         intro();
         intro();
         have k < capacity by {
-            known();
+            close();
         }
         instantiate(forall (j: int32) {
             0 <= j and j < capacity implies occupied[j] == 0
         }, k);
-        known();
+        close();
     }
     step();
     have result == 1 by {
-        solve();
+        close();
     }
     have result == 0 or result == 1 by {
-        known();
+        close();
     }
     have forall (k: int32) {
         result == 1 and 0 <= k and k < arena->capacity implies
@@ -311,7 +311,7 @@ int32 arena_init(struct arena* arena, int32 capacity) {
         instantiate(forall (j: int32) {
             0 <= j and j < arena->capacity implies arena->occupied[j] == 0
         }, k);
-        known();
+        close();
     }
     fold(arena_initialized_storage(
         arena->data,
@@ -326,10 +326,10 @@ int32 arena_init(struct arena* arena, int32 capacity) {
         result
     ));
     fold(arena_init_result(arena, result));
-    known();
-    known();
-    known();
-    known();
+    close();
+    close();
+    close();
+    close();
 }
 
 ```

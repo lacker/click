@@ -24,7 +24,7 @@ void bump(struct counter* c) {
     step();
     step();
     have to_integer(old(c->count)) + 1 <= to_integer(old(c->limit)) - 1 by {
-        known();
+        close();
     }
 }
 ```

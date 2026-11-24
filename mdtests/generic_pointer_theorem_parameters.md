@@ -4,7 +4,7 @@
 import click::separation;
 
 theorem pointer_identity<T>(p: T*) {
-    ensures p == p by { solve(); }
+    ensures p == p by { close(); }
 }
 
 theorem nested<T>(p: T*, lo: int32, hi: int32, a: int32, b: int32) {

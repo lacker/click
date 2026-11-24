@@ -3,7 +3,7 @@
 ```click
 theorem different_values(a: int32*, b: int32*) {
     requires a != b;
-    ensures address(a) != address(b) by { known(); }
+    ensures address(a) != address(b) by { close(); }
 }
 ```
 

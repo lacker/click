@@ -49,7 +49,7 @@ resource context(p: struct node*, root: struct root*) { field model: Context; ma
 void helper(struct node *p, struct node *q, struct root *root) {
  consumes before: context(p, root);
  produces after: context(q, root);
-} by { match before.model { Context::Top => { unfold(before); step_until(function.exit); let after = fold(context(q, root), {model: Context::Top}); solve(); } } }
+} by { match before.model { Context::Top => { unfold(before); step_until(function.exit); let after = fold(context(q, root), {model: Context::Top}); close(); } } }
 void probe(struct node *p, struct root *root) {
  owns p->tag; owns p->right;
  consumes b: shell(p->right); consumes c: context(p, root);
@@ -59,23 +59,23 @@ void probe(struct node *p, struct root *root) {
  match bm { Branch::At(nid, lm) => {
  match lm { Leaf::At(rid) => {
   let {child: near_tree} = unfold(b);
-  have p->right == sid by { known(); }
+  have p->right == sid by { close(); }
   step(); step(); step(); step(); step(); step();
   let { after: c } = step(helper, { before: c });
   step();
   let {child: far_tree} = unfold(near_tree);
-  have cursor == nid by { known(); }
+  have cursor == nid by { close(); }
   step();
   unfold(far_tree);
-  have near == rid by { known(); }
-  have rid->left == 0 by { known(); }
-  have separate(memory(rid->left), memory(nid->left)) by { known(); }
-  have separate(memory(nid->right), memory(rid->right)) by { known(); }
-  have nid->right == 0 by { known(); }
+  have near == rid by { close(); }
+  have rid->left == 0 by { close(); }
+  have separate(memory(rid->left), memory(nid->left)) by { close(); }
+  have separate(memory(nid->right), memory(rid->right)) by { close(); }
+  have nid->right == 0 by { close(); }
   have separate(memory(cursor->left), memory(rid->left)) by {
-   rewrite(cursor, nid); known();
+   rewrite(cursor, nid); close();
   }
-  have separate(memory(cursor->left), memory(nid->right)) by { known(); }
+  have separate(memory(cursor->left), memory(nid->right)) by { close(); }
   mark before_detach;
   step();
   have separate(statement(7).footprint, memory(rid->left)) by {
@@ -84,39 +84,39 @@ void probe(struct node *p, struct root *root) {
   have rid->left == at(before_detach, rid->left) by {
    preserve(memory(rid->left), statement(7));
   }
-  have rid->left == 0 by { rewrite(rid->left, at(before_detach, rid->left)); known(); }
+  have rid->left == 0 by { rewrite(rid->left, at(before_detach, rid->left)); close(); }
   have separate(statement(7).footprint, memory(nid->right)) by {
    normalize() using { separate(memory(cursor->left), memory(nid->right)); };
   }
   have nid->right == at(before_detach, nid->right) by {
    preserve(memory(nid->right), statement(7));
   }
-  have nid->right == 0 by { rewrite(nid->right, at(before_detach, nid->right)); known(); }
+  have nid->right == 0 by { rewrite(nid->right, at(before_detach, nid->right)); close(); }
   have separate(memory(rid->left), memory(near->right)) by {
    rewrite(near, rid); normalize();
   }
   have separate(memory(nid->right), memory(near->right)) by {
-   rewrite(near, rid); known();
+   rewrite(near, rid); close();
   }
   mark before_attach;
   step();
-  have near->right == cursor by { known(); }
-  have rid->right == cursor by { rewrite(rid, near); known(); }
+  have near->right == cursor by { close(); }
+  have rid->right == cursor by { rewrite(rid, near); close(); }
   have separate(statement(8).footprint, memory(rid->left)) by {
    normalize() using { separate(memory(rid->left), memory(near->right)); };
   }
   have rid->left == at(before_attach, rid->left) by {
    preserve(memory(rid->left), statement(8));
   }
-  have rid->left == 0 by { rewrite(rid->left, at(before_attach, rid->left)); known(); }
+  have rid->left == 0 by { rewrite(rid->left, at(before_attach, rid->left)); close(); }
   have separate(statement(8).footprint, memory(nid->right)) by {
    normalize() using { separate(memory(nid->right), memory(near->right)); };
   }
   have nid->right == at(before_attach, nid->right) by {
    preserve(memory(nid->right), statement(8));
   }
-  have nid->right == 0 by { rewrite(nid->right, at(before_attach, nid->right)); known(); }
-  step_until(function.exit); solve();
+  have nid->right == 0 by { rewrite(nid->right, at(before_attach, nid->right)); close(); }
+  step_until(function.exit); close();
  } }
  } }
  } }

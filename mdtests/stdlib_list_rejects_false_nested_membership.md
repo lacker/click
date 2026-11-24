@@ -7,7 +7,7 @@ theorem false_member() {
         unfold(list::contains(List<List<int32>>::Cons(List<int32>::Nil, List<List<int32>>::Nil),
                              List<int32>::Cons(1, List<int32>::Nil)));
         unfold(list::contains(List<List<int32>>::Nil, List<int32>::Cons(1, List<int32>::Nil)));
-        solve();
+        close();
     }
 }
 ```

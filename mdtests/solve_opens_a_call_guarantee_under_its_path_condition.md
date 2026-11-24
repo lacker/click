@@ -53,10 +53,10 @@ int32 use_probe(int32 *cell) {
     if program::r == 0 {
         have cell[0] == 0 and cell[1] == at(before_probe, cell[0]);
         step_until(function.exit);
-        solve();
+        close();
     } else {
         step_until(function.exit);
-        solve();
+        close();
     }
 }
 ```

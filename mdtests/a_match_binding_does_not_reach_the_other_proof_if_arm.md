@@ -25,15 +25,15 @@ int read(int* p) {
 } by {
     if (p[0] > 0) {
         match c.model {
-            Tri::Zero => { step_until(function.exit); solve(); },
-            Tri::One => { step_until(function.exit); solve(); },
-            Tri::Other(v) => { step_until(function.exit); solve(); },
+            Tri::Zero => { step_until(function.exit); close(); },
+            Tri::One => { step_until(function.exit); close(); },
+            Tri::Other(v) => { step_until(function.exit); close(); },
         }
     } else {
         match c.model {
-            Tri::Zero => { step_until(function.exit); solve(); },
-            Tri::One => { step_until(function.exit); solve(); },
-            Tri::Other(w) => { have v == v by solve(); step_until(function.exit); solve(); },
+            Tri::Zero => { step_until(function.exit); close(); },
+            Tri::One => { step_until(function.exit); close(); },
+            Tri::Other(w) => { have v == v by close(); step_until(function.exit); close(); },
         }
     }
 }

@@ -9,13 +9,13 @@ bool money_range(const int64& value) {
     if value >= 0i64 {
         if value <= 2100000000000000i64 {
             step_until(function.exit);
-            solve();
+            close();
         } else {
             step_until(function.exit);
-            solve();
+            close();
         }
     } else {
         step_until(function.exit);
-        solve();
+        close();
     }
 }

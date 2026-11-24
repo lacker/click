@@ -27,7 +27,7 @@ int read(int* p) {
         Tri::One => { have old(c.model) == Tri::One; },
         Tri::Other(value) => { have old(c.model) == Tri::Other(value); },
     }
-    solve();
+    close();
 }
 ```
 

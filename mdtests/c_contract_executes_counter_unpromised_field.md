@@ -23,9 +23,9 @@ theorem lift(callback: int32 (*)()) executes callback() {
     requires Exact(callback);
     ensures Progress(callback) as { cell: k } by {
         step(Exact, { cell: k });
-        have k.revision == old(k.revision) + 1 by known();
+        have k.revision == old(k.revision) + 1 by close();
         have old(k.revision) < old(k.revision) + 1;
-        solve();
+        close();
     }
 }
 verifying "counter.c";

@@ -20,7 +20,7 @@ theorem rewritten(p: Packet) {
         Packet::Full(n) => Output::Value(n),
     }) == Output::Value(7) by {
         rewrite(p, Packet::Full(7));
-        solve();
+        close();
     }
 }
 
@@ -31,7 +31,7 @@ theorem rewritten_symbolic(p: Packet, value: int32) {
         Packet::Full(n) => Output::Value(n),
     }) == Output::Value(value) by {
         rewrite(p, Packet::Full(value));
-        solve();
+        close();
     }
 }
 spec enum WidePacket { Full(uint64) }
@@ -43,7 +43,7 @@ theorem rewritten_wide(p: WidePacket, value: uint64) {
         WidePacket::Full(n) => WideOutput::Value(n),
     }) == WideOutput::Value(value) by {
         rewrite(p, WidePacket::Full(value));
-        solve();
+        close();
     }
 }
 
@@ -55,7 +55,7 @@ theorem rewritten_tag(p: WidePacket, value: uint64) {
         WidePacket::Full(n) => TaggedOutput::Value(n, 7u64),
     }) == TaggedOutput::Value(value, 7u64) by {
         rewrite(p, WidePacket::Full(value));
-        solve();
+        close();
     }
 }
 
@@ -65,7 +65,7 @@ theorem rewritten_capture(p: WidePacket, value: uint64, other: uint64) {
         WidePacket::Full(n) => TaggedOutput::Value(n, other),
     }) == TaggedOutput::Value(value, other) by {
         rewrite(p, WidePacket::Full(value));
-        solve();
+        close();
     }
 }
 
@@ -77,7 +77,7 @@ theorem rewritten_bool_tag(p: WidePacket, value: uint64) {
         WidePacket::Full(n) => BoolOutput::Value(n, true),
     }) == BoolOutput::Value(value, true) by {
         rewrite(p, WidePacket::Full(value));
-        solve();
+        close();
     }
 }
 
@@ -90,7 +90,7 @@ theorem rewritten_bool_field(p: BoolPacket, flag: Bool) {
         BoolPacket::Full(b) => Flag::Value(b),
     }) == Flag::Value(flag) by {
         rewrite(p, BoolPacket::Full(flag));
-        solve();
+        close();
     }
 }
 
@@ -100,7 +100,7 @@ theorem rewritten_bool_literal(p: BoolPacket) {
         BoolPacket::Full(b) => Flag::Value(b),
     }) == Flag::Value(true) by {
         rewrite(p, BoolPacket::Full(true));
-        solve();
+        close();
     }
 }
 
@@ -110,7 +110,7 @@ theorem rewritten_bool_capture(p: WidePacket, value: uint64, flag: Bool) {
         WidePacket::Full(n) => BoolOutput::Value(n, flag),
     }) == BoolOutput::Value(value, flag) by {
         rewrite(p, WidePacket::Full(value));
-        solve();
+        close();
     }
 }
 
@@ -124,7 +124,7 @@ theorem rewritten_algebraic_field(p: BoxPacket, value: Box, other: Box) {
         BoxPacket::Full(x) => BoxOutput::Item(x),
     }) == BoxOutput::Item(value) by {
         rewrite(p, BoxPacket::Full(value));
-        solve();
+        close();
     }
 }
 
@@ -136,7 +136,7 @@ theorem rewritten_algebraic_capture(p: WidePacket, value: uint64, captured: Box,
         WidePacket::Full(x) => BoxCapture::Item(x, captured),
     }) == BoxCapture::Item(value, captured) by {
         rewrite(p, WidePacket::Full(value));
-        solve();
+        close();
     }
 }
 
@@ -150,7 +150,7 @@ theorem rewritten_nullary_field(p: ColorPacket) {
         ColorPacket::Full(x) => ColorOutput::Item(x),
     }) == ColorOutput::Item(Color::Red) by {
         rewrite(p, ColorPacket::Full(Color::Red));
-        solve();
+        close();
     }
 }
 
@@ -162,7 +162,7 @@ theorem rewritten_nullary_tag(p: WidePacket, value: uint64) {
         WidePacket::Full(x) => ColorTag::Item(x, Color::Red),
     }) == ColorTag::Item(value, Color::Red) by {
         rewrite(p, WidePacket::Full(value));
-        solve();
+        close();
     }
 }
 ```

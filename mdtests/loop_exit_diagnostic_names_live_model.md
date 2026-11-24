@@ -35,7 +35,7 @@ void walk(int32 n) {
         decreases n;
         invariant n >= 0;
         invariant state.model == Walk::Active;
-        initialize by solve();
+        initialize by close();
         maintain by {
             let { done: intermediate } = stop({ dirty: state });
             let { done: state } = stop({ dirty: intermediate });
@@ -43,8 +43,8 @@ void walk(int32 n) {
         }
     }
     step();
-    have not (n > 0) or pending(state.model) == 2 by known();
-    solve();
+    have not (n > 0) or pending(state.model) == 2 by close();
+    close();
 }
 ```
 

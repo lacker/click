@@ -40,7 +40,7 @@ void copy_across(struct pair *p) {
     let copied = fold(cell(p), { v: p->b });
     step(pthread_mutex_unlock, { access: access, guard: guard, state: copied });
     step();
-    solve();
+    close();
 }
 ```
 

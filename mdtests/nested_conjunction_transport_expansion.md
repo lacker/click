@@ -31,7 +31,7 @@ void keep(int32* p, int32* q, int32* r, int32* s) {
         transport(at(statement(0).entry, *q == 7 and (*r == 8 and *s == 9)), *q == 7 and (*r == 8 and *s == 9));
     }
     step();
-    known();
+    close();
 }
 ```
 

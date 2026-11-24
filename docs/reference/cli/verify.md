@@ -94,7 +94,7 @@ A C parsing stop at the whole-run work budget reports `work limit reached`.
 The report identifies the budget and parsing phase. Audit reports use the
 same error kind.
 
-A `solve` that exhausts its own work budget reports `unsuccessful search` and
+A `close()` that exhausts its own work budget reports `unsuccessful search` and
 retains its already-checked prefix, including
 accepted steps inside nested `have` blocks and loop bodies. An unfinished
 claim contributes no accepted fact to that trace.
@@ -179,7 +179,7 @@ Verification reports use these headings:
 | Heading | When Click uses it |
 | --- | --- |
 | `tactic error` | Click refused a written tactic or an implicit proof step. For example, `step()` found no statement left or lacked evidence that a store was in bounds. |
-| `unsuccessful search` | A proof search ran and could not close a goal, for example a written `solve()` or a statement’s implicit closer. |
+| `unsuccessful search` | A proof search ran and could not close a goal, for example a written `close()` or a statement’s implicit closer. |
 | `incomplete proof` | The proof ended with a requirement outstanding, such as a resource the contract promises to return. |
 | `contract error` | Click identified a rule it believes the written contract violates, such as a potentially overflowing resource endpoint or a proven overlap between owned entry resources or between an owned resource and an input view. |
 | `unsupported` | Click detected a documented limitation with a path to supporting it. The diagnostic identifies the unsupported case. |
@@ -285,7 +285,7 @@ ordinary proof goals; they are pending obligations, not established facts.
 Return-fold certification refusals print the exact rejected path fact using
 that same format. Their traces retain the available checked prefix and label
 it as a certification failure, rather than an accepted path.
-Call requirements use the same direct AND/OR rule as `known()`: every
+Call requirements use the same direct AND/OR rule as `close()`: every
 conjunct must hold, and one known disjunct suffices. Atomic equalities use the
 scoped equality graph. This checks the goal's structure and indexed evidence;
 it does not unfold definitions or search for implication premises. An unknown
@@ -296,7 +296,7 @@ allowed by that resource body. These facts use the shared proposition printer
 and the report's memory legend. Up to twelve allowed facts are displayed;
 any further entries are explicitly counted. This comparison is diagnostic
 only and does not turn the rejected proposition into an assumption.
-An `known()` failure on an existential goal suggests the
+An `close()` failure on an existential goal suggests the
 `witness(value)` tactic. A trace reports facts introduced into the
 focused proof context and changes to exact resource representations, using
 Click syntax where it represents the checked fact. It follows only the

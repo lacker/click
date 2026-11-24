@@ -7,7 +7,7 @@ the second fact runs the wrong way, so no chain reaches the goal.
 theorem broken(a: uint64, b: uint64, c: uint64) {
     requires a < b;
     requires c <= b;
-    ensures a < c by { solve(); }
+    ensures a < c by { close(); }
 }
 ```
 

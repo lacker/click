@@ -15,7 +15,7 @@ contract const int *Readable(const int *p) {
 }
 theorem lift(callback: const int* (*)(const int*)) executes callback(const int* p) {
     requires Exact(callback);
-    ensures Readable(callback) by { step(Exact); solve(); }
+    ensures Readable(callback) by { step(Exact); close(); }
 }
 verifying "main.c";
 int read_view(const int *(*f)(const int *), const int *p) {

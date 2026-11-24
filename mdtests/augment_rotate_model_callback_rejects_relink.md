@@ -147,11 +147,11 @@ struct node* rotate_left(
             // Carry the untouched link reads across each store before folding.
             step_until(statement(2).entry);
             have defined(node->left) by { normalize(); }
-            have separate(memory(node->left), memory(node->right)) by { known(); }
+            have separate(memory(node->left), memory(node->right)) by { close(); }
             have defined(pivot->right) by { normalize(); }
-            have separate(memory(pivot->right), memory(node->right)) by { known(); }
-            have node->left == old(node->left) by known();
-            have pivot->right == old(node->right->right) by known();
+            have separate(memory(pivot->right), memory(node->right)) by { close(); }
+            have node->left == old(node->left) by close();
+            have pivot->right == old(node->right->right) by close();
             mark before_right;
             step_until(statement(3).entry);
             have separate(statement(2).footprint, memory(node->left)) by {
@@ -165,13 +165,13 @@ struct node* rotate_left(
             have defined(pivot->right) by { preserve(memory(pivot->right), statement(2)); }
             have pivot->right == at(before_right, pivot->right) by { preserve(memory(pivot->right), statement(2)); }
 
-            have separate(memory(node->left), memory(pivot->left)) by { known(); }
+            have separate(memory(node->left), memory(pivot->left)) by { close(); }
             have defined(node->right) by { normalize(); }
             have node->right == middle by { normalize(); }
-            have middle == old(node->right->left) by { solve(); }
-            have separate(memory(node->right), memory(pivot->left)) by { known(); }
+            have middle == old(node->right->left) by { close(); }
+            have separate(memory(node->right), memory(pivot->left)) by { close(); }
             have defined(pivot->right) by { normalize(); }
-            have separate(memory(pivot->right), memory(pivot->left)) by { known(); }
+            have separate(memory(pivot->right), memory(pivot->left)) by { close(); }
             mark before_left;
             step_until(statement(4).entry);
             have separate(statement(3).footprint, memory(node->left)) by {
@@ -185,7 +185,7 @@ struct node* rotate_left(
             have node->right == at(before_left, node->right) by { preserve(memory(node->right), statement(3)); }
             have node->right == middle by {
                 rewrite(node->right, at(before_left, node->right));
-                known();
+                close();
             }
             have pivot->left == node by { normalize(); }
             have separate(statement(3).footprint, memory(pivot->right)) by {
@@ -197,17 +197,17 @@ struct node* rotate_left(
             have node->left == old(node->left) by {
                 rewrite(node->left, at(before_left, node->left));
                 rewrite(at(before_left, node->left), at(before_right, node->left));
-                known();
+                close();
             }
             have node->right == old(node->right->left) by {
                 rewrite(node->right, middle);
-                known();
+                close();
             }
             have pivot->right == at(before_left, pivot->right) by { preserve(memory(pivot->right), statement(3)); }
             have pivot->right == old(node->right->right) by {
                 rewrite(pivot->right, at(before_left, pivot->right));
                 rewrite(at(before_left, pivot->right), at(before_right, pivot->right));
-                known();
+                close();
             }
             let lower = fold(tree_at(node), {
                 model: Shape::Node(node, l.model, m.model),
@@ -233,10 +233,10 @@ struct node* rotate_left(
                 shape_right(old(r.model))) by {
                 rewrite(shape_left(old(r.model)), middle_model);
                 rewrite(shape_right(old(r.model)), far_model);
-                solve();
+                close();
             }
             step();
-            solve();
+            close();
         },
     }
 }
@@ -263,7 +263,7 @@ struct node* rotate_clobber(struct node* node) {
     ensures 0 <= result->augmented;
     ensures result->augmented <= 1000;
 } by {
-    have AugmentRotate(&clobber) by { solve(); }
+    have AugmentRotate(&clobber) by { close(); }
     let { rotated: rotated } = step(rotate_left, { l: a, r: b });
 }
 

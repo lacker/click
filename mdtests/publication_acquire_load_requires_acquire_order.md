@@ -34,7 +34,7 @@ int32 consume(struct channel* channel) diverges {
     unfold(ready_payload(channel));
     step();
     fold(ready_payload(channel));
-    solve();
+    close();
 }
 ```
 

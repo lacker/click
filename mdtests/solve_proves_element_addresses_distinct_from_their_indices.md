@@ -23,7 +23,7 @@ int32 last(int32* q, int32 m) {
     requires 2 <= m and m <= 1000;
     ensures result == 0;
 } by {
-    have &q[m - 1] != &q[0] by solve();
+    have &q[m - 1] != &q[0] by close();
 }
 
 int32 explicit(int32* q, int32 j) {
@@ -31,7 +31,7 @@ int32 explicit(int32* q, int32 j) {
     ensures result == 0;
 } by {
     have &q[j] != &q[0] by {
-        have j != 0 by { known(); }
+        have j != 0 by { close(); }
         apply(click::separation::distinct_elements(q, j, 0));
     }
 }

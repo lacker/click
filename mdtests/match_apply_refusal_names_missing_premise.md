@@ -12,7 +12,7 @@ void put(int32 *p, int32 x) { *p = x; }
 verifying "probe.c";
 spec enum Model { One, Two }
 resource box(p: int32*) { field model: Model; owns *p; }
-theorem zero(x: int32) { requires x == 0; ensures x == 0 by { known(); } }
+theorem zero(x: int32) { requires x == 0; ensures x == 0 by { close(); } }
 void put(int32* p, int32 x) {
     consumes b: box(p);
     requires x == 1;

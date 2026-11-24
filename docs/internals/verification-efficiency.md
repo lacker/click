@@ -346,7 +346,7 @@ Current instances of the rule:
 - A narrow integer read constructs its certified type-range facts directly
   rather than re-proving them by order reasoning.
 - An explicit outcome closer searches once; its failure explanation does not
-  rerun `solve` or the implicit closer. Failed condition-target questions use the
+  rerun `close()` or the implicit closer. Failed condition-target questions use the
   closure-scoped failure memo.
 - Explicit return closers lower the folded claim goal once, and the unfolded
   form only when the proof unfolded a predicate. Consecutive exact return
@@ -1004,7 +1004,7 @@ goal and source. Wider smart fallbacks belong to the slow part and are charged
 to its budget; every successful selection still establishes the goal in the
 restricted kernel context.
 
-Before forming a typed equality, `solve` retains only the sources its
+Before forming a typed equality, `close()` retains only the sources its
 evidence named, and the kernel rebuilds the selected context from them.
 Compatibility evidence that retains a whole connected component can be
 reduced by bounded chunk-deletion trials (at most 255 restricted queries,
@@ -1090,7 +1090,7 @@ routes. There is no defensible defect count. Categories:
 - **Coverage gap:** a path or growth axis has not been measured.
 
 The scope is checking called by `step()`, explicit tactics, certificates,
-entry setup, joins and completion. Arithmetic premise discovery in `solve` or
+entry setup, joins and completion. Arithmetic premise discovery in `close()` or
 the implicit closer is search (budgeted, expandable); applying its
 certificate is checking. Trace printing, expansion audits and debug
 cross-checks are not production scans. An index is not by itself a
@@ -1154,7 +1154,7 @@ coverage.
 **L1, writes under active borrows (scoped evidence).** Pointee and other
 writes return an ordinary separation obligation against a retained descriptor
 of active borrow backing, kept in a persistent identity trie; the driver's
-`solve` proves it with `separate_star`, `separate_symm` or
+`close()` proves it with `separate_star`, `separate_symm` or
 `separate_restrict`. Controls: `one_write_with_a_borrow_does_not_walk_unrelated_aliases`,
 `borrow_access_requirement_is_retained_and_branch_local`. Verified calls
 refuse unnamed write effects under a live memory borrow. The alias-enumerating
@@ -1206,7 +1206,7 @@ cost is not yet traced to its source.
 
 **Arithmetic obligations.** Step preparation retains emitted verification
 conditions and call preconditions, and the driver proves each with a written
-block or `solve`. Executed `uint32`/`uint64` division and remainder retain a
+block or `close()`. Executed `uint32`/`uint64` division and remainder retain a
 nonzero-divisor obligation. Other arithmetic operators still decide some
 safety conditions before emitting an obligation; replacing that needs
 round-trippable goals and flat generation cost.
@@ -1276,7 +1276,7 @@ built-ins. Replay checks `apply(...)` against the facts in scope.
 In test builds, `FastOperationScope` surrounds preparation, publication and
 explicit theorem application, contract-claim opening, and proposition/resource
 scope completion. Claim opening retains its goal without proving separation;
-its explicit proof can apply the exact live-partition rule through `known()`.
+its explicit proof can apply the exact live-partition rule through `close()`.
 Prepared statement/fold publication is guarded independently of obligation
 solving. Every `ProofSearch` method records entry before
 any work, including exact-fact shortcuts; constructing `SearchPermission` also

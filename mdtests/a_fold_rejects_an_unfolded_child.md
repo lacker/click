@@ -35,7 +35,7 @@ int32 read_left(int32* p, int32* lp, int32* rp) {
     unfold(left);
     step_until(function.exit);
     let root = fold(tree(p), { model: old(root.model), left: left, right: right });
-    solve();
+    close();
 }
 ```
 

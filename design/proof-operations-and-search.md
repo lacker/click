@@ -18,7 +18,7 @@ one at a time. The general fast-operation guarantee is not established yet.
 - **Result:** search uses the existing operations and persistent successors.
   There is no second proof state, proof conversion or new validation pass.
 - **Lowering/refusal:** syntax and obligation generation are unchanged.
-  An omitted obligation proof and written `solve()` use the same strategies;
+  An omitted obligation proof and written `close()` use the same strategies;
   explicit solve can now prove the former implicit-only zero-witness case.
 
 ## Implemented split
@@ -79,7 +79,7 @@ For statement obligations:
 
 Obligation generation is intended to be fast; implicit solving is legitimately
 slow and expandable. An omitted obligation proof invokes the same
-`ProofSearch::try_solve_closure` entry point as written `solve()`. The driver
+`ProofSearch::try_solve_closure` entry point as written `close()`. The driver
 provides no private witness heuristic, extra premise list or caller-requirement
 shortcut. Such strategies belong in the shared solver. The implicit tail
 schedules the remaining C and outstanding goals; it is not another solver.

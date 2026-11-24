@@ -14,7 +14,7 @@ theorem arm_operand_owed(s: Step, a: int32, b: int32) {
         Step::Next(x) => x + (a + b),
         Step::Stay(x) => x,
     });
-    ensures 1 == 1 by solve();
+    ensures 1 == 1 by close();
 }
 ```
 

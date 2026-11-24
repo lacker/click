@@ -48,7 +48,7 @@ void clear_data(struct region* region) {
     step();
     step();
     step();
-    have separate(memory(arena->data[0..arena->capacity]), memory(*arena)) by { known(); }
+    have separate(memory(arena->data[0..arena->capacity]), memory(*arena)) by { close(); }
     have contains(memory(arena->data[0..arena->capacity]), memory(arena->data[0..arena->capacity])) by { apply(click::separation::contains_refl(memory(arena->data[0..arena->capacity]))); }
     have contains(memory(*arena), memory(arena->data)) by {
         apply(click::separation::contains_subrange(arena as (int32*), 0, 6, 0, 2));
@@ -74,8 +74,8 @@ void clear_data(struct region* region) {
     have separate(memory(arena->data[0..arena->capacity]), memory((&arena->capacity)[0..1])) by {
         apply(click::separation::separate_restrict(memory(arena->data[0..arena->capacity]), memory(*arena), memory(arena->data[0..arena->capacity]), memory((&arena->capacity)[0..1])));
     }
-    have separate(memory(arena->data[0..arena->capacity]), memory(region->arena)) by { known(); }
-    have separate(memory(arena->data[0..arena->capacity]), memory(region->arena->occupied[0..arena->capacity])) by { known(); }
+    have separate(memory(arena->data[0..arena->capacity]), memory(region->arena)) by { close(); }
+    have separate(memory(arena->data[0..arena->capacity]), memory(region->arena->occupied[0..arena->capacity])) by { close(); }
     loop {
         decreases (arena->capacity - i);
         owns arena->data[0..arena->capacity];
@@ -88,16 +88,16 @@ void clear_data(struct region* region) {
         invariant arena->data == at(loop(0).entry, arena->data);
         invariant 0 <= i and i <= arena->capacity;
         invariant forall (k: int32) { 0 <= k and k < arena->capacity implies region->arena->occupied[k] == old(region->arena->occupied[k]) };
-        initialize by solve();
+        initialize by close();
         maintain by {
             mark opened;
             have contains(memory(arena->data[0..arena->capacity]), memory(arena->data[i])) by {
                 apply(click::separation::contains_element(arena->data, 0, arena->capacity, i));
             }
-            have separate(memory(arena->data[0..arena->capacity]), memory(arena->data)) by { known(); }
-            have separate(memory(arena->data[0..arena->capacity]), memory(region->arena)) by { known(); }
-            have separate(memory(arena->data[0..arena->capacity]), memory(region->arena->occupied)) by { known(); }
-            have separate(memory(arena->data[0..arena->capacity]), memory(region->arena->occupied[0..arena->capacity])) by { known(); }
+            have separate(memory(arena->data[0..arena->capacity]), memory(arena->data)) by { close(); }
+            have separate(memory(arena->data[0..arena->capacity]), memory(region->arena)) by { close(); }
+            have separate(memory(arena->data[0..arena->capacity]), memory(region->arena->occupied)) by { close(); }
+            have separate(memory(arena->data[0..arena->capacity]), memory(region->arena->occupied[0..arena->capacity])) by { close(); }
             have contains(memory(arena->data), memory(arena->data)) by { apply(click::separation::contains_refl(memory(arena->data))); }
             have separate(memory(arena->data[i]), memory(arena->data)) by {
                 apply(click::separation::separate_restrict(memory(arena->data[0..arena->capacity]), memory(arena->data), memory(arena->data[i]), memory(arena->data)));
@@ -110,7 +110,7 @@ void clear_data(struct region* region) {
             have separate(memory(arena->data[i]), memory(region->arena->occupied)) by {
                 apply(click::separation::separate_restrict(memory(arena->data[0..arena->capacity]), memory(region->arena->occupied), memory(arena->data[i]), memory(region->arena->occupied)));
             }
-            have separate(memory(arena->data[0..arena->capacity]), memory((&arena->capacity)[0..1])) by { known(); }
+            have separate(memory(arena->data[0..arena->capacity]), memory((&arena->capacity)[0..1])) by { close(); }
             have contains(memory((&arena->capacity)[0..1]), memory((&arena->capacity)[0..1])) by { apply(click::separation::contains_refl(memory((&arena->capacity)[0..1]))); }
             have separate(memory(arena->data[i]), memory((&arena->capacity)[0..1])) by {
                 apply(click::separation::separate_restrict(memory(arena->data[0..arena->capacity]), memory((&arena->capacity)[0..1]), memory(arena->data[i]), memory((&arena->capacity)[0..1])));
@@ -137,7 +137,7 @@ void clear_data(struct region* region) {
             }
             have region->arena->occupied == at(opened, region->arena->occupied) by {
                 rewrite(region->arena, at(opened, region->arena));
-                known();
+                close();
             }
             // Select the complete int32 cell, excluding the struct's tail padding.
             have separate(loop(0).statement(0).footprint, at(opened, memory((&arena->capacity)[0..1]))) by {
@@ -148,7 +148,7 @@ void clear_data(struct region* region) {
             }
             have forall (k: int32) { 0 <= k and k < arena->capacity implies region->arena->occupied[k] == old(region->arena->occupied[k]) } by {
                 intro(); intro();
-                have k < at(opened, arena->capacity) by { known(); }
+                have k < at(opened, arena->capacity) by { close(); }
                 have contains(at(opened, memory(region->arena->occupied[0..arena->capacity])), at(opened, memory(region->arena->occupied[k]))) by {
                     apply(click::separation::contains_element(at(opened, region->arena->occupied), 0, at(opened, arena->capacity), k));
                 }
@@ -162,7 +162,7 @@ void clear_data(struct region* region) {
                     apply(click::separation::separate_restrict(at(opened, memory(arena->data[i])), at(opened, memory(region->arena->occupied[k])), at(opened, memory(arena->data[i])), at(opened, memory((&region->arena->occupied[k])[0..1]))));
                 }
                 have separate(loop(0).statement(0).footprint, at(opened, memory((&region->arena->occupied[k])[0..1]))) by {
-                    known();
+                    close();
                 }
                 have at(loop(0).statement(0).exit, load<int32>(at(opened, &region->arena->occupied[k])))
                         == at(loop(0).statement(0).entry, load<int32>(at(opened, &region->arena->occupied[k]))) by {
@@ -170,45 +170,45 @@ void clear_data(struct region* region) {
                 }
                 have region->arena->occupied[k] == at(opened, region->arena->occupied[k]) by {
                     rewrite(region->arena->occupied, at(opened, region->arena->occupied));
-                    known();
+                    close();
                 }
                 instantiate(at(opened, forall (j: int32) { 0 <= j and j < arena->capacity implies region->arena->occupied[j] == old(region->arena->occupied[j]) }), k);
-                known();
+                close();
             }
             step();
             have arena->data == at(loop(0).entry, arena->data) by {
                 rewrite(arena->data, at(opened, arena->data));
-                known();
+                close();
             }
             have separate(memory(arena->data[0..arena->capacity]), memory(arena->data)) by {
                 rewrite(arena->data, at(opened, arena->data));
                 rewrite(arena->capacity, at(opened, arena->capacity));
-                known();
+                close();
             }
             have separate(memory(arena->data[0..arena->capacity]), memory(region->arena)) by {
                 rewrite(arena->data, at(opened, arena->data));
                 rewrite(arena->capacity, at(opened, arena->capacity));
-                known();
+                close();
             }
             have separate(memory(arena->data[0..arena->capacity]), memory(region->arena->occupied)) by {
                 rewrite(arena->data, at(opened, arena->data));
                 rewrite(arena->capacity, at(opened, arena->capacity));
                 rewrite(region->arena, at(opened, region->arena));
-                known();
+                close();
             }
             have separate(memory(arena->data[0..arena->capacity]), memory(region->arena->occupied[0..arena->capacity])) by {
                 rewrite(arena->data, at(opened, arena->data));
                 rewrite(arena->capacity, at(opened, arena->capacity));
                 rewrite(region->arena->occupied, at(opened, region->arena->occupied));
-                known();
+                close();
             }
             have separate(memory(arena->data[0..arena->capacity]), memory((&arena->capacity)[0..1])) by {
                 rewrite(arena->data, at(opened, arena->data));
                 rewrite(arena->capacity, at(opened, arena->capacity));
-                known();
+                close();
             }
-            have arena->capacity == at(opened, arena->capacity) by { known(); }
-            have 0 <= at(opened, i) by { known(); }
+            have arena->capacity == at(opened, arena->capacity) by { close(); }
+            have 0 <= at(opened, i) by { close(); }
             have at(opened, i) <= 2147483646 by {
                 close() using { at(opened, i) < at(opened, arena->capacity); };
             }
@@ -233,11 +233,11 @@ void clear_data(struct region* region) {
                     to_integer(i) == to_integer(at(opened, i)) + 1;
                 };
             }
-            solve();
+            close();
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

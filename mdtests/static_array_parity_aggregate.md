@@ -95,14 +95,14 @@ int32 run() {
     requires private_file::increment_private::local_table[0].value == 2 or private_file::increment_private::local_table[0].value == 3;
     ensures result == 5;
 } by {
-    have shared_table[1].value == 2 by solve();
-    have shared_table[1].value < 1000 by solve();
-    have private_file::private_table[1].value == 5 by solve();
-    have private_file::private_table[1].value > -1000 by solve();
-    have private_file::private_table[1].value < 1000 by solve();
-    have private_file::increment_private::local_table[0].value == 2 by solve();
-    have private_file::increment_private::local_table[0].value > -1000 by solve();
-    have private_file::increment_private::local_table[0].value < 1000 by solve();
+    have shared_table[1].value == 2 by close();
+    have shared_table[1].value < 1000 by close();
+    have private_file::private_table[1].value == 5 by close();
+    have private_file::private_table[1].value > -1000 by close();
+    have private_file::private_table[1].value < 1000 by close();
+    have private_file::increment_private::local_table[0].value == 2 by close();
+    have private_file::increment_private::local_table[0].value > -1000 by close();
+    have private_file::increment_private::local_table[0].value < 1000 by close();
 }
 ```
 

@@ -24,7 +24,7 @@ int64 shift64(int64 n, uint64 d) {
 
 theorem unsigned_count_mask(d: uint32) {
     requires d < 32u32;
-    ensures (d & 31u32) == d by known();
+    ensures (d & 31u32) == d by close();
 }
 ```
 

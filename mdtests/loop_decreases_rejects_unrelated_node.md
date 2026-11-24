@@ -65,7 +65,7 @@ void walk(struct tree_node* root, struct tree_node* other) {
         decreases t;
         invariant t.model != HeapTree::Empty;
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             match t.model {
                 HeapTree::Empty => { contradiction(t.model == HeapTree::Empty); },
@@ -75,7 +75,7 @@ void walk(struct tree_node* root, struct tree_node* other) {
             }
         }
     }
-    solve();
+    close();
 }
 ```
 

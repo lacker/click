@@ -3,7 +3,7 @@
 ```click quick-solve
 theorem too_wide(d: uint32) {
     ensures d >> 26u32 < 32u32 by {
-        solve();
+        close();
     }
 }
 ```

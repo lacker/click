@@ -159,7 +159,7 @@ step();
 
 Numeric address inequalities use the same scoped separation evidence. For
 example, `have separate(memory(a->word), memory(b->word))` for their first
-cells supports `have address(a) != address(b) by known();`. An established
+cells supports `have address(a) != address(b) by close();`. An established
 pointer or numeric-address alias carries that conclusion to another form,
 including a pointer loaded from a cell. Explicit nonempty range separation is
 indexed by its two anchor address classes. C comparisons publish their selected

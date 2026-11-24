@@ -19,7 +19,7 @@ void user(struct node* p, struct node* q) {
     ensures separate(memory(p->tag), memory(q->tag));
 } by {
     unfold(a);
-    have separate(memory(p->tag), memory(q->tag)) by known();
+    have separate(memory(p->tag), memory(q->tag)) by close();
 }
 void caller(struct node* p) {
     consumes a: owned(p);

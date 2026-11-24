@@ -14,12 +14,12 @@ theorem lower_bound(x: int32) {
 
     ensures x >= 0 by {
         unfold(small(x));
-        solve();
+        close();
     }
 
     ensures x <= 10 by {
         unfold(small(x));
-        solve();
+        close();
     }
 }
 
@@ -27,7 +27,7 @@ theorem needs_tighter_upper(x: int32) {
     requires x <= 5;
 
     ensures x <= 20 by {
-        solve();
+        close();
     }
 }
 
@@ -37,7 +37,7 @@ theorem a_missing_conclusion_is_not_invented(x: int32) {
     ensures x >= 0 by {
         apply(lower_bound(x));
         apply(needs_tighter_upper(x));
-        known();
+        close();
     }
 }
 ```

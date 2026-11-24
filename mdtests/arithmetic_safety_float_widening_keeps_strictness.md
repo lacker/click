@@ -4,7 +4,7 @@
 theorem strict_bound(x: float) {
     requires x <= float32_from_bits(0x3f800000);
     ensures x as double < float64_from_bits(0x3ff0000000000000) by {
-        solve();
+        close();
     }
 }
 ```

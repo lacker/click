@@ -32,7 +32,7 @@ int32 setup(struct s* p, int32 d[], int32 n) {
     ensures p->d == d;
 } by {
     observe(src(d, n));
-    have separate(memory(*p), memory(d[0..n])) by { solve(); }
+    have separate(memory(*p), memory(d[0..n])) by { close(); }
     have contains(memory(d[0..n]), memory(d[0..n])) by { apply(click::separation::contains_refl(memory(d[0..n]))); }
     have contains(memory(*p), memory(p->a)) by { normalize(); }
     have contains(memory(*p), memory(p->b)) by { normalize(); }
@@ -48,7 +48,7 @@ int32 setup(struct s* p, int32 d[], int32 n) {
     }
     step_until(function.exit);
     fold(box(p));
-    solve();
+    close();
 }
 
 int32 bump(struct s* p) {
@@ -60,7 +60,7 @@ int32 bump(struct s* p) {
     unfold(box(p));
     step_until(function.exit);
     fold(box(p));
-    solve();
+    close();
 }
 
 int32 probe(struct s* p, int32 d[], int32 n) {
@@ -73,12 +73,12 @@ int32 probe(struct s* p, int32 d[], int32 n) {
     step();
     step();
     step();
-    have p->b == n by { known(); }
+    have p->b == n by { close(); }
     step();
     step();
     step();
     step();
-    solve();
+    close();
 }
 ```
 

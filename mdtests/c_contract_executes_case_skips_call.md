@@ -8,9 +8,9 @@ theorem lift(callback: void (*)(int32*, int32)) executes callback(int32* data, i
     requires Raw(callback);
     ensures Buffered(callback) by {
         if count == 0 {
-            solve();
+            close();
         } else {
-            unfold(Buffer(data, count)); step(Raw); fold(Buffer(data, count)); solve();
+            unfold(Buffer(data, count)); step(Raw); fold(Buffer(data, count)); close();
         }
     }
 }

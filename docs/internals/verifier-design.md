@@ -15,7 +15,7 @@ applies simple tactics and certificates. Every proof pays its cost on every
 step, and nothing can remove that cost later.
 
 The **slow part** searches. It is the smart tactics, whose kinds in
-`SmartTacticKind` are `Solve` (written `solve()` and `close() using`),
+`SmartTacticKind` are `Solve` (written `close()` and `close() using`),
 `Arithmetic` (the arithmetic engine alone, whose written form
 `arithmetic() using` the parser now refuses), and `Execute` (`step_until`, and
 the stepping and splitting of the implicit tail that ends every proof script);
@@ -41,7 +41,7 @@ removed, so it has to stay small.
 | Simple tactics | Apply one checked step to a persistent proof state | fast | `src/kernel/proof/object.rs`, `src/surface/proof/proof_object/`, `src/surface/proof/checked_drivers/` |
 | Proof construction | Construct ordinary proof steps and check local arithmetic primitives | fast | `src/kernel/proof/{object,fact_reasoning,arithmetic_special}.rs`, `src/surface/proof_certificate.rs` |
 | Termination | Plan recursion heights over the call graph, then check them | fast | `src/kernel/termination.rs` |
-| Smart tactics | `solve`, `step_until`, the implicit tail and its closer | slow | `src/surface/checking/{arithmetic_engine,simplex}.rs`, `src/surface/proof/{smart_closures,smart_execution,selected_arithmetic}.rs` |
+| Smart tactics | `close()`, `step_until`, the implicit tail and its closer | slow | `src/surface/checking/{arithmetic_engine,simplex}.rs`, `src/surface/proof/{smart_closures,smart_execution,selected_arithmetic}.rs` |
 | Search helpers | Fill an elided premise, fact, resource instance, or guard | slow | `src/kernel/search/proposition_search.rs`, `src/surface/proof/fixed_state_proofs/` |
 | Expansion and printing | Write a slow-part result as fast-part tactics, and print source | tools | `src/surface/expansion.rs`, `src/surface/printing.rs` |
 | Tools and budgets | `profile`, `audit`, traces, work accounting, and budgets | tools | `src/bin/`, `src/instrumentation.rs` |
@@ -287,7 +287,7 @@ can't be written out as explicit tactics isn't allowed in the
 slow part either: then there's no way to remove its cost, which makes it fast
 part, and fast part may not search. [Smart and simple
 tactics](../concepts/smart-and-simple-tactics.md) defines the tactic classes
-including `solve`, `step_until`, the implicit tail and closer, and searches
+including `close()`, `step_until`, the implicit tail and closer, and searches
 that fill elided arguments.
 
 ## Design check
@@ -296,7 +296,7 @@ Answer these before proposing a verifier change that adds work.
 
 1. **Which part does it change?** Name it from the table above.
 2. **Fast or slow?** If it adds reasoning to a fast part, ask first whether
-   it could be a slow-part search instead: a new strategy in `solve` or
+   it could be a slow-part search instead: a new strategy in `close()` or
    the implicit closer, or a helper for an argument a tactic already takes. Put it there
    unless every proof needs it on every step.
 3. **If fast:** which index serves each read, and what is the key? Which
@@ -339,8 +339,8 @@ common mechanism names belong to.
 | proof object, proof step | The persistent proof state and one checked change to it | Simple tactics (fast) |
 | certificate | An explicit derivation the kernel checks without search | Certificates (fast) |
 | planner (signed, `Integer` affine, special, simplex refutation) | Chooses an ordinary arithmetic proof plan | Smart tactics (slow) |
-| selected-premise arithmetic | `solve`'s choice of the facts and type ranges arithmetic refutes an arithmetic goal from | Smart tactics (slow) |
-| rewrite search, equality chain | `solve`'s search for rewrites that close a goal | Smart tactics (slow) |
+| selected-premise arithmetic | the solver's choice of the facts and type ranges arithmetic refutes an arithmetic goal from | Smart tactics (slow) |
+| rewrite search, equality chain | the solver's search for rewrites that close a goal | Smart tactics (slow) |
 | premise selection, connected premises | Choosing which facts a tactic uses | Search helpers (slow) |
 | transport planner | Choosing the facts a bare `transport` carries | Search helpers (slow) |
 | theorem premise cascade | Finding the premises of a bare `apply` | Search helpers (slow) |
@@ -447,7 +447,7 @@ most 32, carried across joins as arm suffixes) and is never read while
 checking. A refusal whose goal reads a cell a recorded miss dropped explains
 that read with one bounded history walk and, when the walk stops at that
 miss's store, prints the statement and the raised fact; it does not search
-to raise anything. `solve`'s last strategy,
+to raise anything. The solver's last strategy,
 `try_disequality_by_refuted_equality`, proves a disequality from a connected
 one by cases on the goal's equality, so the Integer fact `m - 1 != 0` gives
 the word fact where the word cannot wrap. Regressions:
@@ -457,7 +457,7 @@ its `size_t` sibling
 After it, `try_element_address_disequality` reduces a goal
 `&q[j] != &q[0]` whose two addresses share a base and scaled indices of one
 width and format to `have j != 0` (written the same way, proved by a nested
-`solve`) and closes it with
+`close()`) and closes it with
 `apply(click::separation::distinct_elements(q, j, 0))`, the explicit law
 expansion writes.
 

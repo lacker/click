@@ -28,7 +28,7 @@ void f(struct holder* h) {
     step();
     step();
     have statement(0).call(get, 0).result < 100 by {
-        known();
+        close();
     }
     have statement(0).call(get, 0).result == 5;
 }

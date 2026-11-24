@@ -3,10 +3,10 @@
 ```click
 theorem no_span_fact(p: int32*, q: int32*, n: int32) {
     requires separate(memory(p[0..n]), memory(q[0..1]));
-    ensures 0 <= n by { known(); }
+    ensures 0 <= n by { close(); }
 }
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: could not establish `0 <= n`
 ```

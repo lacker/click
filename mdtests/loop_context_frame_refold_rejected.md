@@ -110,7 +110,7 @@ function plug(ctx: Context, sub: HeapTree) -> HeapTree
 theorem plug_top_frame(sub: HeapTree) {
     ensures plug(Context::Top, sub) == sub by {
         unfold(plug(Context::Top, sub));
-        known();
+        close();
     }
 }
 
@@ -119,7 +119,7 @@ theorem plug_left_frame(parent: struct tree_node*, value: int, sibling: HeapTree
     ensures plug(Context::Left(parent, value, sibling, up), sub)
         == plug(up, HeapTree::Node(parent, value, sub, sibling)) by {
         unfold(plug(Context::Left(parent, value, sibling, up), sub));
-        known();
+        close();
     }
 }
 
@@ -128,7 +128,7 @@ theorem plug_right_frame(parent: struct tree_node*, value: int, sibling: HeapTre
     ensures plug(Context::Right(parent, value, sibling, up), sub)
         == plug(up, HeapTree::Node(parent, value, sibling, sub)) by {
         unfold(plug(Context::Right(parent, value, sibling, up), sub));
-        known();
+        close();
     }
 }
 
@@ -153,7 +153,7 @@ struct tree_node* tree_leftmost(struct tree_node* root) {
     have plug(ctx.model, t.model) == old(t.model) by {
         rewrite(ctx.model, Context::Top);
         unfold(plug(Context::Top, t.model));
-        known();
+        close();
     }
     loop {
         owns ctx: ctx_at(root);
@@ -162,7 +162,7 @@ struct tree_node* tree_leftmost(struct tree_node* root) {
         invariant t.model != HeapTree::Empty;
         invariant plug(ctx.model, t.model) == old(t.model);
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             match t.model {
                 HeapTree::Empty => { contradiction(t.model == HeapTree::Empty); },
@@ -172,13 +172,13 @@ struct tree_node* tree_leftmost(struct tree_node* root) {
                         unfold(plug(Context::Left(identity, value, right_model, ctx.model),
                             left_model));
                         rewrite(HeapTree::Node(identity, value, left_model, right_model), t.model);
-                        known();
+                        close();
                     }
                     let { left: l, right: rt } = unfold(t);
                     have plug(Context::Left(root, value, right_model, ctx.model), left_model)
                         == old(t.model) by {
                         rewrite(root, identity);
-                        known();
+                        close();
                     }
                     let frame = fold(ctx_at(root->left), {
                         model: Context::Left(root, value, right_model, ctx.model),
@@ -199,7 +199,7 @@ struct tree_node* tree_leftmost(struct tree_node* root) {
             have plug(ctx.model, HeapTree::Node(identity, value, left_model, right_model))
                 == old(t.model) by {
                 rewrite(HeapTree::Node(identity, value, left_model, right_model), t.model);
-                known();
+                close();
             }
             let { left: l, right: rt } = unfold(t);
             have heap_left(HeapTree::Node(identity, value, left_model, right_model))
@@ -214,14 +214,14 @@ struct tree_node* tree_leftmost(struct tree_node* root) {
             have heap_left(sub.model) == HeapTree::Empty by {
                 rewrite(sub.model, HeapTree::Node(identity, value, left_model, right_model));
                 rewrite(heap_left(HeapTree::Node(identity, value, left_model, right_model)), left_model);
-                known();
+                close();
             }
             have plug(ctx.model, sub.model) == old(t.model) by {
                 rewrite(sub.model, HeapTree::Node(identity, value, left_model, right_model));
-                known();
+                close();
             }
             step();
-            solve();
+            close();
         },
     }
 }

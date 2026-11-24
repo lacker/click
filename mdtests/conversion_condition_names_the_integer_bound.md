@@ -8,7 +8,7 @@ value with the theorem's own `Integer` binder, `n + 1`.
 ```click
 theorem back_to_int32(n: Integer) {
     requires n >= 0;
-    ensures to_int32(n + 1) == to_int32(n + 1) by solve();
+    ensures to_int32(n + 1) == to_int32(n + 1) by close();
 }
 ```
 

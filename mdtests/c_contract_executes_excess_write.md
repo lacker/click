@@ -11,7 +11,7 @@ contract void Buffered(int32* data) { views data[1..2]; owns data[0..1]; }
 theorem lift(callback: void (*)(int32*)) executes callback(int32* data) {
     requires Raw(callback);
     ensures Buffered(callback) by {
-        unfold(Buffer(data)); step(Raw); fold(Buffer(data)); solve();
+        unfold(Buffer(data)); step(Raw); fold(Buffer(data)); close();
     }
 }
 ```

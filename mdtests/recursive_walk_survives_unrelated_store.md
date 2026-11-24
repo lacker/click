@@ -32,7 +32,7 @@ theorem walk_in_range(next: int32[], n: int32, from: int32, fuel: Nat) {
         match fuel {
             Nat::Zero => {
                 unfold(walk(next, from, Nat::Zero));
-                solve();
+                close();
             }
             Nat::Succ(previous) => {
                 apply(ih(previous));
@@ -42,10 +42,10 @@ theorem walk_in_range(next: int32[], n: int32, from: int32, fuel: Nat) {
                     instantiate(forall (k: int32) {
                         0 <= k and k < n implies 0 <= next[k] and next[k] < n
                     }, walk(next, from, previous));
-                    known();
+                    close();
                 }
                 unfold(walk(next, from, Nat::Succ(previous)));
-                known();
+                close();
             }
         }
     }
@@ -69,7 +69,7 @@ theorem walk_frame(a: int32[], b: int32[], n: int32, from: int32, fuel: Nat) {
             Nat::Zero => {
                 unfold(walk(a, from, Nat::Zero));
                 unfold(walk(b, from, Nat::Zero));
-                solve();
+                close();
             }
             Nat::Succ(previous) => {
                 apply(ih(previous));
@@ -79,7 +79,7 @@ theorem walk_frame(a: int32[], b: int32[], n: int32, from: int32, fuel: Nat) {
                     instantiate(forall (k: int32) {
                         0 <= k and k < n implies a[k] == b[k]
                     }, walk(a, from, previous));
-                    known();
+                    close();
                 }
                 unfold(walk(a, from, Nat::Succ(previous)));
                 unfold(walk(b, from, Nat::Succ(previous)));
@@ -109,7 +109,7 @@ void mark(int32 *next, int32 *visited) {
     have next[0] == at(entry, next[0]) by {
         preserve(memory(next[0]), statement(0));
     }
-    have at(entry, next[0]) == next[0] by { known(); }
+    have at(entry, next[0]) == next[0] by { close(); }
     have forall (k: int32) {
         0 <= k and k < 1 implies at(entry, next[k]) == next[k]
     } by {
@@ -127,7 +127,7 @@ void mark(int32 *next, int32 *visited) {
         have k == 0 by { close() using { 0 <= k; k < 1; }; }
         have at(entry, next[k]) == 0 by {
             rewrite(k, 0);
-            known();
+            close();
         }
         have 0 <= at(entry, next[k]) by {
             close() using { at(entry, next[k]) == 0; };
@@ -135,7 +135,7 @@ void mark(int32 *next, int32 *visited) {
         have at(entry, next[k]) < 1 by {
             close() using { at(entry, next[k]) == 0; };
         }
-        known();
+        close();
     }
     have at(entry, viewable(next[0..1]));
     have viewable(next[0..1]) by { observe(next[0..1]); }

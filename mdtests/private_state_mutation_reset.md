@@ -69,17 +69,17 @@ int main() {
     have left_file::state.value == 7u64;
     have right_file::state.value == 40u64;
     step();
-    have left_file::state.value == 8u64 by { unfold(integer::uint64_wrapping_add(7u64, 1u64)); solve(); };
+    have left_file::state.value == 8u64 by { unfold(integer::uint64_wrapping_add(7u64, 1u64)); close(); };
     step();
-    have left_file::state.value == 9u64 by { unfold(integer::uint64_wrapping_add(8u64, 1u64)); solve(); };
+    have left_file::state.value == 9u64 by { unfold(integer::uint64_wrapping_add(8u64, 1u64)); close(); };
     step();
-    have right_file::state.value == 41u64 by { unfold(integer::uint64_wrapping_add(40u64, 1u64)); solve(); };
+    have right_file::state.value == 41u64 by { unfold(integer::uint64_wrapping_add(40u64, 1u64)); close(); };
     step();
     have left_file::state.value == 0u64;
     step();
-    have left_file::state.value == 1u64 by { unfold(integer::uint64_wrapping_add(0u64, 1u64)); solve(); };
+    have left_file::state.value == 1u64 by { unfold(integer::uint64_wrapping_add(0u64, 1u64)); close(); };
     step();
-    solve();
+    close();
 }
 ```
 

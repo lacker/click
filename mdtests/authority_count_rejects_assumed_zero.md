@@ -22,7 +22,7 @@ verifying "assumed_zero.c";
 void assumed_zero(struct object* obj) {
     owns control(obj);
 } by {
-    have count(reference(obj)) == 0 by solve();
+    have count(reference(obj)) == 0 by close();
 }
 ```
 

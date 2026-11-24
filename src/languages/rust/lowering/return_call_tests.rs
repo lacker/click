@@ -122,7 +122,7 @@ fn returned_call_results_verify_expand_and_reject_false_claims() {
 fn identity(value: i32) -> i32 { ensures result == value; }
 fn caller(value: i32) -> i32 { ensures result == value; } by {
     step_until(function.exit);
-    have call(identity, 0).result == value by solve();
+    have call(identity, 0).result == value by close();
 }
 "#;
     ProgramVerificationSession::new_program_prepared(source, &prepared).unwrap();
@@ -275,7 +275,7 @@ fn operand_capture_keeps_the_read_before_a_mutating_call() {
         export,
         r#"verifying "returns.rs";
 fn bump(target: &mut i32) -> i32 { owns *target; ensures *target == 9; ensures result == 2; }
-fn caller(target: &mut i32) -> i32 { owns *target; requires *target == 1; ensures *target == 9; ensures result == 3; } by { step_until(function.exit); solve(); }
+fn caller(target: &mut i32) -> i32 { owns *target; requires *target == 1; ensures *target == 9; ensures result == 3; } by { step_until(function.exit); close(); }
 "#,
     );
 }
@@ -305,7 +305,7 @@ fn array_repeat_evaluates_its_operand_once_including_zero_elements() {
             export,
             r#"verifying "returns.rs";
 fn tick(target: &mut i32) -> i32 { owns *target; requires *target >= 0; requires *target < 10; ensures *target == old(*target) + 1; ensures result == 2; }
-fn caller(target: &mut i32) -> i32 { owns *target; requires *target == 1; ensures *target == 2; ensures result == 2; } by { step_until(function.exit); solve(); }
+fn caller(target: &mut i32) -> i32 { owns *target; requires *target == 1; ensures *target == 2; ensures result == 2; } by { step_until(function.exit); close(); }
 "#,
         );
     }

@@ -23,7 +23,7 @@ fn explicit_integer_order_laws_scale_with_related_and_unrelated_facts() {
             for _ in 0..size {
                 source.push_str("have a + c <= b + d by { apply(integer::add_le(a, b, c, d)); } ");
             }
-            source.push_str("known(); } }");
+            source.push_str("close(); } }");
             let (checked, work) = crate::instrumentation::measure_deterministic_work(|| {
                 crate::surface::proof::without_implicit_solve(|| verify_c_sources(&source, &[]))
             });
@@ -53,7 +53,7 @@ fn integer_conversion_aliases_preserve_shared_expression_scaling() {
             ));
         }
         source.push_str(&format!(
-            "requires a{depth} == a{depth}; ensures a{depth} == a{depth} by {{ known(); }} }}"
+            "requires a{depth} == a{depth}; ensures a{depth} == a{depth} by {{ close(); }} }}"
         ));
         let (result, work) =
             crate::instrumentation::measure_deterministic_work(|| verify_c_sources(&source, &[]));
@@ -84,7 +84,7 @@ fn integer_function_let_aliases_preserve_shared_expression_scaling() {
             ));
         }
         source.push_str(&format!(
-            "requires a{depth} == a{depth}; ensures a{depth} == a{depth} by {{ known(); }} }}"
+            "requires a{depth} == a{depth}; ensures a{depth} == a{depth} by {{ close(); }} }}"
         ));
         let (result, work) =
             crate::instrumentation::measure_deterministic_work(|| verify_c_sources(&source, &[]));
@@ -114,7 +114,7 @@ fn deferred_integer_function_high_arity_scales_with_arguments() {
         let source = format!(
             "function mix({parameters}) -> Integer {{ to_integer(x0) }}\n\
              theorem call({parameters}) {{\n\
-             ensures mix({arguments}) == mix({arguments}) by {{ solve(); }} }}"
+             ensures mix({arguments}) == mix({arguments}) by {{ close(); }} }}"
         );
         let (result, work) =
             crate::instrumentation::measure_deterministic_work(|| verify_c_sources(&source, &[]));
@@ -146,7 +146,7 @@ fn machine_integer_order_bridge_applications_scale_with_steps_and_unused_bounds(
             for _ in 0..size {
                 source.push_str(&format!("have x <= y by {{ apply(integer::{ty}_to_integer_less_equal_implies_less_equal(x, y)); }} "));
             }
-            source.push_str("known(); } }");
+            source.push_str("close(); } }");
             let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
                 verify_c_sources(&source, &[])
             });
@@ -180,7 +180,7 @@ fn int64_integer_operation_applications_scale_with_steps_and_unused_bounds() {
             for _ in 0..size {
                 source.push_str(&format!("have {goal} by {{ apply({name}(x, y)); }} "));
             }
-            source.push_str("known(); } }");
+            source.push_str("close(); } }");
             let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
                 verify_c_sources(&source, &[])
             });
@@ -212,7 +212,7 @@ fn opaque_product_arithmetic_scales_with_steps_and_unused_bounds() {
                 "have {goal} by {{ close() using {{ n == q * d + r; 0 <= r; }} }} "
             ));
         }
-        source.push_str("known(); } }");
+        source.push_str("close(); } }");
         let (result, work) =
             crate::instrumentation::measure_deterministic_work(|| verify_c_sources(&source, &[]));
         result.unwrap_or_else(|error| panic!("{size}: {}", error.message()));
@@ -242,7 +242,7 @@ fn integer_multiply_add_applications_scale_with_steps_and_unused_bounds() {
                 "have {goal} by {{ apply(integer::multiply_add(a, b, c)); }} "
             ));
         }
-        source.push_str("known(); } }");
+        source.push_str("close(); } }");
         let (result, work) =
             crate::instrumentation::measure_deterministic_work(|| verify_c_sources(&source, &[]));
         result.unwrap_or_else(|error| panic!("{size}: {}", error.message()));
@@ -272,7 +272,7 @@ fn integer_truncation_applications_scale_with_steps_and_unused_bounds() {
                 "have {goal} by {{ apply(integer::truncation_identity(n, d)); }} "
             ));
         }
-        source.push_str("known(); } }");
+        source.push_str("close(); } }");
         let (result, work) =
             crate::instrumentation::measure_deterministic_work(|| verify_c_sources(&source, &[]));
         result.unwrap_or_else(|error| panic!("{size}: {}", error.message()));
@@ -301,7 +301,7 @@ fn multiply_order_applications_scale_with_explicit_inputs() {
                 "have a * c <= b * c by { apply(integer::multiply_order_nonnegative(a,b,c)); } ",
             );
         }
-        source.push_str("known(); } }");
+        source.push_str("close(); } }");
         let (result, work) =
             crate::instrumentation::measure_deterministic_work(|| verify_c_sources(&source, &[]));
         result.unwrap();
@@ -328,7 +328,7 @@ fn scaled_quotient_applications_scale_with_steps_and_unused_bounds() {
         for _ in 0..size {
             source.push_str("have b <= truncating_quotient(n, d) by { apply(integer::positive_divisor_quotient_lower(n, d, b)); } ");
         }
-        source.push_str("known(); } }");
+        source.push_str("close(); } }");
         let (checked, work) =
             crate::instrumentation::measure_deterministic_work(|| verify_c_sources(&source, &[]));
         checked.unwrap_or_else(|error| panic!("{size}: {}", error.message()));
@@ -357,7 +357,7 @@ fn correction_endpoint_applications_scale_with_steps_and_unused_bounds() {
                 "have b + 1 <= q by { apply(integer::lower_correction_bound(n, d, q, r, b)); } ",
             );
         }
-        source.push_str("known(); } }");
+        source.push_str("close(); } }");
         let (checked, work) =
             crate::instrumentation::measure_deterministic_work(|| verify_c_sources(&source, &[]));
         checked.unwrap_or_else(|error| panic!("{size}: {}", error.message()));
@@ -384,7 +384,7 @@ fn normalized_opposite_bound_certificates_scale_with_steps_and_unused_facts() {
         for _ in 0..size {
             source.push_str("have x == b by { close() using { b <= x; not (b + 1 <= x); } } ");
         }
-        source.push_str("known(); } }");
+        source.push_str("close(); } }");
         let (checked, work) =
             crate::instrumentation::measure_deterministic_work(|| verify_c_sources(&source, &[]));
         checked.unwrap_or_else(|error| panic!("{size}: {}", error.message()));
@@ -415,7 +415,7 @@ fn divisor_sign_applications_scale_with_explicit_steps_and_surrounding_facts() {
                 source.push_str("have truncating_quotient(n,d) == -truncating_quotient(n,-d) by { apply(integer::quotient_negate_divisor(n,d)); } ");
                 source.push_str("have truncating_remainder(n,d) == truncating_remainder(n,-d) by { apply(integer::remainder_negate_divisor(n,d)); } ");
             }
-            source.push_str("known(); } }");
+            source.push_str("close(); } }");
             let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
                 crate::surface::proof::without_implicit_solve(|| verify_c_sources(&source, &[]))
             });

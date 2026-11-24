@@ -17,11 +17,11 @@ int64 signed_xor_wide(int64 n, int64 d) { requires d >= 0; requires d != 1; ensu
 
 theorem or_nonzero(a: int32, b: int32) {
     requires a > 0;
-    ensures (a | b) != 0 by { known(); }
+    ensures (a | b) != 0 by { close(); }
 }
 theorem xor_excludes_minus_one(d: int32) {
     requires d >= 0;
-    ensures (d ^ 1) != -1 by { known(); }
+    ensures (d ^ 1) != -1 by { close(); }
 }
 ```
 

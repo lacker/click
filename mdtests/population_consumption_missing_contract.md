@@ -41,7 +41,7 @@ uint32 contribute_early(struct counter* p) {
         step();
     }
     with(control(p)) { step(); }
-    solve();
+    close();
 }
 ```
 

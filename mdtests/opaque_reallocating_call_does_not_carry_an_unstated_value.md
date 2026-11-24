@@ -41,7 +41,7 @@ int32 box_cycle(struct box* box) {
 } by {
     step();
     step();
-    solve();
+    close();
 }
 ```
 

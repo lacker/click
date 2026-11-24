@@ -27,7 +27,7 @@ void start(struct channel* channel) {
     requires aligned(&channel->ready, 4);
 } by {
     step(atomic_init, { payload: ready_payload(channel) });
-    solve();
+    close();
 }
 ```
 

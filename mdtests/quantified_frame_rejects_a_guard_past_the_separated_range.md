@@ -20,7 +20,7 @@ void poke(int32 *a, int32 n) {
     ensures forall (k: int32) { 0 <= k and k < 2 implies a[k] == old(a[k]) };
 } by {
     step();
-    have forall (k: int32) { 0 <= k and k < 2 implies a[k] == old(a[k]) } by { solve(); }
+    have forall (k: int32) { 0 <= k and k < 2 implies a[k] == old(a[k]) } by { close(); }
 }
 ```
 

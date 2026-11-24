@@ -109,7 +109,7 @@ The rule records nothing on the edge and caches nothing: each answer is a
 checked derivation of one query, never an assumption-free name. Old facts stay
 facts about their states; the framed application equality is the bridge.
 Because the rule is a checked simple step that answers the same for every
-caller, a smart tactic composing the checked transport reaches it too: `solve`
+caller, a smart tactic composing the checked transport reaches it too: `close()`
 closes
 `mdtests/sweep_prefix_survives_its_endpoint_store_by_solve.md`, and
 `click expand` rewrites it into the explicit transport.

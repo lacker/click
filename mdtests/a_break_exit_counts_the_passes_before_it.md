@@ -30,7 +30,7 @@ int32 count_up(int32 n) {
         invariant 0 <= i and i <= n;
         invariant i == iterations;
     }
-    have loop(0).iterations == to_integer(n) by { solve(); }
+    have loop(0).iterations == to_integer(n) by { close(); }
 }
 ```
 

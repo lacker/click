@@ -40,7 +40,7 @@ int32 walk(int32 *a, int32 n) {
         invariant viewable(a[0..k]);
     }
     step();
-    solve();
+    close();
 }
 ```
 

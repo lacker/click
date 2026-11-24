@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""How much of the examples' hand-written `have` statements `solve` covers.
+"""How much of the examples' hand-written `have` statements the default proof closes.
 
     evals/solve.py [--jobs N] [--per-file N] [--only SUBSTRING]
                   [--out results.jsonl] [--write-baseline]
@@ -10,11 +10,10 @@ holds the whole proposition: a one-line `have` or one with a `by { ... }`
 block. Each site is measured twice, in a scratch copy of the project:
 
 - deletable: with the whole statement deleted, the proof unit that contained
-  it still verifies. The proof's own automation (implicit and written `solve`,
+  it still verifies. The proof's own automation (implicit proofs and written `close()`,
   and the steps after it) finds the fact, and no later step names it.
-- by solve(): with its justification replaced by `by solve();`, the proof unit
-  still verifies. `solve` proves the fact where it is stated, whether or not
-  later steps cite it.
+- by_solve: with the justification omitted, the proof unit still verifies.
+  The default proof closes the fact where it is stated.
 
 `click verify FILE:LINE:COLUMN` checks only the proof unit that contains the
 site. The verdict is the exit status. For a failure, the first line naming a
@@ -165,7 +164,7 @@ def verdict(click, path, edited, line):
 
 def evaluate_file(click, project, relative, chosen):
     """Verifies `relative` unmodified, then with each chosen site deleted
-    and with each proved by `solve`, in a private copy of the examples."""
+    and with each left to the default proof, in a private copy of the examples."""
     results = []
     with tempfile.TemporaryDirectory(prefix="click-solve-eval-") as scratch:
         # Copy every example, not only this project: a sidecar may import

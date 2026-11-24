@@ -47,7 +47,7 @@ int32 write_i_read_j(int32 p[], int32 i, int32 j, int32 n) {
     have separate(memory((p + i)[0..1]), memory(p[j..j + 1])) by {
         apply(separation::separate_restrict(memory(p[i..i + 1]), memory(p[j..j + 1]), memory((p + i)[0..1]), memory(p[j..j + 1])));
     }
-    step() by { known(); }
+    step() by { close(); }
 }
 ```
 

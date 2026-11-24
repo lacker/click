@@ -17,7 +17,7 @@ verifying "main.c";
 
 theorem small(n: u32) {
     requires n <= 1000u32;
-    ensures n <= 1000u32 by known();
+    ensures n <= 1000u32 by close();
 }
 ```
 

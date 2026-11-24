@@ -6,14 +6,14 @@ theorem rewrite_append_in_contains(head: int32, tail: List<int32>, ys: List<int3
         == list::contains(List<int32>::Cons(head, list::append(tail, ys)), value) by {
         apply(list::append_cons(head, tail, ys));
         rewrite(list::append(List<int32>::Cons(head, tail), ys), List<int32>::Cons(head, list::append(tail, ys)));
-        solve();
+        close();
     }
 }
 
 theorem nested_membership(xs: List<List<int32>>, value: List<int32>) {
     ensures list::contains(List<List<int32>>::Cons(value, xs), value) by {
         apply(list::contains_cons(value, xs, value));
-        solve();
+        close();
     }
 }
 
@@ -38,7 +38,7 @@ function adt_equal<T>(xs: List<T>, ys: List<T>) -> int32 {
 theorem symbolic_comparison(xs: List<int32>, ys: List<int32>) {
     ensures adt_equal(xs, ys) == if xs == ys { 1 } else { 0 } by {
         unfold(adt_equal(xs, ys));
-        known();
+        close();
     }
 }
 
@@ -46,11 +46,11 @@ theorem rewrite_inside_condition(xs: List<int32>, ys: List<int32>, zs: List<int3
     requires xs == ys;
     ensures (if xs == zs { 1 } else { 0 }) == (if ys == zs { 1 } else { 0 }) by {
         rewrite(xs, ys);
-        known();
+        close();
     }
     ensures adt_equal(list::append(xs, zs), zs) == adt_equal(list::append(ys, zs), zs) by {
         rewrite(xs, ys);
-        known();
+        close();
     }
 }
 
@@ -58,7 +58,7 @@ theorem known_distinct(xs: List<List<int32>>, value: int32) {
     ensures list::contains(List<List<int32>>::Cons(List<int32>::Cons(value, List<int32>::Nil), xs), List<int32>::Nil)
         == list::contains(xs, List<int32>::Nil) by {
         apply(list::contains_cons(List<int32>::Cons(value, List<int32>::Nil), xs, List<int32>::Nil));
-        solve();
+        close();
     }
 }
 

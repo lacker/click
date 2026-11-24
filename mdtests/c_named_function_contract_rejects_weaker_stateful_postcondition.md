@@ -43,7 +43,7 @@ void apply_step(void (*step)(int32*), int32* cell) {
 theorem proposed_maybe_progress_contract() {
     ensures Progress(&maybe_progress) by {
         unfold(Progress(&maybe_progress));
-        solve();
+        close();
     }
 }
 

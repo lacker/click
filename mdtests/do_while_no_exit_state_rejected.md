@@ -29,7 +29,7 @@ int32 do_while_any(int32 i) {
         invariant i >= 0 and i < 2147483647;
     }
     step();
-    solve();
+    close();
 }
 ```
 

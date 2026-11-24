@@ -142,7 +142,7 @@ Write `preserve(B, region);` under a read-equality goal.
 It establishes the after-to-before read equality. The execution-produced
 footprint includes writes, call effects and allocation release. Establish its
 separation with explicitly supplied evidence. When a checked call publishes
-`contains(R, region.footprint)`, select it with `known()` and apply the
+`contains(R, region.footprint)`, select it with `close()` and apply the
 named `separation::separate_restrict` law; `contains_refl` supplies reflexivity and
 `separate_star` combines separation of several input resources. This route
 does not unfold recursive resources or normalize a footprint. The older
@@ -243,7 +243,7 @@ that obligation.
    within its documented **Accepts** list, stop at `tactic-bug`.
 
    To split a link that a smart tactic proved part of, read its trace: a step
-   marked ``(from `implicit tail`)``, ``(from `solve`)`` or
+   marked ``(from `implicit tail`)``, ``(from `close`)`` or
    ``(from `implicit closer`)`` is one that smart work took, and a `chosen:`
    line is the written form of an argument its search chose ([Reading trace
    output](#reading-trace-output)). Writing those out leaves only the
@@ -258,7 +258,7 @@ that obligation.
 
 Before each run, say in one line which link is new and why it should hold.
 Changing a tactic, its written form, or its position without changing the chain
-is not a new attempt. Do not edit `solve` or the implicit closer, raise a
+is not a new attempt. Do not edit `close()` or the implicit closer, raise a
 budget, or change the C to get past a link.
 
 Before reporting a refused simple link, shrink the link itself, not only the
@@ -401,7 +401,7 @@ help: to prove the goal explicitly, step to this statement and prove it there wi
 ```
 
 The implicit tail runs the `return` and closes the claim. The proof verifies:
-`success`. Had `have to_integer(w * h) <= 1000000 by solve();` been refused, it would be the new goal, to split further, for example through
+`success`. Had `have to_integer(w * h) <= 1000000 by close();` been refused, it would be the new goal, to split further, for example through
 `w * h <= 1000 * h`.
 
 ## Reading trace output
@@ -510,7 +510,7 @@ under the memory-history check). A proof `if` is recorded at its own line, so
 A step that a search produced says which one. A step that smart work checked
 ends its header with ``(from `implicit tail`)`` or the like, naming its
 origin: `implicit tail` for the steps the implicit tail took and for its
-closer, `solve` for a written `solve()`, and
+closer, `close` for search inside a written `close()`, and
 `implicit closer` for an obligation a `step()` or `fold` left open. A step
 whose arguments a search chose can have a `chosen:` line with the tactic
 written out as `click expand` writes it:
@@ -538,7 +538,7 @@ checked prefix and the remaining goal and premises after those steps, rather
 than the state at script entry. This includes execution `have` bodies and pure
 theorem scripts.
 
-Written `solve` failures retain a bounded sample of the read-value queries and
+Written `close()` failures retain a bounded sample of the read-value queries and
 cell walks actually performed during that attempt. Ordinary errors summarize
 up to two observations of each kind and eight available premises; traces show
 up to sixteen observations of each kind, with shared

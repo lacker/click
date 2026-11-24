@@ -44,20 +44,20 @@ void fill(uint8* bytes, uint64 length, uint8 value) {
                         apply(separation::separate_elements(bytes, at(before, i), k));
                     }
                     have separate(loop(0).statement(0).footprint, memory(bytes[k])) by {
-                        known();
+                        close();
                     }
                     have at(loop(0).statement(0).exit, bytes[k]) == at(before, bytes[k]) by {
                         preserve(memory(bytes[k]), loop(0).statement(0));
                     }
-                    have bytes[k] == at(loop(0).statement(0).exit, bytes[k]) by { known(); }
+                    have bytes[k] == at(loop(0).statement(0).exit, bytes[k]) by { close(); }
                     have bytes[k] == at(before, bytes[k]) by {
-                        known();
+                        close();
                     }
                     have bytes[k] == value by {
                         rewrite(bytes[k], at(before, bytes[k]));
-                        known();
+                        close();
                     }
-                    known();
+                    close();
                 } else {
                     have k < at(before, i) + 1;
                     have k <= at(before, i) by {
@@ -65,7 +65,7 @@ void fill(uint8* bytes, uint64 length, uint8 value) {
                     }
                     have k == at(before, i);
                     rewrite(k, at(before, i));
-                    solve();
+                    close();
                 }
             }
         }
@@ -77,16 +77,16 @@ void fill(uint8* bytes, uint64 length, uint8 value) {
         intro();
         have k < at(loop(0).exit, i) by {
             rewrite(at(loop(0).exit, i), length);
-            known();
+            close();
         }
         instantiate(forall (k: uint64) { k < at(loop(0).exit, i) implies at(loop(0).exit, bytes[k]) == at(loop(0).exit, value) }, k);
-        known();
+        close();
     }
-    known();
-    known();
+    close();
+    close();
 }
 ```
 
 ```expect
-fail: found no available fact or held instance
+fail: checked outcome `close` search did not retain a complete proof for `fill.ensures_0`
 ```

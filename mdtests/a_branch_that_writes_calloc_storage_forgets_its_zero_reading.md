@@ -39,7 +39,7 @@ int32 f(int32 c) {
     } {
         true => {
             step();
-            solve();
+            close();
         }
         false => {
         }

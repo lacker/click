@@ -22,7 +22,7 @@ theorem lift(callback: int32 (*)()) executes callback() {
     requires Progress(callback);
     ensures Exact(callback) as { cell: k } by {
         step(Progress, { cell: k });
-        solve();
+        close();
     }
 }
 verifying "counter.c";

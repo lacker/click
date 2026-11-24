@@ -21,8 +21,8 @@ theorem lift(callback: int32 (*)()) executes callback() {
     requires Exact(callback);
     ensures Progress(callback) as { cell: k } by {
         step(Exact, { cell: cell });
-        have cell.revision == old(cell.revision) + 1 by known();
-        solve();
+        have cell.revision == old(cell.revision) + 1 by close();
+        close();
     }
 }
 ```

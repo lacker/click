@@ -39,9 +39,9 @@ int32 count_up(int32 *a, int32 n) {
                 intro();
                 intro();
                 have k <= n + 1;
-                solve();
+                close();
             }
-            solve();
+            close();
         }
     }
 }

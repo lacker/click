@@ -80,13 +80,16 @@ pub(in crate::surface) fn source_site_kind(tactic: &ProofTactic) -> SourceSiteKi
     }
 }
 
-/// The work budget `tactic`'s timing charges. A `have` whose proof still
-/// searches, `have P by { solve(); }`, owns that search when its body is not
-/// timed tactic by tactic, as inside another `have`'s script, so it spends a
-/// smart budget and a miss is reported as one. Its source site stays a
-/// control container: expansion selects the nested tactics.
+/// A bare `close()` checks the available facts before spending search
+/// budget. A `have` with only that closer gets the same fast path.
 fn budget_class(tactic: &ProofTactic) -> &'static str {
-    if matches!(tactic, ProofTactic::Close) {
+    if matches!(tactic, ProofTactic::Close)
+        || matches!(
+            tactic,
+            ProofTactic::Have(have)
+                if matches!(&have.proof, SourceProof::Script(tactics) if matches!(tactics.as_slice(), [ProofTactic::Close]))
+        )
+    {
         return SourceSiteKind::SimpleOperation.profiling_label();
     }
     if let ProofTactic::Have(_) = tactic

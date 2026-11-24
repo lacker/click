@@ -28,7 +28,7 @@ void restored(struct object* obj, struct object* alias) {
         step();
         step();
     }
-    solve();
+    close();
 }
 ```
 

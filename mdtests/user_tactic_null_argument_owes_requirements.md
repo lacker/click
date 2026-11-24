@@ -16,9 +16,9 @@ tactic nulls(p: struct node*, q: int32*, count: int32) {
     ensures q == 0;
     ensures count == 0;
 } by {
-    have p != 0 by known();
-    have q == 0 by known();
-    have count == 0 by known();
+    have p != 0 by close();
+    have q == 0 by close();
+    have count == 0 by close();
 }
 
 void user() {

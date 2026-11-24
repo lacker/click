@@ -36,7 +36,7 @@ void twice(struct object *obj) {
     let { guard: second, state: reentered } = step(pthread_mutex_lock, { access: access });
     step(pthread_mutex_unlock, { access: access, guard: second, state: reentered });
     step();
-    solve();
+    close();
 }
 ```
 

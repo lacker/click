@@ -16,7 +16,7 @@ theorem have_goal(word: uint64, base: uint64) {
     requires to_integer(word) == to_integer(base);
     ensures to_integer(word) == to_integer(base) by {
         have (word & 1) == 0;
-        known();
+        close();
     }
 }
 ```

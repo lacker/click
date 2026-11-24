@@ -40,7 +40,7 @@ int32 run() {
 } by {
     step();
     step();
-    branch { true => { step(); solve(); } false => {} }
+    branch { true => { step(); close(); } false => {} }
     step();
     fold(authority(reference(obj)));
     let control = fold(control(obj), { refs: 0 });
@@ -49,17 +49,17 @@ int32 run() {
     unfold(control);
     step();
     fold(reference(obj));
-    have count(reference(obj)) == 1 by solve();
+    have count(reference(obj)) == 1 by close();
     let control = fold(control(obj), { refs: 1 });
     step();
-    have count(reference(obj)) == 1 by solve();
+    have count(reference(obj)) == 1 by close();
     step(pthread_mutex_destroy, { lifetime: lifetime });
     unfold(control);
     unfold(reference(obj));
     unfold(authority(reference(obj)));
     step();
     step();
-    solve();
+    close();
 }
 ```
 

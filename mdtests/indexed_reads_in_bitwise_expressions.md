@@ -41,7 +41,7 @@ void keep_xor(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have (a[0] ^ 1) == 3 by solve();
+    have (a[0] ^ 1) == 3 by close();
 }
 
 void keep_complement(int32 a[], int32 n) {
@@ -54,7 +54,7 @@ void keep_complement(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have (~a[0]) == 3 by solve();
+    have (~a[0]) == 3 by close();
 }
 
 void keep_right_shift(int32 a[], int32 n) {
@@ -67,7 +67,7 @@ void keep_right_shift(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have (a[0] >> 1) == 3 by solve();
+    have (a[0] >> 1) == 3 by close();
 }
 
 void keep_literal_first_mask(int32 a[], int32 n) {
@@ -80,7 +80,7 @@ void keep_literal_first_mask(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have (1 & a[0]) == 1 by solve();
+    have (1 & a[0]) == 1 by close();
 }
 
 void keep_nested_masks(int32 a[], int32 n) {
@@ -93,7 +93,7 @@ void keep_nested_masks(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have ((a[0] & 3) | 4) == 5 by solve();
+    have ((a[0] & 3) | 4) == 5 by close();
 }
 ```
 

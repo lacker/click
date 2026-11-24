@@ -28,7 +28,7 @@ int32 uor(int32 a, int32* p) {
         invariant a <= 10;
     }
     step();
-    solve();
+    close();
 }
 ```
 

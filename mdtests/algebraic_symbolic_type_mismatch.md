@@ -7,7 +7,7 @@ spec enum Maybe<T> {
 }
 
 theorem mismatched(m: Maybe<int32>) {
-    ensures m == Maybe<uint32>::None by solve();
+    ensures m == Maybe<uint32>::None by close();
 }
 ```
 

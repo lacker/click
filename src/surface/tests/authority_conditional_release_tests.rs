@@ -42,7 +42,7 @@ void child_release(struct child* obj) {
         unfold(child_ref(obj));
         unfold(authority(child_ref(obj)));
         step_until(function.exit);
-        solve();
+        close();
     } else {
         unfold(child_ref(obj));
         have 1 < obj->refs by {
@@ -53,7 +53,7 @@ void child_release(struct child* obj) {
         step();
         fold(child_control(obj));
         step_until(function.exit);
-        solve();
+        close();
     }
 }
 
@@ -64,12 +64,12 @@ void release_one(struct child* obj) {
     consumes child_ref(obj);
     ensures obj->payload == old(obj->payload);
 } by {
-    have obj->refs == count(child_ref(obj)) by { solve(); }
-    have 1 < count(child_ref(obj)) by { solve(); }
+    have obj->refs == count(child_ref(obj)) by { close(); }
+    have 1 < count(child_ref(obj)) by { close(); }
     step(child_release);
-    have obj->payload == old(obj->payload) by { solve(); }
+    have obj->payload == old(obj->payload) by { close(); }
     step();
-    solve();
+    close();
 }
 "#;
 
@@ -252,8 +252,8 @@ void release_one(struct child* obj) {{
     if old(count(child_ref(obj))) > 1 {{ produces child_control(obj); }}
     ensures count(child_ref(obj)) == old(count(child_ref(obj))) - 1;
 }} by {{
-    if obj->refs > 1 {{ step_until(function.exit); solve(); }}
-    else {{ step_until(function.exit); solve(); }}
+    if obj->refs > 1 {{ step_until(function.exit); close(); }}
+    else {{ step_until(function.exit); close(); }}
 }}
 "#
     );
@@ -336,7 +336,7 @@ void bound(int32 value) {
     have old(value) > 1 by {
         close() using { 2 <= old(value); }
     }
-    solve();
+    close();
 }
 "#;
     let c = [("bound.c", "void bound(int32 value) {}")];
@@ -353,7 +353,7 @@ void bound(int32 value) {
 
 #[test]
 fn mirrored_strict_signed_bound_expands_to_checked_successor_rule() {
-    let source = "theorem bound(value: int32) {\nrequires 2 <= value;\nensures value > 1 by {\nsolve();\n}\n}\n";
+    let source = "theorem bound(value: int32) {\nrequires 2 <= value;\nensures value > 1 by {\nclose();\n}\n}\n";
     crate::instrumentation::with_default_tactic_limits(|| {
         verify_c_sources(source, &[])
             .expect("a mirrored strict bound follows from its successor bound");
@@ -364,7 +364,7 @@ fn mirrored_strict_signed_bound_expands_to_checked_successor_rule() {
 
 #[test]
 fn strict_successor_bound_does_not_wrap_signed_maximum() {
-    let source = "theorem bound(value: int32) {\nrequires 2147483647 <= value;\nensures value > 2147483647 by { solve(); }\n}\n";
+    let source = "theorem bound(value: int32) {\nrequires 2147483647 <= value;\nensures value > 2147483647 by { close(); }\n}\n";
     crate::instrumentation::with_default_tactic_limits(|| {
         assert!(
             verify_c_sources(source, &[]).is_err(),

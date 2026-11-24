@@ -2,7 +2,7 @@
 
 ```click
 theorem bad(a: Integer, b: Integer) {
-    ensures truncating_remainder(a, b) == truncating_remainder(a, b) by solve();
+    ensures truncating_remainder(a, b) == truncating_remainder(a, b) by close();
 }
 ```
 

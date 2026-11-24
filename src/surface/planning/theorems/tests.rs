@@ -1,13 +1,13 @@
 use super::*;
 
 const SHIFT: &str = "function shifted(x: Integer) -> Integer { x + 7 }";
-const BOUND: &str = "theorem shifted_bound(x: Integer) { requires 0 <= x; ensures 7 <= shifted(x) by { unfold(shifted(x)); solve(); } }";
+const BOUND: &str = "theorem shifted_bound(x: Integer) { requires 0 <= x; ensures 7 <= shifted(x) by { unfold(shifted(x)); close(); } }";
 
 #[test]
 fn single_theorem_discovery_expands_and_rechecks() {
     let proof = "by { close() using { 0 <= value; }; }";
     let source = format!(
-        "{SHIFT} theorem too_strong(x: Integer) {{ requires 100 <= x; ensures 7 <= shifted(x) by {{ unfold(shifted(x)); solve(); }} }} {BOUND} theorem test(value: Integer) {{ requires 0 <= value; ensures 7 <= shifted(value) {proof} }}"
+        "{SHIFT} theorem too_strong(x: Integer) {{ requires 100 <= x; ensures 7 <= shifted(x) by {{ unfold(shifted(x)); close(); }} }} {BOUND} theorem test(value: Integer) {{ requires 0 <= value; ensures 7 <= shifted(value) {proof} }}"
     );
     let verified = verify_click_theorems(&source).unwrap_or_else(|e| panic!("{}", e.report()));
     let expanded = verified.last().unwrap().expanded_proof_source().unwrap();
@@ -50,11 +50,11 @@ fn single_theorem_discovery_keeps_unlisted_facts_unavailable() {
 #[test]
 fn single_theorem_discovery_does_not_invent_arguments_or_chain() {
     let hidden = format!(
-        "{SHIFT} theorem hidden(x: Integer, witness: Integer) {{ requires 0 <= witness; requires x == witness; ensures 7 <= shifted(x) by {{ unfold(shifted(x)); solve(); }} }} theorem test(value: Integer) {{ requires 0 <= value; ensures 7 <= shifted(value) by {{ close() using {{ 0 <= value; }}; }} }}"
+        "{SHIFT} theorem hidden(x: Integer, witness: Integer) {{ requires 0 <= witness; requires x == witness; ensures 7 <= shifted(x) by {{ unfold(shifted(x)); close(); }} }} theorem test(value: Integer) {{ requires 0 <= value; ensures 7 <= shifted(value) by {{ close() using {{ 0 <= value; }}; }} }}"
     );
     assert!(verify_click_theorems(&hidden).is_err());
     let chain = format!(
-        "{SHIFT} function middle(x: Integer) -> Integer {{ x }} theorem first(x: Integer) {{ requires 0 <= x; ensures 0 <= middle(x) by {{ unfold(middle(x)); solve(); }} }} theorem second(x: Integer) {{ requires 0 <= middle(x); ensures 7 <= shifted(x) by {{ unfold(middle(x)); unfold(shifted(x)); solve(); }} }} theorem test(value: Integer) {{ requires 0 <= value; ensures 7 <= shifted(value) by {{ close() using {{ 0 <= value; }}; }} }}"
+        "{SHIFT} function middle(x: Integer) -> Integer {{ x }} theorem first(x: Integer) {{ requires 0 <= x; ensures 0 <= middle(x) by {{ unfold(middle(x)); close(); }} }} theorem second(x: Integer) {{ requires 0 <= middle(x); ensures 7 <= shifted(x) by {{ unfold(middle(x)); unfold(shifted(x)); close(); }} }} theorem test(value: Integer) {{ requires 0 <= value; ensures 7 <= shifted(value) by {{ close() using {{ 0 <= value; }}; }} }}"
     );
     assert!(verify_click_theorems(&chain).is_err());
 }
@@ -178,7 +178,7 @@ fn equivalent_comparison_spellings_discover_and_expand() {
     ] {
         let proof = "by { close() using { 0 <= value; }; }";
         let source = format!(
-            "function fixed(x: Integer) -> Integer {{ 7 }} theorem law(x: Integer) {{ requires 0 <= x; ensures {conclusion} by {{ unfold(fixed(x)); solve(); }} }} theorem test(value: Integer) {{ requires 0 <= value; ensures {goal} {proof} }}"
+            "function fixed(x: Integer) -> Integer {{ 7 }} theorem law(x: Integer) {{ requires 0 <= x; ensures {conclusion} by {{ unfold(fixed(x)); close(); }} }} theorem test(value: Integer) {{ requires 0 <= value; ensures {goal} {proof} }}"
         );
         let verified =
             verify_click_theorems(&source).unwrap_or_else(|e| panic!("{source}: {}", e.report()));
@@ -197,7 +197,7 @@ fn equality_orientation_is_disambiguated_by_listed_prerequisites() {
     for (function, operator) in [("0", "=="), ("x", "!=")] {
         let proof = "by { close() using { a < b; }; }";
         let source = format!(
-            "function image(x: Integer) -> Integer {{ {function} }} theorem law(x: Integer, y: Integer) {{ requires x < y; ensures image(x) {operator} image(y) by {{ unfold(image(x)); unfold(image(y)); solve(); }} }} theorem test(a: Integer, b: Integer) {{ requires a < b; ensures image(b) {operator} image(a) {proof} }}"
+            "function image(x: Integer) -> Integer {{ {function} }} theorem law(x: Integer, y: Integer) {{ requires x < y; ensures image(x) {operator} image(y) by {{ unfold(image(x)); unfold(image(y)); close(); }} }} theorem test(a: Integer, b: Integer) {{ requires a < b; ensures image(b) {operator} image(a) {proof} }}"
         );
         let verified =
             verify_click_theorems(&source).unwrap_or_else(|e| panic!("{source}: {}", e.report()));
@@ -304,7 +304,7 @@ fn discovery_failures_explain_missing_listed_prerequisites() {
 #[test]
 fn discovery_failures_identify_undetermined_arguments() {
     let source = format!(
-        "{SHIFT} theorem hidden(x: Integer, witness: Integer) {{ requires 0 <= witness; requires x == witness; ensures 7 <= shifted(x) by {{ unfold(shifted(x)); solve(); }} }} theorem test(value: Integer) {{ requires 0 <= value; ensures 7 <= shifted(value) by {{ close() using {{ 0 <= value; }}; }} }}"
+        "{SHIFT} theorem hidden(x: Integer, witness: Integer) {{ requires 0 <= witness; requires x == witness; ensures 7 <= shifted(x) by {{ unfold(shifted(x)); close(); }} }} theorem test(value: Integer) {{ requires 0 <= value; ensures 7 <= shifted(value) by {{ close() using {{ 0 <= value; }}; }} }}"
     );
     let report = verify_click_theorems(&source)
         .unwrap_err()

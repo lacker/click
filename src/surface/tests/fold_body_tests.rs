@@ -15,7 +15,7 @@ fn post_execution_fold_body_proofs_expand_and_retain() {
     let expanded =
         expand_c_claim_source(source, &sources, "probe", ContractProofClaim::Grouped).unwrap();
     verify_c_sources(&expanded, &sources).unwrap();
-    let invalid = source.replace("by { solve(); }", "by { have n < 0 by solve(); solve(); }");
+    let invalid = source.replace("by { close(); }", "by { have n < 0 by close(); close(); }");
     assert!(verify_c_sources(&invalid, &sources).is_err());
     let (session, _) = ProgramVerificationSession::new(source, &sources).unwrap();
     let position =

@@ -18,6 +18,6 @@ uint32 probe() {
     ensures result == 4u32;
 } by {
     step_until(call(length, 0).entry);
-    have std_span_size(dst) == 4u64 by { known(); }
-    step() by { known(); }
+    have std_span_size(dst) == 4u64 by { close(); }
+    step() by { close(); }
 }

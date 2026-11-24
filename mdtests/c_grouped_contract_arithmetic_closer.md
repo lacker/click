@@ -1,7 +1,7 @@
 # A grouped contract proof closes a claim with `close() using`
 
 A grouped `by { ... }` proof may close its claims with the explicit simple
-arithmetic step instead of a bare `solve()`: `close() using` names exactly the
+arithmetic step instead of a bare `close()`: `close() using` names exactly the
 premises the bound follows from, so the claim is discharged without search.
 
 ```c filename=c_grouped_contract_arithmetic_closer.c

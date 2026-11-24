@@ -1938,7 +1938,7 @@ void init(struct pool* pool,int32 capacity) {
     ensures defined(pool->capacity);
 } by {step(); fold(control(pool));}
 void f(struct pool* pool) {consumes *pool; produces control(pool);}
-by {step(); have defined(pool->capacity - 1) by solve();}
+by {step(); have defined(pool->capacity - 1) by close();}
 "#;
         let mut expanded = source.to_owned();
         for function in ["init", "f"] {
@@ -1982,7 +1982,7 @@ by {step(); have defined(pool->capacity - 1) by solve();}
                 requires pair->low < pair->high;
                 owns *pair;
                 ensures ordered_pair(pair);
-            } by { unfold(ordered_pair(pair)); step_until(function.exit); solve(); }
+            } by { unfold(ordered_pair(pair)); step_until(function.exit); close(); }
         "#;
         let expanded = crate::surface::expand_c_claim_source(
             source,
@@ -2035,7 +2035,7 @@ mod bounded_cast_tests {
         ] {
             for tactic in [
                 format!("close() using {{ {lower}; {upper}; }};"),
-                "solve();".into(),
+                "close();".into(),
             ] {
                 let source = format!(
                     "theorem cast_identity(x: {ty}) {{ requires {lower}; requires {upper}; ensures {identity} by {{ {tactic} }} }}"
@@ -2043,7 +2043,7 @@ mod bounded_cast_tests {
                 let expanded =
                     expand_c_claim_source_by_label(&source, &[], "cast_identity.ensures_0")
                         .unwrap_or_else(|error| panic!("{}\n{source}", error.message()));
-                assert!(expanded.contains("known()"), "{expanded}");
+                assert!(expanded.contains("close()"), "{expanded}");
                 assert!(!expanded.contains("normalize("), "{expanded}");
                 assert!(!expanded.contains("solve("), "{expanded}");
                 without_implicit_solve(|| verify_c_sources(&expanded, &[]))

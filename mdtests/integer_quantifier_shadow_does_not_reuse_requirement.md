@@ -5,12 +5,12 @@ theorem integer_quantifier_shadow(z: Integer) {
     requires z == 0;
     ensures forall (z: Integer) { z == 0 } by {
         intro();
-        have z == z by known();
-        known();
+        have z == z by close();
+        close();
     }
 }
 ```
 
 ```expect
-fail: `known` requires the current goal
+fail: could not establish `z == 0`
 ```

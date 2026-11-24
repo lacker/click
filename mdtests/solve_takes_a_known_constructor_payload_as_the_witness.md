@@ -9,12 +9,12 @@ parameter, `witness(x)`. This is the requirement of a Rust
 ```click
 theorem witnesses_a_constant(r: Result<int32, uint8>) {
     requires r == Result<int32, uint8>::Ok(5);
-    ensures exists (v: int32) { r == Result<int32, uint8>::Ok(v) } by { solve(); }
+    ensures exists (v: int32) { r == Result<int32, uint8>::Ok(v) } by { close(); }
 }
 
 theorem witnesses_a_parameter(o: Option<uint32>, x: uint32) {
     requires o == Option<uint32>::Some(x);
-    ensures exists (v: uint32) { Option<uint32>::Some(v) == o } by { solve(); }
+    ensures exists (v: uint32) { Option<uint32>::Some(v) == o } by { close(); }
 }
 ```
 

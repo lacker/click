@@ -41,17 +41,17 @@ int32 run(struct cell *p) {
 } by {
     step();
     step();
-    branch { true => { step(); solve(); } false => {} }
+    branch { true => { step(); close(); } false => {} }
     mark created;
     step();
     step();
     step();
-    have saved == at(created, h) by solve();
+    have saved == at(created, h) by close();
     step();
-    have saved == at(created, h) by solve();
+    have saved == at(created, h) by close();
     step();
     step();
-    solve();
+    close();
 }
 ```
 

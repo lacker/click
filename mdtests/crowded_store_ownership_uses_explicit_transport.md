@@ -19,7 +19,7 @@ void put(int32* p, int32* q) {
     requires p[0] == 9;
     ensures p[0] == 9;
 } by {
-    have separate(memory(p[0]), memory(q[0])) by { solve(); }
+    have separate(memory(p[0]), memory(q[0])) by { close(); }
     step();
     have p[0] == 9 by {
         have p[0] == 9 by {
@@ -27,7 +27,7 @@ void put(int32* p, int32* q) {
                 old(p[0]) == 9;
             };
         }
-        known();
+        close();
     }
 }
 ```

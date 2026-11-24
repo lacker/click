@@ -37,7 +37,7 @@ int32 apply(int32 (*callback)(int32), int32 x) {
 }
 
 theorem spin_has_Unary() {
-    ensures Unary(&spin) by { unfold(Unary(&spin)); solve(); }
+    ensures Unary(&spin) by { unfold(Unary(&spin)); close(); }
 }
 
 int32 spin(int32 x) {

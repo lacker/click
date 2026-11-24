@@ -26,7 +26,7 @@ void mark_one(int32 a[], int32 n, int32 i) {
     } by {
         intro();
         intro();
-        solve();
+        close();
     }
 }
 ```

@@ -10,7 +10,7 @@ spec enum Pair<T> {
 
 theorem wrong_injective_field(first: int32, left: int32, right: int32) {
     requires Pair<int32>::Pair(first, left) == Pair<int32>::Pair(first, right);
-    ensures first == left by solve();
+    ensures first == left by close();
 }
 ```
 

@@ -50,29 +50,29 @@ void mark_run(int32* occupied, int32 capacity, int32 start, int32 end) {
     ensures start < 0;
 } by {
     let { next: n0 } = unfold(w);
-    have 0 <= start by solve();
-    have start < capacity by solve();
+    have 0 <= start by close();
+    have start < capacity by close();
     step();
     step();
-    have occupied[start] == 0 by solve();
+    have occupied[start] == 0 by close();
     step();
     let w = fold(window(occupied, capacity, start, end), { next: start });
     mark pre;
-    have at(pre, occupied[start]) == 0 by { solve(); }
+    have at(pre, occupied[start]) == 0 by { close(); }
     loop {
         owns w: window(occupied, capacity, start, end);
         invariant w.next == i;
         decreases end - i;
-        initialize by solve();
+        initialize by close();
         maintain by {
             let { next: m } = unfold(w);
-            have m == i by solve();
-            have i < end by solve();
-            have start <= m by solve();
+            have m == i by close();
+            have i < end by close();
+            have start <= m by close();
             have 0 <= m;
             have 0 <= i by {
                 rewrite(i, m);
-                known();
+                close();
             }
             have i < capacity;
             mark opened;
@@ -85,7 +85,7 @@ void mark_run(int32* occupied, int32 capacity, int32 start, int32 end) {
                 intro();
                 have to_integer(k) < to_integer(at(opened, i) + 1);
                 if k < at(opened, i) {
-                    have k < m by solve();
+                    have k < m by close();
                     have at(opened, occupied[k]) == 1 by {
                         have at(opened, start) <= at(opened, k) and
                                 at(opened, k) < at(opened, m);
@@ -94,9 +94,9 @@ void mark_run(int32* occupied, int32 capacity, int32 start, int32 end) {
                                 at(opened, j) < at(opened, m) implies
                                 at(opened, occupied[j]) == at(opened, 1)
                         }, k);
-                        known();
+                        close();
                     }
-                    have 0 <= k by solve();
+                    have 0 <= k by close();
                     have k != at(opened, i) by { close() using { k < at(opened, i); }; }
                     have at(opened, separate(memory(occupied[i]), memory(occupied[k]))) by {
                         apply(click::separation::separate_elements(occupied, at(opened, i), k));
@@ -111,7 +111,7 @@ void mark_run(int32* occupied, int32 capacity, int32 start, int32 end) {
                     have occupied[k] == at(loop(0).statement(1).entry, occupied[k]) by {
                         preserve(memory(occupied[k]), loop(0).statement(1));
                     }
-                    known();
+                    close();
                 } else {
                     have k <= at(opened, i);
                     have k == at(opened, i);
@@ -121,7 +121,7 @@ void mark_run(int32* occupied, int32 capacity, int32 start, int32 end) {
             }
             have start <= at(opened, i) by {
                 rewrite(at(opened, i), m);
-                known();
+                close();
             }
             have to_integer(start) <= to_integer(at(opened, i) + 1);
             have to_integer(at(opened, i) + 1) <= to_integer(end);
@@ -148,23 +148,23 @@ void mark_run(int32* occupied, int32 capacity, int32 start, int32 end) {
     transport(at(pre, occupied[start]) == 0, occupied[start] == 0) using {
         at(pre, occupied[start]) == 0;
     }
-    have n == i by solve();
-    have n <= end by solve();
+    have n == i by close();
+    have n <= end by close();
     have not (n < end) by {
         rewrite(n, i);
-        known();
+        close();
     }
     have n == end;
     have start < n by {
         rewrite(n, end);
-        known();
+        close();
     }
     have start <= start by normalize();
     have occupied[start] == 1 by {
         instantiate(forall (j: int32) {
             start <= j and j < n implies occupied[j] == 1
         }, start);
-        known();
+        close();
     }
     have start < 0 by {
         contradiction(occupied[start] == 1);

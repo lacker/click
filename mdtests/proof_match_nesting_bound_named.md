@@ -85,7 +85,7 @@ int32 read_one(struct cell* a) {
                                                                                                     unfold(t);
                                                                                                     step_until(function.exit);
                                                                                                     let t = fold(cell(a), { model: old(t.model) });
-                                                                                                    solve();
+                                                                                                    close();
                                                                                                 },
                                                                                             }
                                                                                         },

@@ -38,7 +38,7 @@ struct node* unpack(struct node* node) {
         }
     }
     fold(packed(node));
-    solve();
+    close();
 }
 ```
 

@@ -17,13 +17,13 @@ void probe(struct holder* h, int32 n) {
     owns cells(h->data, n);
 } by {
     step(); step();
-    have separate(memory(h->data[0..n]), memory(h->data)) by { known(); }
+    have separate(memory(h->data[0..n]), memory(h->data)) by { close(); }
     loop {
         owns cells(h->data, n);
         decreases n - i;
         invariant 0 <= i;
         invariant i <= n;
-        initialize by solve();
+        initialize by close();
         maintain by {
             unfold(cells(h->data, n));
             have separate(memory(h->data[i]), memory(h->data));

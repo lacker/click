@@ -38,7 +38,7 @@ void touch(struct cell *cell) {
     let restored = fold(cell_state(cell), { value: cell->value });
     step(pthread_mutex_unlock, { access: access, guard: guard, state: restored });
     step();
-    solve();
+    close();
 }
 void run(struct cell *cell) {
     owns cell->other;
@@ -49,7 +49,7 @@ void run(struct cell *cell) {
     step(touch, { access: lifetime });
     step(pthread_mutex_destroy, { lifetime: lifetime });
     step();
-    solve();
+    close();
 }
 ```
 

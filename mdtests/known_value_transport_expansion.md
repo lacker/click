@@ -21,7 +21,7 @@ void keep(int32* p, int32* q) {
         transport(at(statement(0).entry, *q) == 7, *q == 7);
     }
     step();
-    known();
+    close();
 }
 ```
 

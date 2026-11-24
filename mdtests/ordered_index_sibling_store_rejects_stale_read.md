@@ -18,7 +18,7 @@ int32 f(int32* data, int32 len, int32 x, int32 y, int32 z) {
     requires y < z;
     requires z < len;
     ensures result == 100;
-} by { step(); step(); step(); solve(); }
+} by { step(); step(); step(); close(); }
 ```
 
 ```expect

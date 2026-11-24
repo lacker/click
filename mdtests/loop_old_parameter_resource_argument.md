@@ -39,7 +39,7 @@ void advance(int32* rb, int32* stop) {
         decreases remaining(rb, stop);
         owns cell: Cell(old(rb));
         invariant cell.value == old(cell.value);
-        initialize by solve();
+        initialize by close();
         maintain by {
             have remaining(rb, stop) == 1 by {
                 unfold(remaining(rb, stop));
@@ -63,7 +63,7 @@ void change_index(int32* p, int32 index) {
         owns cell: IndexedCell(p, old(index));
         invariant index >= 0;
         invariant cell.value == old(cell.value);
-        initialize by solve();
+        initialize by close();
         maintain by { step(); }
     }
 }

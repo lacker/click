@@ -3943,7 +3943,7 @@ fn proof_step_source_name(step: &ProofStep) -> &'static str {
         ProofStep::CheckTerminationLocal(_) => "check_termination_local",
         ProofStep::CheckTerminationComponent { .. } => "check_termination_component",
         ProofStep::CheckTerminationCallbacks => "check_termination_callbacks",
-        ProofStep::Known => "known()",
+        ProofStep::Known => "close()",
         ProofStep::Normalize | ProofStep::NormalizeUsing(_) => "normalize()",
         ProofStep::CompatibilityNormalize(_) => "compatibility normalization",
         ProofStep::ArithmeticUsing(_) => "close() using",

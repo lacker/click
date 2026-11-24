@@ -26,9 +26,9 @@ void mark_one(int32 a[], int32 n, int32 i, int32 m) {
     mark entry;
     step();
     step_until(function.exit);
-    have at(entry, a[m]) == at(entry, a[m]) by known();
-    have at(entry, a[m]) == 5 by { solve(); }
-    solve();
+    have at(entry, a[m]) == at(entry, a[m]) by close();
+    have at(entry, a[m]) == 5 by { close(); }
+    close();
 }
 ```
 

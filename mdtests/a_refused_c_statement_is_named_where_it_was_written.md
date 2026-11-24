@@ -24,7 +24,7 @@ verifying "a_refused_c_statement_is_named_where_it_was_written.c";
 int32 add(int32 a, int32 b) {
     ensures result == a + b;
 } by {
-    step(); step(); step(); solve();
+    step(); step(); step(); close();
 }
 ```
 

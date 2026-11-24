@@ -9,7 +9,7 @@ the disjunction, so the store drops `q[0]` and the read is unknown.
 
 The refusal names the statement whose store dropped the cell and the exact
 fact the search spelled, so a proof can state it before that statement with
-`step_until(statement(3).entry); have ... by solve();`.
+`step_until(statement(3).entry); have ... by close();`.
 
 ```c filename=a_store_search_miss_names_the_store_and_the_fact_for_a_heap_read.c
 int read_first(int m) {

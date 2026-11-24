@@ -112,16 +112,16 @@ fn authority_transfer_wrapper_preserves_a_tracked_member() {
         } by {
             step();
             step();
-            branch { true => { step_until(function.exit); solve(); } false => {} }
+            branch { true => { step_until(function.exit); close(); } false => {} }
             fold(authority(member(p)));
             fold(member(p));
             fold(held(p));
             unfold(held(p));
-            have count(member(p)) == 1 by { solve(); }
+            have count(member(p)) == 1 by { close(); }
             unfold(member(p));
             unfold(authority(member(p)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let c = "int32 run(void) { int32* p = malloc(4); if (p == 0) return 0; free(p); return 1; }";
@@ -144,13 +144,13 @@ fn authority_member_wrapper_requires_population_cleanup_before_free() {
         } by {
             step();
             step();
-            branch { true => { step_until(function.exit); solve(); } false => {} }
+            branch { true => { step_until(function.exit); close(); } false => {} }
             fold(authority(member(p)));
             fold(member(p));
             fold(authority(held(p)));
             fold(held(p));
-            have count(held(p)) == 1 by solve();
-            have count(member(p)) == 1 by solve();
+            have count(held(p)) == 1 by close();
+            have count(member(p)) == 1 by close();
             step_until(function.exit);
         }
     "#;
@@ -181,13 +181,13 @@ fn authority_transfer_wrapper_cannot_rewrite_its_own_tracked_family_at_outcome()
         } by {
             step();
             step();
-            branch { true => { step_until(function.exit); solve(); } false => {} }
+            branch { true => { step_until(function.exit); close(); } false => {} }
             fold(authority(member(p)));
             fold(member(p));
             fold(authority(held(p)));
             step_until(function.exit);
             fold(held(result));
-            solve();
+            close();
         }
     "#;
     let c = "int32* run(void) { int32* p = malloc(4); if (p == 0) return 0; return p; }";
@@ -297,7 +297,7 @@ fn separately_proved_resource_clauses_cannot_duplicate_a_borrowed_unit() {
         verifying "wrapper.c";
         int32 duplicate(int32 object) {
             owns Permit(object);
-            produces Permit(object) by { step_until(function.exit); known(); }
+            produces Permit(object) by { step_until(function.exit); close(); }
         }
     "#;
     let error = verify_c_project(

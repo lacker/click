@@ -58,7 +58,7 @@ resource context(p: struct node*, root: struct root*) { field model: Context; ma
 void helper(struct node *p, struct node *q, struct root *root) {
  consumes before: context(p, root);
  produces after: context(q, root);
-} by { match before.model { Context::Top => { unfold(before); step_until(function.exit); let after = fold(context(q, root), {model: Context::Top}); solve(); } } }
+} by { match before.model { Context::Top => { unfold(before); step_until(function.exit); let after = fold(context(q, root), {model: Context::Top}); close(); } } }
 void probe(struct node *p, struct root *root) {
  owns p->right;
  consumes b: shell(p->right); consumes c: context(p, root);
@@ -80,16 +80,16 @@ void probe(struct node *p, struct root *root) {
   mark after_store;
   have nid->right == at(before_store, nid->right) by {
    have separate(statement(2).footprint, memory(nid->right)) by {
-       known();
+       close();
    }
    preserve(memory(nid->right), statement(2));
   }
   have separate(c, memory(near->right));
   have nid == near;
-  have separate(c, memory(nid->right)) by { rewrite(nid, near); known(); }
+  have separate(c, memory(nid->right)) by { rewrite(nid, near); close(); }
   mark before_call;
   let { after: c } = step(helper, { before: c });
-  have contains(at(before_call, c), statement(3).footprint) by { known(); }
+  have contains(at(before_call, c), statement(3).footprint) by { close(); }
   apply(separation::contains_refl(memory(nid->right)));
   apply(separation::separate_restrict(at(before_call, c), memory(nid->right), statement(3).footprint, memory(nid->right)));
   have nid->right == at(before_call, nid->right) by {

@@ -8,7 +8,7 @@ that range and its span conditions.
 theorem stated_byte_range_span_is_nonnegative(v: uint8[], lo: int32, hi: int32) {
     views v[lo..hi];
     requires defined(hi - lo);
-    ensures 0 <= to_integer(hi - lo) by known();
+    ensures 0 <= to_integer(hi - lo) by close();
 }
 
 theorem narrowed_byte_range_owes_its_span(v: uint8[], lo: int32, n: int32, k: int32) {

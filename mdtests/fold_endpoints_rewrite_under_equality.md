@@ -10,14 +10,14 @@ theorem fold_endpoints_equal_from_an_equality(lo: int32, a: int32, b: int32) {
     requires a == b;
     ensures (lo..a).fold(0, |acc, k| { acc + to_integer(k) }) ==
         (lo..b).fold(0, |acc, k| { acc + to_integer(k) }) by {
-        solve();
+        close();
     }
 }
 
 theorem fold_endpoint_predecessor_successor(lo: int32, hi: int32) {
     ensures (lo..((hi - 1) + 1)).fold(0, |acc, k| { acc + to_integer(k) }) ==
         (lo..hi).fold(0, |acc, k| { acc + to_integer(k) }) by {
-        solve();
+        close();
     }
 }
 ```

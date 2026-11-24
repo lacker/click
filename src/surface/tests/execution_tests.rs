@@ -19,9 +19,9 @@ fn generic_result_type_fixture() -> (&'static str, &'static str) {
             step_until(function.exit);
             have select(p, result) == p by {
                 unfold(select(p, result));
-                known();
+                close();
             }
-            solve();
+            close();
         }
     "#;
     (source, c_source)
@@ -94,7 +94,7 @@ fn authority_establishes_and_retires_empty_stack_population() {
             fold(authority(reference(&x)));
             unfold(authority(reference(&x)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     parser::parse_file_items(click_source)
@@ -124,14 +124,14 @@ fn authority_conserves_one_local_member() {
         } by {
             step();
             fold(authority(reference(&x)));
-            have count(reference(&x)) == 0 by { solve(); }
+            have count(reference(&x)) == 0 by { close(); }
             fold(reference(&x));
-            have count(reference(&x)) == 1 by { solve(); }
+            have count(reference(&x)) == 1 by { close(); }
             unfold(reference(&x));
-            have count(reference(&x)) == 0 by { solve(); }
+            have count(reference(&x)) == 0 by { close(); }
             unfold(authority(reference(&x)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     verify_c_project(
@@ -162,7 +162,7 @@ fn authority_cannot_reestablish_after_retirement() {
             unfold(authority(reference(&x)));
             fold(authority(reference(&x)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let error = verify_c_project(
@@ -195,7 +195,7 @@ fn authority_rejects_automatic_storage_end_with_live_authority() {
             step();
             fold(authority(reference(&x)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let error = verify_c_project(
@@ -224,7 +224,7 @@ fn authority_imported_pointer_without_live_storage_cannot_establish_population()
         } by {
             fold(authority(reference(p)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let error = verify_c_project(
@@ -258,7 +258,7 @@ fn authority_cannot_create_untracked_member_before_establishment() {
             fold(reference(&x));
             fold(authority(reference(&x)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let error = verify_c_project(
@@ -292,7 +292,7 @@ fn authority_rejects_double_member_consumption() {
             unfold(reference(&x));
             unfold(authority(reference(&x)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let error = verify_c_project(
@@ -322,7 +322,7 @@ fn authority_cannot_retire_with_live_member() {
             fold(reference(&x));
             unfold(authority(reference(&x)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let error = verify_c_project(
@@ -350,9 +350,9 @@ fn authority_count_requires_owned_authority() {
             owns p[0..1];
             ensures result == 7;
         } by {
-            have count(reference(p)) == 0 by { solve(); }
+            have count(reference(p)) == 0 by { close(); }
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let error = verify_c_project(
@@ -473,7 +473,7 @@ fn authority_helper_returns_the_same_authority_and_member() {
             unfold(reference(&x));
             unfold(authority(reference(&x)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     verify_c_project(
@@ -505,7 +505,7 @@ fn authority_helper_consumes_one_member_and_returns_authority() {
         } by {
             unfold(reference(p));
             step_until(function.exit);
-            solve();
+            close();
         }
 
         int32 value() {
@@ -517,10 +517,10 @@ fn authority_helper_consumes_one_member_and_returns_authority() {
             step();
             step();
             step();
-            have count(reference(&x)) == 0 by { solve(); }
+            have count(reference(&x)) == 0 by { close(); }
             unfold(authority(reference(&x)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     verify_c_project(
@@ -552,7 +552,7 @@ fn authority_helper_produces_one_member_and_returns_authority() {
         } by {
             fold(reference(p));
             step_until(function.exit);
-            solve();
+            close();
         }
 
         int32 value() {
@@ -563,11 +563,11 @@ fn authority_helper_produces_one_member_and_returns_authority() {
             step();
             step();
             step();
-            have count(reference(&x)) == 1 by { solve(); }
+            have count(reference(&x)) == 1 by { close(); }
             unfold(reference(&x));
             unfold(authority(reference(&x)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     verify_c_project(
@@ -616,7 +616,7 @@ fn authority_helper_cannot_birth_imported_member_twice() {
             fold(reference(p));
             fold(reference(p));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let error = verify_c_project(
@@ -647,7 +647,7 @@ fn authority_creating_helper_requires_caller_authority() {
         } by {
             fold(reference(p));
             step_until(function.exit);
-            solve();
+            close();
         }
         int32 value() {
             ensures result == 7;
@@ -675,7 +675,7 @@ fn authority_helper_cannot_create_private_memory_from_opaque_authority() {
         } by {
             fold(reference(p));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let error = verify_c_project(
@@ -725,7 +725,7 @@ fn authority_helper_cannot_spend_imported_member_twice() {
             unfold(reference(p));
             unfold(reference(p));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let error = verify_c_project(
@@ -756,7 +756,7 @@ fn authority_consuming_helper_requires_caller_member() {
         } by {
             unfold(reference(p));
             step_until(function.exit);
-            solve();
+            close();
         }
         int32 value() {
             ensures result == 7;
@@ -764,7 +764,7 @@ fn authority_consuming_helper_requires_caller_member() {
             step();
             fold(authority(reference(&x)));
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let error = verify_c_project(
@@ -926,7 +926,7 @@ fn step_and_execute_step_advance_one_concrete_loop_transition() {
                     step();
                     step();
                     step();
-                    solve();
+                    close();
                 }
             }
         "#;
@@ -1000,7 +1000,7 @@ fn symbolic_loop_bound_invariant_completes_without_a_body_rerun() {
                     invariant i >= 0 and i <= n;
                 }
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -1069,10 +1069,10 @@ fn post_execution_case_split_completes_without_a_body_rerun() {
             } by {
                 if a > 0 {
                     step_until(function.exit);
-                    solve();
+                    close();
                 } else {
                     step_until(function.exit);
-                    solve();
+                    close();
                 }
             }
         "#;
@@ -1123,10 +1123,10 @@ fn have_after_loop_completes_without_a_body_rerun() {
                     decreases 1 - j;
                     invariant j >= 0 and j <= 1;
                 }
-                have i == 1 by solve();
-                have j == 1 by solve();
+                have i == 1 by close();
+                have j == 1 by close();
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -1155,7 +1155,7 @@ fn applied_user_theorem_completes_without_a_body_rerun() {
                 requires x < 2147483647;
 
                 ensures defined(x + 1) by {
-                    solve();
+                    close();
                 }
             }
 
@@ -1165,7 +1165,7 @@ fn applied_user_theorem_completes_without_a_body_rerun() {
             } by {
                 apply(increment_is_defined(x));
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -1201,7 +1201,7 @@ fn verified_loop_summary_completes_without_a_body_rerun() {
                 step();
                 step();
                 have i == 0 by {
-                    solve();
+                    close();
                 }
                 loop {
                     decreases 3 - i;
@@ -1209,7 +1209,7 @@ fn verified_loop_summary_completes_without_a_body_rerun() {
                     invariant i <= 3;
                 }
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -1260,7 +1260,7 @@ fn execute_in_loop_preservation_keeps_the_function_exit_miss() {
             loop {
                 decreases more;
                 invariant 0 <= more;
-                initialize by solve();
+                initialize by close();
                 maintain by { step_until(function.exit); }
             }
             step_until(function.exit);
@@ -1713,7 +1713,7 @@ fn observed_cursor_facts_produce_checkable_surface_certificates() {
             observe(input_cursor(owner));
             observe(readable_input(owner->data, owner->len));
             step_until(function.exit);
-            solve();
+            close();
         }
 
         int32 input_cursor_take(struct input_cursor* owner) {
@@ -1727,16 +1727,16 @@ fn observed_cursor_facts_produce_checkable_surface_certificates() {
             unfold(input_cursor(owner));
             observe(readable_input(owner->data, owner->len));
             step_until(function.exit);
-            have 0 <= owner->pos by solve();
-            have owner->pos <= owner->len by solve();
+            have 0 <= owner->pos by close();
+            have owner->pos <= owner->len by close();
             have separate(
                 memory(*owner),
                 memory(owner->data[0..owner->len])
             ) by {
-                solve();
+                close();
             }
             fold(input_cursor(owner));
-            solve();
+            close();
         }
 
     "#;
@@ -1746,7 +1746,7 @@ fn observed_cursor_facts_produce_checkable_surface_certificates() {
         ("input_cursor_take.c", take_c_source),
     ];
     let final_solve = click_source
-        .rfind("solve();")
+        .rfind("close();")
         .expect("final solve should exist");
     let position = expansion::position_at_offset(click_source, final_solve);
     let expanded =
@@ -1813,20 +1813,20 @@ fn explicit_store_step_with_unfolded_resource_facts_verifies() {
             step();
             have terminated_at(owner->data, owner->len) by {
                 unfold(terminated_at(owner->data, owner->len));
-                solve();
+                close();
             }
-            have owner->data[owner->len] == 0 by solve();
-            have 0 <= owner->len by solve();
-            have owner->len < owner->cap by solve();
+            have owner->data[owner->len] == 0 by close();
+            have 0 <= owner->len by close();
+            have owner->len < owner->cap by close();
             have separate(
                 memory(*owner),
                 memory(owner->data[0..owner->cap])
             ) by {
-                solve();
+                close();
             }
             fold(owned_string(owner));
             step();
-            solve();
+            close();
         }
     "#;
 
@@ -1904,23 +1904,23 @@ fn expanded_read_step_uses_contextual_range_separation() {
             ensures owner->data[owner->len] == 0;
         } by {
             unfold(owned_string(owner));
-            have 0 <= owner->len - 1 by solve();
-            have owner->len - 1 < owner->len by solve();
+            have 0 <= owner->len - 1 by close();
+            have owner->len - 1 < owner->len by close();
             step_until(function.exit);
             have terminated_at(owner->data, owner->len) by {
                 unfold(terminated_at(owner->data, owner->len));
-                solve();
+                close();
             }
-            have 0 <= owner->len by solve();
-            have owner->len < owner->cap by solve();
+            have 0 <= owner->len by close();
+            have owner->len < owner->cap by close();
             have separate(
                 memory(*owner),
                 memory(owner->data[0..owner->cap])
             ) by {
-                solve();
+                close();
             }
             fold(owned_string(owner));
-            solve();
+            close();
         }
     "#;
     let execute_offset = click_source
@@ -1997,11 +1997,11 @@ fn decrement_contract_checks_nonnegative_and_equality_certificates() {
             requires value == count;
             ensures to_integer(result) == to_integer(value - 1);
         } by {
-            have 0 <= to_integer(value - 1) by solve();
-            have to_integer(value - 1) < to_integer(value) by solve();
-            have to_integer(value - 1) == to_integer(count - 1) by solve();
+            have 0 <= to_integer(value - 1) by close();
+            have to_integer(value - 1) < to_integer(value) by close();
+            have to_integer(value - 1) == to_integer(count - 1) by close();
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
 
@@ -2039,16 +2039,16 @@ fn branch_continuation_tactics_are_timed_as_source_operations() {
             branch {
                 true => {
                     step_until(function.exit);
-                    solve();
+                    close();
                 }
                 false => {}
             }
             step();
             have x == a by {
-                solve();
+                close();
             }
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     let (verified, events) =
@@ -2316,7 +2316,7 @@ fn execute_until_stops_a_loop_that_never_exits_at_its_step_budget() {
         } by {
             step_until(region(3).entry);
             step_until(function.exit);
-            solve();
+            close();
         }
     "#;
     std::thread::Builder::new()
@@ -2780,7 +2780,7 @@ fn a_loop_test_does_not_publish_the_whole_loops_exit_state() {
         int32 count_two() {
             ensures result == 2 by {
                 step(); step(); step();
-                have at(statement(2).exit, i) == 0 by known();
+                have at(statement(2).exit, i) == 0 by close();
             }
         }
     "#;

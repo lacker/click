@@ -44,7 +44,7 @@ void user(struct pr* p) {
     check_first(p, { x: x });
     step();
     step();
-    solve();
+    close();
 }
 ```
 

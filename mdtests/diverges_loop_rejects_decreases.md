@@ -22,13 +22,13 @@ int32 drain(int32 n) diverges {
     loop diverges {
         decreases n;
         invariant n >= 0;
-        initialize by solve();
+        initialize by close();
         maintain by {
             step();
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

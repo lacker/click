@@ -7,7 +7,7 @@ is stated, and nothing establishes it.
 ```click
 theorem fold_bound_owed(a: int32, b: int32) {
     requires defined((0..(a + b)).fold(0, |acc, k| { acc | k }));
-    ensures 1 == 1 by solve();
+    ensures 1 == 1 by close();
 }
 ```
 

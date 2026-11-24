@@ -15,9 +15,9 @@ verifying "step_by_with_no_open_obligation_is_superfluous.c";
 int32 compare_self(uint8 bytes[]) {
     views bytes[0..2];
     ensures 1 == 1 by {
-        step() by { solve(); }
-        step() by { solve(); }
-        solve();
+        step() by { close(); }
+        step() by { close(); }
+        close();
     }
 }
 ```

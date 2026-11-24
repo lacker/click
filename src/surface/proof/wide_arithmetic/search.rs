@@ -277,7 +277,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             for item in pending {
                 let attempt = match &item {
                     Pending::Premise(premise, lower, upper, relation) => {
-                        // The carry below is `known()`, whose refusal
+                        // The carry below is `close()`, whose refusal
                         // would name the observed reading rather than the
                         // listed premise the proof lacks.
                         let available = search_input

@@ -19,7 +19,7 @@ void set(int32* p, int32* q, int32 x) {
 } by {
     with(cell(p)) {
         step();
-        have p[0] > 0 or p[0] < -1 by { solve(); }
+        have p[0] > 0 or p[0] < -1 by { close(); }
     }
 }
 void set_last(int32* p, int32 x) {
@@ -28,9 +28,9 @@ void set_last(int32* p, int32 x) {
 } by {
     with(cell(p)) {
         step_until(function.exit);
-        have p[0] > 0 or p[0] < -1 by { solve(); }
+        have p[0] > 0 or p[0] < -1 by { close(); }
     }
-    solve();
+    close();
 }
 ```
 

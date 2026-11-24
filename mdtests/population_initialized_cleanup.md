@@ -63,7 +63,7 @@ void child_init(struct child* obj, int32 payload) {
     fold(child_ref(obj));
     fold(child_storage(obj));
     step_until(function.exit);
-    solve();
+    close();
 }
 
 void child_release(struct child* obj) {
@@ -81,7 +81,7 @@ void child_release(struct child* obj) {
         unfold(child_ref(obj));
         unfold(authority(child_ref(obj)));
         step_until(function.exit);
-        solve();
+        close();
     } else {
         unfold(child_ref(obj));
         have 1 < obj->refs by {
@@ -92,7 +92,7 @@ void child_release(struct child* obj) {
         step();
         fold(child_control(obj));
         step_until(function.exit);
-        solve();
+        close();
     }
 }
 
@@ -101,7 +101,7 @@ int32 cleanup(int32 payload) {
 } by {
     step();
     step();
-    branch { true => { step(); solve(); } false => {} }
+    branch { true => { step(); close(); } false => {} }
     fold(authority(child_ref(kid)));
     fold(child_storage(kid));
     step();
@@ -109,11 +109,11 @@ int32 cleanup(int32 payload) {
     fold(child_control(kid));
     step();
     step();
-    branch { true => { step(); step(); solve(); } false => {} }
+    branch { true => { step(); step(); close(); } false => {} }
     step();
     step();
     step();
-    solve();
+    close();
 }
 ```
 

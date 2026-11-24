@@ -200,7 +200,7 @@ void replace_root_node(struct rb_node* victim, struct rb_node* new_node,
             new_node));
         normalize();
     }
-    solve();
+    close();
 }
 
 ```

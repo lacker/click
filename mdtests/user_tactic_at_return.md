@@ -62,7 +62,7 @@ tactic check_tag(p: struct pr*, n: int32) {
     requires item.tag == n;
     ensures item.tag == n;
 } by {
-    have item.tag == n by known();
+    have item.tag == n by close();
 }
 
 int32 explicit_proof(struct pr* p, int32 n) {
@@ -74,8 +74,8 @@ int32 explicit_proof(struct pr* p, int32 n) {
 } by {
     step_until(function.exit);
     let { y: y, z: z } = divide(p, result, { x: x }) by {
-        have result == old(n) by known();
-        solve();
+        have result == old(n) by close();
+        close();
     }
     check_tag(p, result, { item: y });
     unfold(y);

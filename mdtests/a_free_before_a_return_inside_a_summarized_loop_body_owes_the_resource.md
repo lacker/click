@@ -39,7 +39,7 @@ int32 release_early(int32 *p, int32 n) {
         owns p[0..1];
     }
     step();
-    solve();
+    close();
 }
 ```
 

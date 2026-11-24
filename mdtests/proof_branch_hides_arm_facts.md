@@ -32,7 +32,7 @@ int32 advance_hidden_branch_fact(int32 x) {
             }
         }
         step();
-        solve();
+        close();
     }
 }
 ```

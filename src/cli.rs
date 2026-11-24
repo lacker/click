@@ -1608,6 +1608,8 @@ pub struct MdTest {
     pub click_start_line: usize,
     /// Whether the Click fence marks this fixture as a Quick Solve Test.
     pub quick_solve: bool,
+    /// Whether the fixture must verify with proof search disabled.
+    pub checked_only: bool,
     /// The ```expect block, if the file has one.
     pub expectation: Option<MdTestExpectation>,
 }
@@ -1703,6 +1705,7 @@ pub fn parse_mdtest(path: &Path, source: &str) -> Result<MdTest, String> {
         click_source: None,
         click_start_line: 1,
         quick_solve: false,
+        checked_only: false,
         expectation: None,
     };
     let lines = source.lines().collect::<Vec<_>>();
@@ -1772,7 +1775,10 @@ pub fn parse_mdtest(path: &Path, source: &str) -> Result<MdTest, String> {
                     ));
                 }
             }
-            Some(BlockKind::Click { quick_solve }) => {
+            Some(BlockKind::Click {
+                quick_solve,
+                checked_only,
+            }) => {
                 if mdtest.click_source.replace(body).is_some() {
                     return Err(format!(
                         "`{}` has more than one ```click block",
@@ -1781,6 +1787,7 @@ pub fn parse_mdtest(path: &Path, source: &str) -> Result<MdTest, String> {
                 }
                 mdtest.click_start_line = start_line;
                 mdtest.quick_solve = quick_solve;
+                mdtest.checked_only = checked_only;
             }
             Some(BlockKind::Expect) => {
                 let expectation = parse_expectation(path, start_line, &body)?;
@@ -2064,6 +2071,7 @@ enum BlockKind {
     },
     Click {
         quick_solve: bool,
+        checked_only: bool,
     },
     Expect,
 }
@@ -2099,8 +2107,10 @@ fn block_kind(path: &Path, line: usize, info: &str) -> Result<Option<BlockKind>,
             }))
         }
         "click" => {
-            let quick_solve = parts.clone().next() == Some("quick-solve");
-            if quick_solve {
+            let mode = parts.clone().next();
+            let quick_solve = mode == Some("quick-solve");
+            let checked_only = mode == Some("checked-only");
+            if quick_solve || checked_only {
                 parts.next();
             }
             if let Some(extra) = parts.next() {
@@ -2115,7 +2125,10 @@ fn block_kind(path: &Path, line: usize, info: &str) -> Result<Option<BlockKind>,
                     path.display()
                 ));
             }
-            Ok(Some(BlockKind::Click { quick_solve }))
+            Ok(Some(BlockKind::Click {
+                quick_solve,
+                checked_only,
+            }))
         }
         "expect" => {
             if let Some(extra) = parts.next() {
@@ -2409,7 +2422,7 @@ mod tests {
             abstract resource token(p: int32*);\n\
             resource cell(p: int32*) { owns p[0..1]; }\n\
             function twice(x: int32) -> int32 { x + x }\n";
-        let theorem = "theorem reflexive(x: int32) { ensures x == x by { solve(); } }\n";
+        let theorem = "theorem reflexive(x: int32) { ensures x == x by { close(); } }\n";
         let entry = "import \"module.click\";\nverifying \"answer.c\";\n\
             int32 answer() { ensures result == 1; }\n";
         fs::write(root.join("module.click"), module).unwrap();
@@ -2975,12 +2988,12 @@ mod tests {
         let no_trailing_newline = markdown.trim_end();
         let mdtest = parse_mdtest(Path::new("container.md"), no_trailing_newline).unwrap();
         let replaced = mdtest
-            .replace_click_source(no_trailing_newline, "known();")
+            .replace_click_source(no_trailing_newline, "close();")
             .unwrap();
         assert!(!replaced.ends_with('\n'));
         assert!(
             mdtest
-                .replace_click_source(&markdown.replace("step();", "solve();"), "known();")
+                .replace_click_source(&markdown.replace("step();", "close();"), "close();")
                 .is_err()
         );
     }
@@ -3098,7 +3111,7 @@ mod tests {
 
         fs::write(
             root.join("outside.click"),
-            "theorem outside() { ensures 0 == 0 by solve(); }",
+            "theorem outside() { ensures 0 == 0 by close(); }",
         )
         .unwrap();
         let escape = "import \"../outside.click\";";

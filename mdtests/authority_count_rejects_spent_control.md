@@ -30,13 +30,13 @@ int32 spent_count() {
 } by {
     step();
     step();
-    branch { true => { step(); solve(); } false => {} }
+    branch { true => { step(); close(); } false => {} }
     step();
     fold(authority(reference(obj)));
     fold(control(obj));
     unfold(control(obj));
     unfold(authority(reference(obj)));
-    have count(reference(obj)) == 0 by solve();
+    have count(reference(obj)) == 0 by close();
     fold(reference(obj));
 }
 ```

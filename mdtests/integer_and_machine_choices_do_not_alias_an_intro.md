@@ -8,7 +8,7 @@ theorem choices_are_distinct_from_an_arbitrary_machine_value() {
         let integer_choice = obtain(exists (integer_choice: Integer) { integer_choice == 0 });
         intro();
         let machine_choice = obtain(exists (machine_choice: int32) { machine_choice == 0 });
-        known();
+        close();
     }
 }
 ```

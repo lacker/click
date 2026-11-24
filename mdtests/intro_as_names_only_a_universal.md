@@ -7,7 +7,7 @@ names in Click, so `let name = intro()` is refused there with the form to write.
 theorem intro_as_on_implication(n: int32) {
     ensures 0 <= n implies 0 <= n by {
         let h = intro();
-        known();
+        close();
     }
 }
 ```

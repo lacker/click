@@ -11,16 +11,16 @@ void keep(uint8* p, uint8* q) {
     views *q;
     requires separate(memory(*p), memory(*q));
 } by {
-    step() by { known(); }
+    step() by { close(); }
     have separate(statement(0).footprint, memory(*q)) by {
-        known();
+        close();
     }
     have *q == at(statement(0).entry, *q) by {
         preserve(memory(*q), statement(0));
     }
     step_until(function.exit);
-    known();
-    known(); known(); known();
+    close();
+    close(); close(); close();
 }
 ```
 

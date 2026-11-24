@@ -2,9 +2,9 @@
 
 `fill` sets every cell of `occ` to `1` and returns `1`, the shape of an
 allocator's occupancy postcondition: `result == 1 implies forall (k: int32)
-{ ... }`. After the loop, `solve()` closes the claim by introducing the guard
+{ ... }`. After the loop, `close()` closes the claim by introducing the guard
 and the binder and instantiating the loop invariant; claim expansion renders
-that proof as a `have` of the claim followed by `known()`. The `have`
+that proof as a `have` of the claim followed by `close()`. The `have`
 and the claim lower the guarded quantifier with independent fresh binders,
 and the rewrite used to fail with "`known` did not match any current
 proposition goal". The expansion regression in

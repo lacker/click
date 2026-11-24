@@ -9162,7 +9162,7 @@ fn certified_scalar_store_equations_name_the_read_at_its_actual_width() {
 /// a later typed read of the same cell does not revisit a context that already
 /// holds the equation. A read at an index equal to the stored one then missed
 /// in that context, but not in one rebuilt from the same facts, so expanding
-/// `arena_write` replayed `known()` against a context that knew less.
+/// `arena_write` replayed `close()` against a context that knew less.
 #[test]
 fn a_store_equation_admitted_before_a_typed_read_joins_reads_at_equal_indexes() {
     use crate::kernel::{ExecutionFacts, ExecutionPureFact, PureFactContext};

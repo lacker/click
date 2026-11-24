@@ -68,15 +68,15 @@ struct cell* read_unowned_offset(struct cell* node, struct cell* parent) {
             have holder_reroot(Holder::Full(identity, value), parent)
                 == Holder::Full(parent, value) by {
                 unfold(holder_reroot(Holder::Full(identity, value), parent));
-                known();
+                close();
             }
-            have identity == parent by solve();
+            have identity == parent by close();
             unfold(f);
             step();
             step();
             let g = fold(holder_at(node), { model: Holder::Full(identity, value) });
             step();
-            solve();
+            close();
         },
     }
 }

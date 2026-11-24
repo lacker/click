@@ -29,7 +29,7 @@ void wrong(struct cell *cell) {
 } by {
     let { lifetime: mutex_lifetime } = step(pthread_mutex_init, { state: state });
     step();
-    solve();
+    close();
 }
 ```
 

@@ -30,7 +30,7 @@ int32 caller(int32 x) throws int32 {
     step();
     step();
     step();
-    solve();
+    close();
 }
 ```
 

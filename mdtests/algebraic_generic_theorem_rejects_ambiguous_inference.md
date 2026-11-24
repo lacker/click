@@ -2,13 +2,13 @@
 
 ```click
 theorem hidden<T>(value: int32) {
-    ensures value == value by solve();
+    ensures value == value by close();
 }
 
 theorem use_hidden(value: int32) {
     ensures value == value by {
         apply(hidden(value));
-        known();
+        close();
     }
 }
 ```

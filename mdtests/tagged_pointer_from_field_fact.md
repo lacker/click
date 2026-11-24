@@ -37,9 +37,9 @@ int32 parent_value(struct node* node, struct node* next) {
     have *((&node->word) as (int32 **)) == at(before, *((&node->word) as (int32 **))) by {
         preserve(memory(node->word), statement(0).region(0));
     }
-    have ((node->word & ~3) as (struct node *)) == next by { known(); }
+    have ((node->word & ~3) as (struct node *)) == next by { close(); }
     step();
-    have parent == next by { known(); }
+    have parent == next by { close(); }
     step();
 }
 ```

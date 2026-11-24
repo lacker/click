@@ -69,7 +69,7 @@ void *fill_range(void *argument) {
 
         initialize by {
             have job->begin <= index and index <= job->end by {
-                all { job->begin <= index => { normalize(); } index <= job->end => { known(); } }
+                all { job->begin <= index => { normalize(); } index <= job->end => { close(); } }
             }
             have forall (k: int32) { job->begin <= k and k < index implies job->output[k] == job->value } by {
                 intro();
@@ -80,14 +80,14 @@ void *fill_range(void *argument) {
         maintain by {
             // The output store leaves the range descriptor and earlier cells intact.
             mark before_write;
-            have separate(memory(*job), memory(job->output[job->begin..job->end])) by { known(); }
+            have separate(memory(*job), memory(job->output[job->begin..job->end])) by { close(); }
             have contains(memory(job->output[job->begin..job->end]), memory(job->output[index])) by {
                 apply(separation::contains_element(job->output, job->begin, job->end, index));
             }
             apply(separation::contains_refl(memory(*job)));
             apply(separation::separate_restrict(memory(*job), memory(job->output[job->begin..job->end]),
                 memory(*job), memory(job->output[index])));
-            step() by { known(); }
+            step() by { close(); }
 
             have separate(loop(0).statement(0).footprint, at(before_write, memory(*job))) by {
                 normalize() using {
@@ -119,7 +119,7 @@ void *fill_range(void *argument) {
             have load<int32>(at(before_write, &job->value)) == at(before_write, load<int32>(&job->value)) by {
                 preserve(memory(at(before_write, &job->value)[0]), loop(0).statement(0));
             }
-            have job->value == at(before_write, job->value) by { known(); }
+            have job->value == at(before_write, job->value) by { close(); }
 
             have forall (k: int32) { job->begin <= k and k <= index implies job->output[k] == job->value } by {
                 intro();
@@ -130,7 +130,7 @@ void *fill_range(void *argument) {
                     }), k);
                     have at(before_write, job->begin) <= k and k < at(before_write, index) by {
                         rewrite(at(before_write, job->begin), job->begin);
-                        known();
+                        close();
                     }
                     apply(at(before_write, job->begin) <= k and k < at(before_write, index) implies
                         at(before_write, job->output[k]) == at(before_write, job->value));
@@ -148,11 +148,11 @@ void *fill_range(void *argument) {
                     }
                     rewrite(job->output, at(before_write, job->output));
                     rewrite(job->value, at(before_write, job->value));
-                    known();
+                    close();
                 } else {
                     have k == index;
                     rewrite(k, index);
-                    solve();
+                    close();
                 }
             }
 
@@ -161,50 +161,50 @@ void *fill_range(void *argument) {
             step();
             have at(before_write, index) < job->end by {
                 rewrite(job->end, at(before_write, job->end));
-                known();
+                close();
             }
             have at(after_write, index) < 2147483647 by {
                 apply(integer::int32_less_than_less_equal_transitive(at(after_write, index), job->end, 2147483647));
             }
             apply(integer::int32_increment_below_max_is_defined(at(after_write, index)));
             have to_integer(index) == to_integer(at(before_write, index)) + 1 by {
-                have to_integer(index) == to_integer(at(after_write, index) + 1) by { known(); }
+                have to_integer(index) == to_integer(at(after_write, index) + 1) by { close(); }
                 apply(integer::int32_add_to_integer(at(after_write, index), 1));
-                known();
+                close();
             }
             have forall (k: int32) { job->begin <= k and k < index implies job->output[k] == job->value } by {
                 intro();
                 intro();
                 have k <= at(after_write, index) by {
-                    have to_integer(k) < to_integer(index) by { known(); }
+                    have to_integer(k) < to_integer(index) by { close(); }
                     apply(integer::lt_le_predecessor(to_integer(k), to_integer(index)));
                     have to_integer(at(after_write, index)) == to_integer(index) - 1 by {
                         rewrite(to_integer(index), to_integer(at(before_write, index)) + 1);
-                        known();
+                        close();
                     }
                     have to_integer(k) <= to_integer(at(after_write, index)) by {
                         rewrite(to_integer(at(after_write, index)), to_integer(index) - 1);
-                        known();
+                        close();
                     }
                     apply(integer::int32_to_integer_less_equal_implies_less_equal(k, at(after_write, index)));
                 }
                 instantiate(at(after_write, forall (k: int32) {
                     job->begin <= k and k <= index implies job->output[k] == job->value
                 }), k);
-                have at(after_write, job->begin) <= k and k <= at(after_write, index) by { known(); }
+                have at(after_write, job->begin) <= k and k <= at(after_write, index) by { close(); }
                 apply(at(after_write, job->begin) <= k and k <= at(after_write, index) implies
                     at(after_write, job->output[k]) == at(after_write, job->value));
-                known();
+                close();
             }
             have job->begin <= index by {
-                have at(after_write, job->begin) <= at(after_write, index) by { known(); }
+                have at(after_write, job->begin) <= at(after_write, index) by { close(); }
                 apply(integer::int32_increment_lower_bound(at(after_write, index), at(after_write, job->begin), job->end));
-                have to_integer(job->begin) <= to_integer(index) by { known(); }
+                have to_integer(job->begin) <= to_integer(index) by { close(); }
                 apply(integer::int32_to_integer_less_equal_implies_less_equal(job->begin, index));
             }
             have index <= job->end by {
                 apply(integer::int32_increment_upper_bound(at(after_write, index), job->end));
-                have to_integer(index) <= to_integer(job->end) by { known(); }
+                have to_integer(index) <= to_integer(job->end) by { close(); }
                 apply(integer::int32_to_integer_less_equal_implies_less_equal(index, job->end));
             }
             have 0 <= to_integer(job->end) - to_integer(index) by {
@@ -213,13 +213,13 @@ void *fill_range(void *argument) {
             have to_integer(job->end) - to_integer(index) < at(before_write, to_integer(job->end) - to_integer(index)) by {
                 rewrite(to_integer(index), to_integer(at(before_write, index)) + 1);
                 rewrite(at(before_write, job->end), job->end);
-                known();
+                close();
             }
-            solve();
+            close();
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

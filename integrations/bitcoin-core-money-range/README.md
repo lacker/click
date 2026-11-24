@@ -309,7 +309,7 @@ int32 even for the wider numerator range. A positive remainder excludes
 remainder excludes `INT64_MIN`: reconstruction would otherwise contradict the
 scaled input bound. Shared proof-backed `integer::upper_correction_bound` and
 `integer::lower_correction_bound` lemmas establish one unit of margin only in
-the relevant branch. After proving native definedness there, `solve()` states
+the relevant branch. After proving native definedness there, `close()` states
 each possible corrected sum's exact Integer value, which bounds it; the native
 result bounds are those Integer comparisons, read directly. No output range is
 assumed. The sidecar retains the explicit pinned
@@ -435,7 +435,7 @@ equalities and false rounding inequalities. The evaluated `Assume` contract
 and compiler/library pins remain the profile described above.
 
 The shared uint64 Integer lemmas provide exact no-wrap multiplication and
-nonzero division/remainder; `solve()` states the in-range addition and
+nonzero division/remainder; `close()` states the in-range addition and
 subtraction identities, and native comparisons read as Integer ones. The
 checked contracts and ordinary C regressions are described in [the Integer model](../../docs/internals/mathematical-integers.md#exact-unsigned-64-bit-observations).
 The cast certificate now also recognizes the legacy 32/64-bit terms of the

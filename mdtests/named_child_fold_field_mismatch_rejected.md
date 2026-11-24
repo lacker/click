@@ -41,7 +41,7 @@ void copy_across(struct pair *p) {
     let restored = fold(pair_state(p), { a: p->a, b: 7, second: copied });
     step(pthread_mutex_unlock, { access: access, guard: guard, state: restored });
     step();
-    solve();
+    close();
 }
 ```
 

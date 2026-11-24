@@ -47,18 +47,18 @@ void object_retain(struct object *obj) {
 } by {
     let { guard: guard, state: state } = step(pthread_mutex_lock, { access: access });
     let { refs: refs, slack: slack } = unfold(state);
-    have count(permit(obj)) >= 1 by solve();
-    have slack == count(permit(obj)) by solve();
-    have 1 <= slack by solve();
+    have count(permit(obj)) >= 1 by close();
+    have slack == count(permit(obj)) by close();
+    have 1 <= slack by close();
     have to_integer(1) <= to_integer(slack);
-    have to_integer(refs) + to_integer(slack) == 3 by solve();
+    have to_integer(refs) + to_integer(slack) == 3 by close();
     have to_integer(refs) <= to_integer(2) by close() using {
         to_integer(refs) + to_integer(slack) == 3;
         to_integer(1) <= to_integer(slack);
     };
     have refs <= 2;
-    have defined(refs + 1) by solve();
-    have defined(slack - 1) by solve();
+    have defined(refs + 1) by close();
+    have defined(slack - 1) by close();
     have to_integer(refs + 1) == to_integer(refs) + to_integer(1);
     have to_integer(slack - 1) == to_integer(slack) - to_integer(1);
     have to_integer(refs + 1) + to_integer(slack - 1) == 3 by close() using {
@@ -66,14 +66,14 @@ void object_retain(struct object *obj) {
         to_integer(slack - 1) == to_integer(slack) - to_integer(1);
         to_integer(refs) + to_integer(slack) == 3;
     };
-    have obj->refs == refs by solve();
+    have obj->refs == refs by close();
     fold(reference(obj));
-    have obj->refs <= 2 by solve();
+    have obj->refs <= 2 by close();
     step();
     let restored = fold(control(obj), { refs: refs + 1, slack: slack - 1 });
     step(pthread_mutex_unlock, { access: access, guard: guard, state: restored });
     step();
-    solve();
+    close();
 }
 ```
 

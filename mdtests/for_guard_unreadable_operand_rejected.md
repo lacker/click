@@ -31,7 +31,7 @@ int32 ufor(int32 a, int32* p) {
         invariant i <= 10;
     }
     step();
-    solve();
+    close();
 }
 ```
 

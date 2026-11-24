@@ -9,7 +9,7 @@ truthfully that no premise reached this lowering at all.
 
 ```click
 theorem endpoint_without_a_bound(hi: int32) {
-    ensures to_integer(hi - 1) == to_integer(hi - 1) by solve();
+    ensures to_integer(hi - 1) == to_integer(hi - 1) by close();
 }
 ```
 

@@ -39,7 +39,7 @@ only by the tests that read them.
 - `owns p` for a pointer is the pointer's own slot. `owns *p` is what it
   points at.
 - A separate tactic for conjunction and disjunction goals was dropped;
-  `known()` closes them.
+  `close()` closes them.
 - `requires`, `ensures`, `fact` and `invariant` stay four words: each says
   where its proposition holds.
 - `requires` takes no label. Requirement labels were removed on 2026-09-23

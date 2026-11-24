@@ -387,7 +387,7 @@ static int64 FeeFrac::Div(int128 n, int32 d, bool round_down) {
     have 1 <= d by { close() using { d > 0; } }
     have to_integer(d) != 0 by { close() using { 1 <= to_integer(d); }; }
     have to_integer(d) != -1 by { close() using { 1 <= to_integer(d); }; }
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }"#;
         let parsed = read_click_project(&sidecar, guard_proof).unwrap();
         let error = verify_program_prepared_project(&parsed, &import).unwrap_err();
@@ -1475,16 +1475,16 @@ struct Triple probe(const int32* left, const int32* right) {
     ensures result.right == right[0];
     ensures result.tag == 42;
 } by {
-    have separate(memory(((&result) as (uint8 *))[0..12]), memory(left[0..1])) by { known(); }
-    have separate(memory(((&result) as (uint8 *))[0..12]), memory(right[0..1])) by { known(); }
+    have separate(memory(((&result) as (uint8 *))[0..12]), memory(left[0..1])) by { close(); }
+    have separate(memory(((&result) as (uint8 *))[0..12]), memory(right[0..1])) by { close(); }
     step() {
         requires separate(
             memory(((&result) as (uint8 *))[0..12]),
             memory(left[0..1]) * memory(right[0..1])
-        ) by { solve(); }
+        ) by { close(); }
     }
     step_until(function.exit);
-    solve();
+    close();
 }
 "#;
     check_pinned_writable_span_proof(&root, &import, source, "probe.contract");
@@ -2729,7 +2729,7 @@ fn unified_fee_evaluation_source_with_profile(mode: &str, result_fit: bool) -> S
         .split_once("\n}\n\nint64")
         .unwrap()
         .0;
-    let fast_body = fast_body.strip_suffix("    solve();").unwrap();
+    let fast_body = fast_body.strip_suffix("    close();").unwrap();
     let contract = callers.split_once("} by {").unwrap().0;
     let bounds = contract
         .lines()
@@ -3191,9 +3191,9 @@ fn upstream_getfee_modular_callers_cover_empty_negative_and_oversize_inputs() {
         ),
     ] {
         let proof = if conclusion.is_empty() {
-            "step_until(function.exit); solve();"
+            "step_until(function.exit); close();"
         } else {
-            "have this->m_feerate.base.size != 0 by { solve(); } step_until(function.exit); have result != 0i64; solve();"
+            "have this->m_feerate.base.size != 0 by { close(); } step_until(function.exit); have result != 0i64; close();"
         };
         let contract = root_contract.replacen(
             "views this->m_feerate.base.fee;",
@@ -3215,11 +3215,11 @@ theorem empty_rate_application() executes CFeeRate::GetFee(const struct CFeeRate
     ensures EmptyRate(&CFeeRate::GetFee) by {
         have this->m_feerate.base.size >= 0 by { close() using { this->m_feerate.base.size == 0; } }
         have this->m_feerate.base.size <= 2147483647 by { close() using { this->m_feerate.base.size == 0; } }
-        have this->m_feerate.base.size != 0 implies -9223372036854775808 <= to_integer(this->m_feerate.base.fee) by { solve(); }
-        have this->m_feerate.base.size != 0 implies to_integer(this->m_feerate.base.fee) <= 9223372036854775807 by { solve(); }
-        have this->m_feerate.base.size != 0 implies -9223372036854775809 * to_integer(this->m_feerate.base.size) < to_integer(this->m_feerate.base.fee) * to_integer(virtual_bytes) by { solve(); }
-        have this->m_feerate.base.size != 0 implies to_integer(this->m_feerate.base.fee) * to_integer(virtual_bytes) <= 9223372036854775807 * to_integer(this->m_feerate.base.size) by { solve(); }
-        step_until(function.exit); solve();
+        have this->m_feerate.base.size != 0 implies -9223372036854775808 <= to_integer(this->m_feerate.base.fee) by { close(); }
+        have this->m_feerate.base.size != 0 implies to_integer(this->m_feerate.base.fee) <= 9223372036854775807 by { close(); }
+        have this->m_feerate.base.size != 0 implies -9223372036854775809 * to_integer(this->m_feerate.base.size) < to_integer(this->m_feerate.base.fee) * to_integer(virtual_bytes) by { close(); }
+        have this->m_feerate.base.size != 0 implies to_integer(this->m_feerate.base.fee) * to_integer(virtual_bytes) <= 9223372036854775807 * to_integer(this->m_feerate.base.size) by { close(); }
+        step_until(function.exit); close();
     }
 }
 "#);
@@ -3462,7 +3462,7 @@ fn upstream_getfee_per_k_modular_callers_cover_signed_and_oversize_rates() {
         ("WidePerK", 8589934592, 1000),
     ] {
         let contract = root_contract.replacen("views this->m_feerate.base.fee;", &format!("requires this->m_feerate.base.fee == {fee}i64; requires this->m_feerate.base.size == {size}; views this->m_feerate.base.fee;"), 1);
-        callers.push_str(&format!("\ncontract int64 {name}({contract} }}\ntheorem {name}_application() executes CFeeRate::GetFeePerK(const struct CFeeRate* this) {{ ensures {name}(&CFeeRate::GetFeePerK) by {{ step_until(function.exit); solve(); }} }}\n"));
+        callers.push_str(&format!("\ncontract int64 {name}({contract} }}\ntheorem {name}_application() executes CFeeRate::GetFeePerK(const struct CFeeRate* this) {{ ensures {name}(&CFeeRate::GetFeePerK) by {{ step_until(function.exit); close(); }} }}\n"));
     }
     check_upstream_cpp_rounding_phase(
         "CFeeRate::GetFeePerK",
@@ -3631,7 +3631,7 @@ int32& {pop_back}(std::span<int>& span) {{
     }}
     have to_integer(size - 1u64) == to_integer(size) - 1;
     step_until(function.exit);
-    solve();
+    close();
 }}
 int32& probe(std::span<int>& span) {{
     owns std_span_data(span);
@@ -3914,10 +3914,10 @@ const DYNAMIC_SPAN_SUBVIEW_PROOF: &str = r#"    step() {
         requires separate(
             memory((&result as (uint8 *))[0..16]),
             memory(std_span_data(s)) * memory(std_span_size(s))
-        ) by { solve(); }
+        ) by { close(); }
     }
     step_until(function.exit);
-    solve();"#;
+    close();"#;
 
 /// One caller of a generic `std::span` catalog entry: the C++ harness, the
 /// sidecar that proves it, and edits of that sidecar that must be refused,
@@ -4170,10 +4170,10 @@ fn axiomatic_span_element_references_read_and_write() {
         requires separate(
             memory(element[0]),
             memory(std_span_data(s)) * memory(std_span_size(s))
-        ) by {{ solve(); }}
+        ) by {{ close(); }}
     }}
     step_until(function.exit);
-    solve();
+    close();
 }}"#
     );
     let back = format!(
@@ -4461,10 +4461,10 @@ fn axiomatic_static_extent_span_subviews_verify() {
         requires separate(
             memory((&result as (uint8 *))[0..16]),
             memory((&s as (int32 *))[0..2])
-        ) by {{ known(); }}
+        ) by {{ close(); }}
     }}
     step_until(function.exit);
-    solve();
+    close();
 }}"#
         ),
         refusals: vec![],
@@ -4718,7 +4718,7 @@ int32& {pop_back}(std::span<int>& span) {{
     }}
     have to_integer(size - 1u64) == to_integer(size) - 1;
     step_until(function.exit);
-    solve();
+    close();
 }}
 int32 probe(std::span<int>& span, int32 input) {{
     owns std_span_data(span);
@@ -5104,7 +5104,7 @@ fn pinned_std_byte_modular_output_initializes_uint32_offline() {
         .replace("ensures result == 305419896u32;", "ensures result == 0u32;")
         .replace(
             "    step();",
-            "    have obj == 0u32 by { known(); }\n    step();",
+            "    have obj == 0u32 by { close(); }\n    step();",
         );
     for (name, cpp, proof) in [
         (
@@ -5208,7 +5208,7 @@ fn pinned_writable_byte_span_modular_output_initializes_uint32_offline() {
     fs::remove_dir_all(root).unwrap();
 
     let short = harness.replace("*>(&obj), 4)", "*>(&obj), 3)");
-    let short_call = source.replace("    have std_span_size(dst) == 4u64 by { solve(); }\n", "");
+    let short_call = source.replace("    have std_span_size(dst) == 4u64 by { close(); }\n", "");
     let short_contract = source.replace("std_span_size(dst) == 4u64", "std_span_size(dst) == 3u64");
     let no_permission = source
         .replace(
@@ -5781,13 +5781,13 @@ void copy_into(std::span<std::byte> dst, uint64 i) {
     let { result: count } = step();
     step_until(call(2).entry);
     have i < count by {
-        have count == old(std_span_size(dst)) by { known(); }
+        have count == old(std_span_size(dst)) by { close(); }
         rewrite(count, old(std_span_size(dst)));
-        known();
+        close();
     }
     step();
     step_until(function.exit);
-    solve();
+    close();
 }
 "#;
     let path = root.join("CopyInto.click");

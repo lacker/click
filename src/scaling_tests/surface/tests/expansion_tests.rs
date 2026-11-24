@@ -32,8 +32,8 @@ fn selected_pure_expansion_does_not_check_unrelated_proof_bodies() {
 fn partial_tactic_capture_runs_once_as_selected_sites_grow() {
     let c = [("identity.c", "int32 identity(int32 x) { return x; }")];
     let samples = [4, 8, 16, 32].map(|size| {
-        let source = format!("verifying \"identity.c\";\nint32 identity(int32 x) {{ ensures result == x; }} by {{\nstep_until(function.exit);\n{}{}solve();\n}}\n",
-            "have x + 0 == x by solve();\n".repeat(8), "have x == x by solve();\n".repeat(size));
+        let source = format!("verifying \"identity.c\";\nint32 identity(int32 x) {{ ensures result == x; }} by {{\nstep_until(function.exit);\n{}{}close();\n}}\n",
+            "have x + 0 == x by close();\n".repeat(8), "have x == x by close();\n".repeat(size));
         let sites = c_smart_tactic_source_sites(&source, &c).unwrap();
         let positions = sites[9..9+size].iter().map(|s| s.position.clone()).collect::<Vec<_>>();
         let (_, ordinary_views) = proof::count_finalization_view_constructions(|| verify_c_sources(&source, &c).unwrap());
@@ -42,7 +42,7 @@ fn partial_tactic_capture_runs_once_as_selected_sites_grow() {
         });
         let expanded = expanded.unwrap_or_else(|error| panic!("{size} selected sites: {error:?}"));
         assert_eq!(runs, ordinary_views, "{size} sites must cost one ordinary claim verification");
-        assert_eq!(expanded.source.matches("have x + 0 == x by solve();").count(), 8);
+        assert_eq!(expanded.source.matches("have x + 0 == x by close();").count(), 8);
         verify_c_sources(&expanded.source, &c).unwrap();
         work
     });
@@ -56,25 +56,32 @@ fn partial_tactic_capture_runs_once_as_selected_sites_grow() {
 
 #[test]
 fn smart_inventory_positions_are_compatible_and_scale() {
-    use crate::surface::{c_smart_tactic_source_sites, c_tactic_source_position};
-    let source = "// Unicode: λ\ntheorem named() { ensures 0 == 0 by { have 1 == 1 by { solve(); } solve(); } }\ntheorem implicit() { ensures 0 == 0; }\ntheorem short() { ensures 0 == 0 by solve(); }\n";
+    use crate::surface::{
+        c_select_smart_tactic, c_smart_tactic_source_sites, c_tactic_source_position,
+    };
+    let source = "// Unicode: λ\ntheorem named() { ensures 0 == 0 by { have 1 == 1 by { close(); } close(); } }\ntheorem implicit() { ensures 0 == 0; }\ntheorem short() { ensures 0 == 0 by close(); }\n";
     for site in c_smart_tactic_source_sites(source, &[]).unwrap() {
-        assert_eq!(
-            site.position,
-            c_tactic_source_position(source, &[], &site.claim_label, site.source_index).unwrap()
-        );
+        let owner =
+            c_tactic_source_position(source, &[], &site.claim_label, site.source_index).unwrap();
+        assert_eq!(site.position.line, owner.line);
+        assert!(site.position.column >= owner.column);
+        let selected =
+            c_select_smart_tactic(source, &[], site.position.line, Some(site.position.column))
+                .unwrap();
+        assert_eq!(selected.claim_label, site.claim_label);
+        assert_eq!(selected.position, site.position);
     }
     for separate_claims in [false, true] {
         let mut measurements = Vec::new();
         for count in [8, 16, 32, 64] {
             let source = if separate_claims {
                 (0..count)
-                    .map(|i| format!("theorem item_{i}() {{ ensures 0 == 0 by {{ solve(); }} }}\n"))
+                    .map(|i| format!("theorem item_{i}() {{ ensures 0 == 0 by {{ close(); }} }}\n"))
                     .collect::<String>()
             } else {
                 format!(
                     "theorem item() {{ ensures 0 == 0 by {{ {} }} }}",
-                    "solve(); ".repeat(count)
+                    "close(); ".repeat(count)
                 )
             };
             let (sites, work) = crate::instrumentation::measure_deterministic_work(|| {

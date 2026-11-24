@@ -72,10 +72,10 @@ int32 run_suite(const struct callbacks *callbacks) {
 }
 
 theorem propagate_contract() {
-    ensures Propagate(&propagate) by { unfold(Propagate(&propagate)); solve(); }
+    ensures Propagate(&propagate) by { unfold(Propagate(&propagate)); close(); }
 }
 theorem copy_contract() {
-    ensures Copy(&copy) by { unfold(Copy(&copy)); solve(); }
+    ensures Copy(&copy) by { unfold(Copy(&copy)); close(); }
 }
 
 int32 caller() {
@@ -85,8 +85,8 @@ int32 caller() {
 } by {
     apply(propagate_contract());
     apply(copy_contract());
-    have Propagate(suite.propagate) by solve();
-    have Copy(suite.copy) by solve();
+    have Propagate(suite.propagate) by close();
+    have Copy(suite.copy) by close();
     fold(callbacks_storage(&suite));
     step();
 }

@@ -22,16 +22,16 @@ int32 two_haves(int32 x) {
     requires x > 0;
     ensures result == x by {
         have x > 0 by {
-            known();
+            close();
         }
         have x >= 0 by {
             have x > 0 by {
-                known();
+                close();
             }
             normalize();
         }
         step();
-        solve();
+        close();
     }
 }
 ```

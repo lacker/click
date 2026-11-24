@@ -390,11 +390,11 @@ mod tests {
         for (name, proof) in [
             (
                 "twice",
-                "by { unfold(twice(|n: Integer| -> Integer { n + 1 }, 3)); solve(); }",
+                "by { unfold(twice(|n: Integer| -> Integer { n + 1 }, 3)); close(); }",
             ),
             (
                 "forward",
-                "by { unfold(forward(|n: Integer| -> Integer { n + 1 }, 3)); solve(); }",
+                "by { unfold(forward(|n: Integer| -> Integer { n + 1 }, 3)); close(); }",
             ),
         ] {
             let source = format!(
@@ -412,18 +412,18 @@ mod tests {
 
     #[test]
     fn callback_binders_shadow_and_proposition_helpers_expand() {
-        let source = "function shadow(f: fn(Integer) -> Integer, x: Integer) -> Integer { (|f: Integer| -> Integer { f + 1 })(x) } theorem test() { ensures shadow(|n: Integer| -> Integer { n }, 3) == 4 by solve(); }";
+        let source = "function shadow(f: fn(Integer) -> Integer, x: Integer) -> Integer { (|f: Integer| -> Integer { f + 1 })(x) } theorem test() { ensures shadow(|n: Integer| -> Integer { n }, 3) == 4 by close(); }";
         verify_click_theorems(source).unwrap_or_else(|error| panic!("{}", error.report()));
         for (declaration, statement, proof) in [
             (
                 "function every(p: fn(int32) -> Prop, lo: int32, hi: int32) -> Prop { (lo..hi).all(p) }",
                 "every(|i: int32| -> Prop { i < hi }, lo, hi)",
-                "by { intro(); intro(); solve(); }",
+                "by { intro(); intro(); close(); }",
             ),
             (
                 "function some(p: fn(int32) -> Prop, lo: int32, hi: int32) -> Prop { (lo..hi).any(p) }",
                 "some(|i: int32| -> Prop { i == lo }, lo, hi)",
-                "by { witness(lo); solve(); }",
+                "by { witness(lo); close(); }",
             ),
         ] {
             let source = format!(
@@ -440,7 +440,7 @@ mod tests {
 
     #[test]
     fn callback_fold_append_and_memory_expansions_recheck() {
-        let proof = "by { unfold(total(|acc: Integer, i: int32| -> Integer { acc + to_integer(i) }, lo, hi + 1)); solve(); }";
+        let proof = "by { unfold(total(|acc: Integer, i: int32| -> Integer { acc + to_integer(i) }, lo, hi + 1)); close(); }";
         let source = format!(
             "function total(step: fn(Integer, int32) -> Integer, lo: int32, hi: int32) -> Integer {{ (lo..hi).fold(0, step) }} theorem test(lo: int32, hi: int32) {{ requires lo <= hi; requires hi < 2147483647; ensures total(|acc: Integer, i: int32| -> Integer {{ acc + to_integer(i) }}, lo, hi + 1) == total(|acc: Integer, i: int32| -> Integer {{ acc + to_integer(i) }}, lo, hi) + to_integer(hi) {proof} }}"
         );
@@ -452,7 +452,7 @@ mod tests {
             .unwrap_or_else(|error| panic!("{expanded}: {}", error.report()));
 
         let c = [("write.c", "void write(int32* p) { p[0] = 5; }")];
-        let proof = "by { step_until(function.exit); unfold(access(|i: int32| -> Integer { to_integer(p[i]) }, 0)); solve(); }";
+        let proof = "by { step_until(function.exit); unfold(access(|i: int32| -> Integer { to_integer(p[i]) }, 0)); close(); }";
         let source = format!(
             "verifying \"write.c\"; function access(read: fn(int32) -> Integer, i: int32) -> Integer {{ read(i) }} void write(int32* p) {{ owns p[0..1]; requires p[0] == 0; ensures access(|i: int32| -> Integer {{ to_integer(p[i]) }}, 0) == 5; }} {proof}"
         );
@@ -470,11 +470,11 @@ mod tests {
         for (statement, proof) in [
             (
                 "wrap(|x: Integer| -> Integer { x + 1 }, 3) == Boxed::Value(4)",
-                "by { unfold(wrap(|x: Integer| -> Integer { x + 1 }, 3)); have to_integer(3) + 1 == 4 by solve(); solve(); }",
+                "by { unfold(wrap(|x: Integer| -> Integer { x + 1 }, 3)); have to_integer(3) + 1 == 4 by close(); close(); }",
             ),
             (
                 "accepts(|x: Integer| -> Prop { x == 4 }, Boxed::Value(4))",
-                "by solve();",
+                "by close();",
             ),
         ] {
             let source = format!("{declarations} theorem test() {{ ensures {statement} {proof} }}");
@@ -511,10 +511,10 @@ mod tests {
         for source in [
             "function bad() -> int32 { let f = |x: int32| -> Prop { x == x }; f(0) + 1 }",
             "function bad() -> int32 { let p: Bool = (|x: int32| -> Prop { x == x })(0); 0 }",
-            "theorem bad() { ensures (0..3).all(|x: int32| -> Bool { true }) by solve(); }",
-            "theorem bad() { ensures (0..3).any(|x: Integer| -> Prop { x == x }) by solve(); }",
-            "theorem bad() { ensures (0..3).all(|x: int32, y: int32| -> Prop { x == y }) by solve(); }",
-            "theorem bad() { ensures (|| -> Prop { true })() == true by solve(); }",
+            "theorem bad() { ensures (0..3).all(|x: int32| -> Bool { true }) by close(); }",
+            "theorem bad() { ensures (0..3).any(|x: Integer| -> Prop { x == x }) by close(); }",
+            "theorem bad() { ensures (0..3).all(|x: int32, y: int32| -> Prop { x == y }) by close(); }",
+            "theorem bad() { ensures (|| -> Prop { true })() == true by close(); }",
             "function bad() -> int32 { let unused = |x: int32| -> Prop { x + true == 0 }; 0 }",
         ] {
             if parser::parse(source).is_ok() {
@@ -530,7 +530,7 @@ mod tests {
 
     #[test]
     fn proposition_lambdas_cannot_prove_a_false_application() {
-        let source = "theorem bad() { ensures (|x: Integer| -> Prop { x > 0 })(0) by solve(); }";
+        let source = "theorem bad() { ensures (|x: Integer| -> Prop { x > 0 })(0) by close(); }";
         let error =
             verify_click_theorems(source).expect_err("application preserves the proposition");
         assert_eq!(error.kind(), ClickErrorKind::Proof, "{}", error.report());
@@ -540,36 +540,36 @@ mod tests {
     fn proposition_lambda_proofs_expand_and_recheck_without_search() {
         let cases = [
             (
-                "theorem test(x: Integer) { let p = |n: Integer| -> Prop { n == n }; let claim = p(x); ensures claim by solve(); }",
-                "by solve();",
+                "theorem test(x: Integer) { let p = |n: Integer| -> Prop { n == n }; let claim = p(x); ensures claim by close(); }",
+                "by close();",
             ),
             (
-                "function captured(limit: int32, value: int32) -> Integer { let p = |x: int32| -> Prop { x < limit }; let limit: int32 = 0; if p(value) { 1 } else { 0 } } theorem test() { ensures captured(5, 3) == 1 by { unfold(captured(5, 3)); solve(); } }",
-                "by { unfold(captured(5, 3)); solve(); }",
+                "function captured(limit: int32, value: int32) -> Integer { let p = |x: int32| -> Prop { x < limit }; let limit: int32 = 0; if p(value) { 1 } else { 0 } } theorem test() { ensures captured(5, 3) == 1 by { unfold(captured(5, 3)); close(); } }",
+                "by { unfold(captured(5, 3)); close(); }",
             ),
             (
-                "theorem test(x: Integer) { let p: fn(Integer) -> Prop = |n: Integer| -> Prop { n == n }; ensures p(x) by solve(); }",
-                "by solve();",
+                "theorem test(x: Integer) { let p: fn(Integer) -> Prop = |n: Integer| -> Prop { n == n }; ensures p(x) by close(); }",
+                "by close();",
             ),
             (
-                "theorem test(x: Integer) { ensures (|n: Integer| -> Prop { forall (y: Integer) { n + y == y + n } })(x) by { intro(); solve(); } }",
-                "by { intro(); solve(); }",
+                "theorem test(x: Integer) { ensures (|n: Integer| -> Prop { forall (y: Integer) { n + y == y + n } })(x) by { intro(); close(); } }",
+                "by { intro(); close(); }",
             ),
             (
-                "theorem test(lo: int32, hi: int32, limit: int32) { let p = |x: int32| -> Prop { x < limit }; requires hi <= limit; ensures (lo..hi).all(p) by { let k = intro(); intro(); solve(); } }",
-                "by { let k = intro(); intro(); solve(); }",
+                "theorem test(lo: int32, hi: int32, limit: int32) { let p = |x: int32| -> Prop { x < limit }; requires hi <= limit; ensures (lo..hi).all(p) by { let k = intro(); intro(); close(); } }",
+                "by { let k = intro(); intro(); close(); }",
             ),
             (
-                "theorem test(lo: int32, hi: int32) { let p = |x: int32| -> Prop { x == lo }; requires lo < hi; ensures (lo..hi).any(p) by { witness(lo); solve(); } }",
-                "by { witness(lo); solve(); }",
+                "theorem test(lo: int32, hi: int32) { let p = |x: int32| -> Prop { x == lo }; requires lo < hi; ensures (lo..hi).any(p) by { witness(lo); close(); } }",
+                "by { witness(lo); close(); }",
             ),
             (
-                "theorem test(p: int32*, lo: int32, hi: int32) { let zero = |i: int32| -> Prop { p[i] == 0 }; requires viewable(p[lo..hi]); requires (lo..hi).all(|i| { p[i] == 0 }); ensures (lo..hi).all(zero) by { let k = intro(); intro(); solve(); } }",
-                "by { let k = intro(); intro(); solve(); }",
+                "theorem test(p: int32*, lo: int32, hi: int32) { let zero = |i: int32| -> Prop { p[i] == 0 }; requires viewable(p[lo..hi]); requires (lo..hi).all(|i| { p[i] == 0 }); ensures (lo..hi).all(zero) by { let k = intro(); intro(); close(); } }",
+                "by { let k = intro(); intro(); close(); }",
             ),
             (
-                "theorem test(p: int32*, lo: int32, hi: int32) { let zero = |i: int32| -> Prop { p[i] == 0 }; requires lo < hi; requires viewable(p[lo..hi]); requires p[lo] == 0; ensures (lo..hi).any(zero) by { witness(lo); solve(); } }",
-                "by { witness(lo); solve(); }",
+                "theorem test(p: int32*, lo: int32, hi: int32) { let zero = |i: int32| -> Prop { p[i] == 0 }; requires lo < hi; requires viewable(p[lo..hi]); requires p[lo] == 0; ensures (lo..hi).any(zero) by { witness(lo); close(); } }",
+                "by { witness(lo); close(); }",
             ),
         ];
         for (source, proof) in cases {
@@ -664,12 +664,12 @@ mod tests {
 
     #[test]
     fn lambda_folds_expand_and_recheck_without_search() {
-        let source = "function total(lo: int32, hi: int32) -> Integer { (lo..hi).fold(0, |acc: Integer, k: int32| -> Integer { acc + to_integer(k) }) } theorem empty(n: int32) { ensures total(n, n) == 0 by { have n <= n; unfold(total(n, n)); solve(); } }";
+        let source = "function total(lo: int32, hi: int32) -> Integer { (lo..hi).fold(0, |acc: Integer, k: int32| -> Integer { acc + to_integer(k) }) } theorem empty(n: int32) { ensures total(n, n) == 0 by { have n <= n; unfold(total(n, n)); close(); } }";
         let verified = verify_click_theorems(source).unwrap();
         let expanded = verified[0].expanded_proof_source().unwrap();
         assert!(!expanded.contains("solve("), "{expanded}");
         let rechecked = source.replace(
-            "by { have n <= n; unfold(total(n, n)); solve(); }",
+            "by { have n <= n; unfold(total(n, n)); close(); }",
             &expanded,
         );
         verify_click_theorems(&rechecked)
@@ -678,7 +678,7 @@ mod tests {
 
     #[test]
     fn lambda_fold_alias_append_expands_and_rechecks_without_search() {
-        let proof = "by { unfold(total(lo, hi + 1, offset)); solve(); }";
+        let proof = "by { unfold(total(lo, hi + 1, offset)); close(); }";
         let source = format!(
             "function total(lo: int32, hi: int32, offset: Integer) -> Integer {{ let step = |acc: Integer, k: int32| -> Integer {{ acc + to_integer(k) + offset }}; let alias = step; (lo..hi).fold(0, alias) }} theorem append(lo: int32, hi: int32, offset: Integer) {{ requires lo <= hi; requires hi < 2147483647; ensures total(lo, hi + 1, offset) == total(lo, hi, offset) + to_integer(hi) + offset {proof} }}"
         );
@@ -764,18 +764,18 @@ mod tests {
     #[test]
     fn typed_lambda_expansion_rechecks_without_search() {
         let source =
-            "theorem expand() { ensures (|x: Integer| -> Integer { x + 1 })(3) == 4 by solve(); }";
+            "theorem expand() { ensures (|x: Integer| -> Integer { x + 1 })(3) == 4 by close(); }";
         let verified = verify_click_theorems(source).unwrap();
         let expanded = verified[0].expanded_proof_source().unwrap();
         assert!(!expanded.contains("solve("), "{expanded}");
-        let rechecked = source.replace("by solve();", &expanded);
+        let rechecked = source.replace("by close();", &expanded);
         verify_click_theorems(&rechecked)
             .unwrap_or_else(|error| panic!("{rechecked}: {}", error.report()));
     }
 
     #[test]
     fn typed_lambda_application_does_not_prove_a_false_result() {
-        let source = "theorem false_result() { ensures (|x: Integer| -> Integer { x + 1 })(3) == 5 by solve(); }";
+        let source = "theorem false_result() { ensures (|x: Integer| -> Integer { x + 1 })(3) == 5 by close(); }";
         let error =
             verify_click_theorems(source).expect_err("beta application preserves the lambda body");
         assert_eq!(error.kind(), ClickErrorKind::Proof, "{}", error.report());
@@ -811,7 +811,7 @@ mod tests {
     fn typed_lambdas_refuse_state_selectors_even_when_unused() {
         for body in ["old(p[x])", "at(function.entry, p[x])"] {
             let source = format!(
-                "theorem test(p: int32*) {{ let unused = |x: int32| -> int32 {{ {body} }}; ensures true by solve(); }}"
+                "theorem test(p: int32*) {{ let unused = |x: int32| -> int32 {{ {body} }}; ensures true by close(); }}"
             );
             let error = parser::parse(&source)
                 .expect_err("body retained_state selection remains explicit at application");
@@ -823,7 +823,7 @@ mod tests {
                 error.report()
             );
         }
-        let source = "theorem test(p: int32*) { let unused = |x: int32| -> Prop { at(function.entry, p[x] == 0) }; ensures true by solve(); }";
+        let source = "theorem test(p: int32*) { let unused = |x: int32| -> Prop { at(function.entry, p[x] == 0) }; ensures true by close(); }";
         assert!(parser::parse(source).is_err());
     }
 
@@ -834,19 +834,19 @@ mod tests {
             ("requires viewable(p[0..1]);", "p[i + 2147483647]"),
         ] {
             let source = format!(
-                "theorem test(p: int32*) {{ {requires} let read = |i: int32| -> int32 {{ {body} }}; ensures defined(read(1)) by solve(); }}"
+                "theorem test(p: int32*) {{ {requires} let read = |i: int32| -> int32 {{ {body} }}; ensures defined(read(1)) by close(); }}"
             );
             parser::parse(&source).unwrap();
             let error = verify_click_theorems(&source).expect_err("application owes read validity");
             assert_eq!(error.kind(), ClickErrorKind::Proof, "{}", error.report());
         }
-        verify_click_theorems("theorem test(p: int32*) { let read = |i: int32| -> int32 { p[i] }; requires defined(p[1]); ensures defined(read(1)) by solve(); }").unwrap();
-        verify_click_theorems("theorem test(p: int32*) { let read = |i: int32| -> Integer { to_integer(p[i]) }; requires defined(p[1]); ensures read(1) == to_integer(p[1]) by solve(); }").unwrap();
+        verify_click_theorems("theorem test(p: int32*) { let read = |i: int32| -> int32 { p[i] }; requires defined(p[1]); ensures defined(read(1)) by close(); }").unwrap();
+        verify_click_theorems("theorem test(p: int32*) { let read = |i: int32| -> Integer { to_integer(p[i]) }; requires defined(p[1]); ensures read(1) == to_integer(p[1]) by close(); }").unwrap();
         let c = [("nothing.c", "void test(int32* p) {}")];
         let source = "verifying \"nothing.c\"; void test(int32* p) { let read = |i: int32| -> int32 { p[i] }; views p[0..1]; ensures defined(read(0)); }";
         verify_c_sources(source, &c).unwrap();
         assert!(verify_c_sources(&source.replace("views p[0..1];", ""), &c).is_err());
-        let source = "theorem test(p: int32*) { let unused = |i: int32| -> int32 { p[i] }; ensures true by solve(); }";
+        let source = "theorem test(p: int32*) { let unused = |i: int32| -> int32 { p[i] }; ensures true by close(); }";
         verify_click_theorems(source).unwrap();
     }
 
@@ -863,7 +863,7 @@ mod tests {
                 error.report()
             );
         }
-        let source = "theorem test(p: int32*) { let n: Integer = 1; let unused = |i: int32| -> Integer { n + to_integer(p[i]) }; ensures true by solve(); }";
+        let source = "theorem test(p: int32*) { let n: Integer = 1; let unused = |i: int32| -> Integer { n + to_integer(p[i]) }; ensures true by close(); }";
         verify_click_theorems(source).unwrap();
     }
 
@@ -872,14 +872,14 @@ mod tests {
         let c = [("write.c", "void write(int32* p) { p[0] = 5; }")];
         for body in ["p[i] == 5", "to_integer(p[i]) == 5"] {
             let source = format!(
-                "verifying \"write.c\"; void write(int32* p) {{ let read = |i: int32| -> Prop {{ {body} }}; owns p[0..1]; requires p[0] == 0; ensures read(0); }} by {{ step_until(function.exit); solve(); }}"
+                "verifying \"write.c\"; void write(int32* p) {{ let read = |i: int32| -> Prop {{ {body} }}; owns p[0..1]; requires p[0] == 0; ensures read(0); }} by {{ step_until(function.exit); close(); }}"
             );
             let verified = verify_c_sources(&source, &c)
                 .unwrap_or_else(|error| panic!("{source}: {}", error.report()));
             let expanded = verified[0].expanded_proof_source().unwrap();
             assert!(!expanded.contains("solve("), "{expanded}");
             verify_c_sources(
-                &source.replace("by { step_until(function.exit); solve(); }", &expanded),
+                &source.replace("by { step_until(function.exit); close(); }", &expanded),
                 &c,
             )
             .unwrap_or_else(|error| panic!("{expanded}: {}", error.report()));

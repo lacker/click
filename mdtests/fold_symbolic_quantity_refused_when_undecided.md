@@ -21,7 +21,7 @@ int32 mint(int32 x, int32 k) {
 } by {
     step_until(function.exit);
     fold(k of ok(x));
-    solve();
+    close();
 }
 ```
 

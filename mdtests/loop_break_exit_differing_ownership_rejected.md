@@ -54,7 +54,7 @@ void give(int32* p, int32* q, int32 flag) {
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

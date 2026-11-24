@@ -6,7 +6,7 @@ the Integer sum as a value and claims that it fits in `int32`.
 ```click quick-solve
 theorem integer_operand_given(a: int32, b: int32) {
     requires defined(a / b) and defined(to_int32(to_integer(a / b) + 1));
-    ensures to_integer(a / b) + 1 <= 2147483647 by solve();
+    ensures to_integer(a / b) + 1 <= 2147483647 by close();
 }
 ```
 

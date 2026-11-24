@@ -28,8 +28,8 @@ int32 f(int32 p[2], int32 m) {
     requires p[0] > 0;
     requires p[1] > 0;
     requires m == 2;
-    ensures allpos(p, m) by { step_until(function.exit); unfold(allpos(p, m)); solve(); }
-    ensures allpos_range(p, m) by { step_until(function.exit); unfold(allpos_range(p, m)); solve(); }
+    ensures allpos(p, m) by { step_until(function.exit); unfold(allpos(p, m)); close(); }
+    ensures allpos_range(p, m) by { step_until(function.exit); unfold(allpos_range(p, m)); close(); }
 }
 ```
 

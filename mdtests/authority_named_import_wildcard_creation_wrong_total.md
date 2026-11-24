@@ -28,10 +28,10 @@ int32 run() { ensures result == 0; } by {
     fold(authority(ticket(&pool, _)));
     let retained = fold(ticket(&pool, 7), { serial: 3 });
     let { member: member } = step(nested);
-    have count(ticket(&pool, _)) == 2 by solve();
-    have count(ticket(&pool, 7)) == 2 by solve();
-    have member.serial == 7 by solve();
-    have retained.serial == 3 by solve();
+    have count(ticket(&pool, _)) == 2 by close();
+    have count(ticket(&pool, 7)) == 2 by close();
+    have member.serial == 7 by close();
+    have retained.serial == 3 by close();
     unfold(member); unfold(retained); unfold(authority(ticket(&pool, _)));
 }
 ```

@@ -22,9 +22,9 @@ int32 run() { ensures result == 0; } by {
     let first = fold(ticket(&pool), { serial: 1 });
     let second = fold(ticket(&pool), { serial: 2 });
     step(preserve, { left: first, right: first });
-    have first.serial == 1 by solve();
-    have second.serial == 2 by solve();
-    have count(ticket(&pool)) == 2 by solve();
+    have first.serial == 1 by close();
+    have second.serial == 2 by close();
+    have count(ticket(&pool)) == 2 by close();
     unfold(first); unfold(second);
     unfold(authority(ticket(&pool)));
 }

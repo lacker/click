@@ -20,7 +20,7 @@ int32 next_byte(int32 x) {
     have result == (x + 1) by {
         close() using { at(function.entry, x < 256); at(function.entry, 0 <= x); };
     }
-    known();
+    close();
 }
 ```
 

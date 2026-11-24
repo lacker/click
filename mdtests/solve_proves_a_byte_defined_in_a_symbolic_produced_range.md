@@ -27,7 +27,7 @@ void caller(uint8* dst, uint64 n, uint64 i) {
 } by {
     step();
     step();
-    solve();
+    close();
 }
 ```
 

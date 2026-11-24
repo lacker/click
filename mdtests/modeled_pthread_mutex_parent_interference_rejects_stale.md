@@ -54,7 +54,7 @@ void* worker(void* argument) {
     let restored = fold(counter_state(counter), { value: counter->value });
     step(pthread_mutex_unlock, { access: access, guard: guard, state: restored });
     step();
-    solve();
+    close();
 }
 uint32 run(struct counter* counter) {
     owns counter->mu;
@@ -72,7 +72,7 @@ uint32 run(struct counter* counter) {
             let { value: observed } = unfold(initial);
             step();
             let initial = fold(counter_state(counter), { value: observed });
-            solve();
+            close();
         }
         false => {}
     }
@@ -91,7 +91,7 @@ uint32 run(struct counter* counter) {
     let { value: final_observed } = unfold(initial);
     step();
     let initial = fold(counter_state(counter), { value: final_observed });
-    solve();
+    close();
 }
 ```
 

@@ -33,10 +33,10 @@ int32 read_ref(int32** p) {
     match saved.link {
         Link::Present(linked) => {
             unfold(saved);
-            have old(*p) == linked by { known(); }
+            have old(*p) == linked by { close(); }
             with(control(*p)) { step_until(function.exit); }
             let saved = fold(slot(p), { link: Link::Present(linked) });
-            solve();
+            close();
         },
     }
 }

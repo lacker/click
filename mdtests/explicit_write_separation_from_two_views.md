@@ -16,8 +16,8 @@ void set(int32* p, int32* q, int32* r) {
     views *q;
     views *r;
 } by {
-    have separate(memory(*q), memory(*p)) by { known(); }
-    have separate(memory(*r), memory(*p)) by { known(); }
+    have separate(memory(*q), memory(*p)) by { close(); }
+    have separate(memory(*r), memory(*p)) by { close(); }
     have separate(memory(*q) * memory(*r), memory(*p)) by {
         apply(separation::separate_star(memory(*q), memory(*r), memory(*p)));
     }

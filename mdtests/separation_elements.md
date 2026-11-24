@@ -24,8 +24,8 @@ void keep(uint8* bytes, uint64 i, uint64 k) {
         preserve(memory(*(bytes + k)), statement(0));
     }
     step_until(function.exit);
-    known();
-    known(); known(); known();
+    close();
+    close(); close(); close();
 }
 ```
 

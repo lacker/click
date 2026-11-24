@@ -37,7 +37,7 @@ void loop_owns_clause_requires_function_ownership(int32 p[], int32 q[], int32 n)
         invariant i <= n;
     }
     step();
-    solve();
+    close();
 }
 ```
 

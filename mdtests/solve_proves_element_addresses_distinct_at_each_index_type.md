@@ -21,31 +21,31 @@ int32 words(int32* q, size_t j) {
     requires 1u64 <= j;
     ensures result == 0;
 } by {
-    have &q[j] != &q[0] by solve();
+    have &q[j] != &q[0] by close();
 }
 
 int32 longs(int32* q, int64 j) {
     requires j < 0;
     ensures result == 0;
 } by {
-    have &q[0] != &q[j] by solve();
+    have &q[0] != &q[j] by close();
 }
 
 int32 last64(int64* q, size_t n) {
     requires 2u64 <= n and n <= 1000u64;
     ensures result == 0;
 } by {
-    have &q[n - 1] != &q[0] by solve();
+    have &q[n - 1] != &q[0] by close();
 }
 
 theorem distinct_words(p: int32*, i: int32, j: int32) {
     requires i < j;
-    ensures &p[i] != &p[j] by solve();
+    ensures &p[i] != &p[j] by close();
 }
 
 theorem distinct_wide(p: int64*, i: uint64, j: uint64) {
     requires i != j;
-    ensures &p[j] != &p[i] by solve();
+    ensures &p[j] != &p[i] by close();
 }
 ```
 

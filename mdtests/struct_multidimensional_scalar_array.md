@@ -75,7 +75,7 @@ int32 update_values(struct value_packet* packet) {
 } by {
     step();
     step();
-    solve();
+    close();
 }
 
 uint8 update_bytes(struct byte_packet* packet) {
@@ -85,7 +85,7 @@ uint8 update_bytes(struct byte_packet* packet) {
 } by {
     step();
     step();
-    solve();
+    close();
 }
 
 struct copy_packet finish(struct copy_packet value) {

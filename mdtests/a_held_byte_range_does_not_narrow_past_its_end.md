@@ -21,7 +21,7 @@ int32 first(uint8 *a, int32 n, int32 k) {
 } by {
     have viewable(a[0..k]);
     step();
-    solve();
+    close();
 }
 ```
 

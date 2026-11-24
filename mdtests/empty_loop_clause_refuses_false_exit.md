@@ -15,16 +15,16 @@ int spin(int x) {
 verifying "r.c";
 int32 poll(int32 x) {
     ensures result == x;
-} by { step(); solve(); }
+} by { step(); close(); }
 int32 spin(int32 x) diverges {
     ensures result == 2;
 } by {
     loop diverges { }
     step();
-    solve();
+    close();
 }
 ```
 
 ```expect
-fail: solve
+fail: checked outcome `close`
 ```

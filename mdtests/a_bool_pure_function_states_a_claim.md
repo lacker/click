@@ -32,14 +32,14 @@ theorem two_is_even() {
         unfold(even(2));
         unfold(even(1));
         unfold(even(0));
-        known();
+        close();
     }
 }
 
 theorem three_is_in_range() {
     ensures in_range(3) by {
         unfold(in_range(3));
-        known();
+        close();
     }
 }
 
@@ -47,7 +47,7 @@ theorem twelve_is_outside() {
     ensures outside(12) by {
         unfold(outside(12));
         unfold(in_range(12));
-        known();
+        close();
     }
 }
 
@@ -57,14 +57,14 @@ theorem chosen_positive(flag: Bool, x: int32) {
     ensures choose(flag, x) by {
         unfold(choose(flag, x));
         unfold(positive(x));
-        solve();
+        close();
     }
 }
 
 theorem unchosen(x: int32) {
     ensures choose(false, x) == false by {
         unfold(choose(false, x));
-        known();
+        close();
     }
 }
 ```

@@ -31,7 +31,7 @@ void mark_twice(int32 a[], int32 n, int32 i) {
     }
     have icount(a, 0, i + 1) == icount(a, 0, i) + 1 by {
         unfold(icount(a, 0, i + 1));
-        solve();
+        close();
     }
     step();
     have icount(a, 0, i + 1) == icount(a, 0, i) + 1;

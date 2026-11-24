@@ -8,7 +8,7 @@ theorem wrong_cell(p: int32[]) {
     requires defined(p[0]);
     ensures exists (k: Integer) { k == 1 and defined(p[to_int32(k)]) } by {
         witness(1);
-        solve();
+        close();
     }
 }
 ```

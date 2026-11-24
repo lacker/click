@@ -16,7 +16,7 @@ void check(int32* p, int32* q, int32* owned) {
     consumes r: owner(owned);
 } by {
     let { unused: m } = unfold(r);
-    have separate(memory(p[0..1]), memory(q[0..1])) by { solve(); }
+    have separate(memory(p[0..1]), memory(q[0..1])) by { close(); }
     step_until(function.exit);
 }
 ```

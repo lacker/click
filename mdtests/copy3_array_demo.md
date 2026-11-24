@@ -42,17 +42,17 @@ int32 copy3(int32 dst[3], int32 src[3]) {
             have i >= 0 and i <= 3 by {
                 all {
                     i >= 0 => {
-                        known();
+                        close();
                     }
                     i <= 3 => {
-                        known();
+                        close();
                     }
                 }
             }
             have forall (k: int32) { 0 <= k and k < 3 implies src[k] == old(src[k]) } by {
                 intro();
                 intro();
-                known();
+                close();
             }
             have forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) } by {
                 enumerate();
@@ -88,7 +88,7 @@ int32 copy3(int32 dst[3], int32 src[3]) {
                 have src[k] == at(iteration, src[k]) by {
                     preserve(memory(src[k]), statement(2).statement(0));
                 }
-                known();
+                close();
             }
             step();
             have forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) } by {
@@ -110,13 +110,13 @@ int32 copy3(int32 dst[3], int32 src[3]) {
                     have dst[k] == at(statement(2).statement(1).entry, dst[k]) by {
                         preserve(memory(dst[k]), statement(2).statement(1));
                     }
-                    known();
+                    close();
                 } else {
                     have k == at(iteration, i) by { close() using { k < i; not k < at(iteration, i); 0 <= at(iteration, i); at(iteration, i) < 3; }; }
                     have k < 3 by { close() using { k == at(iteration, i); at(iteration, i) < 3; }; }
                     instantiate(at(iteration, forall (k: int32) { 0 <= k and k < 3 implies src[k] == old(src[k]) }), k);
                     rewrite(k, at(iteration, i));
-                    known();
+                    close();
                 }
             }
         }
@@ -124,35 +124,35 @@ int32 copy3(int32 dst[3], int32 src[3]) {
     have dst[0] == old(src[0]) by {
         have at(loop(0).exit, 0) <= at(loop(0).exit, 0) and at(loop(0).exit, 0) < at(loop(0).exit, i);
         instantiate(forall (k: int32) { at(loop(0).exit, 0) <= at(loop(0).exit, k) and at(loop(0).exit, k) < at(loop(0).exit, i) implies at(loop(0).exit, dst[k]) == old(src[k]) }, 0);
-        known();
+        close();
     }
     have dst[1] == old(src[1]) by {
         have at(loop(0).exit, 0) <= at(loop(0).exit, 1) and at(loop(0).exit, 1) < at(loop(0).exit, i);
         instantiate(forall (k: int32) { at(loop(0).exit, 0) <= at(loop(0).exit, k) and at(loop(0).exit, k) < at(loop(0).exit, i) implies at(loop(0).exit, dst[k]) == old(src[k]) }, 1);
-        known();
+        close();
     }
     have dst[2] == old(src[2]) by {
         have at(loop(0).exit, 0) <= at(loop(0).exit, 2) and at(loop(0).exit, 2) < at(loop(0).exit, i);
         instantiate(forall (k: int32) { at(loop(0).exit, 0) <= at(loop(0).exit, k) and at(loop(0).exit, k) < at(loop(0).exit, i) implies at(loop(0).exit, dst[k]) == old(src[k]) }, 2);
-        known();
+        close();
     }
     step();
     have dst[0] == old(src[0]) by {
-        known();
+        close();
     }
     have dst[1] == old(src[1]) by {
-        known();
+        close();
     }
     have dst[2] == old(src[2]) by {
-        known();
+        close();
     }
     have result == old(src[2]) by {
-        known();
+        close();
     }
-    known();
-    known();
-    known();
-    known();
+    close();
+    close();
+    close();
+    close();
 }
 ```
 

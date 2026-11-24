@@ -51,7 +51,7 @@ int32 spin(struct cell* node, int32 n) {
         invariant i <= 1;
         invariant c.rank == old(c.rank);
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             have c.rank == i;
             have i == 0 by { close() using { c.rank == i; c.rank == old(c.rank); old(c.rank) == 0; }; }
@@ -62,7 +62,7 @@ int32 spin(struct cell* node, int32 n) {
     }
     have n <= 1 by { close() using { i >= n; i <= 1; }; }
     step();
-    solve();
+    close();
 }
 ```
 

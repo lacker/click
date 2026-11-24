@@ -20,7 +20,7 @@ void guard_paths(bool a, bool b) diverges {
     loop diverges {
         invariant true;
         maintain by {
-            have not a implies b by { solve(); }
+            have not a implies b by { close(); }
             step();
         }
     }

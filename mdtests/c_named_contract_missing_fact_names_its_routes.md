@@ -39,7 +39,7 @@ void arm(int32* cell) {
 } by {
     step_until(function.exit);
     fold(Hooked(cell));
-    solve();
+    close();
 }
 ```
 

@@ -9,7 +9,7 @@ equality forces the Integer equality, so it refuses this one.
 theorem wrapping_word(u: uint32) {
     requires u + 1 != 0;
     ensures ((u + 1) as uint32) != 0 by {
-        solve();
+        close();
     }
 }
 ```

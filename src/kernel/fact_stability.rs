@@ -177,7 +177,7 @@ int32 id(int32 x) {
 } by {
     have x <= 10;
     step_until(function.exit);
-    solve();
+    close();
 }
 "#;
         let lines = capture(|| {

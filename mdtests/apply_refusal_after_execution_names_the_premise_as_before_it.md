@@ -21,7 +21,7 @@ theorem head_nonnegative(a: int32[], n: int32) {
     ensures a[0] >= 0 by {
         have 0 <= 0 by normalize();
         instantiate(forall (k: int32) { 0 <= k and k < n implies a[k] >= 0 }, 0);
-        known();
+        close();
     }
 }
 
@@ -33,7 +33,7 @@ int32 first(int32 *a, int32 n) {
     step_until(function.exit);
     have n >= 0;
     apply(head_nonnegative(a, n));
-    solve();
+    close();
 }
 ```
 

@@ -17,11 +17,11 @@ int32 refine(int32 x, int32 y) {
     let k = intro();
     rewrite(y, x);
     all {
-        result == x => { known(); }
-        k == k => { known(); }
+        result == x => { close(); }
+        k == k => { close(); }
     }
     rewrite(y, x);
-    known();
+    close();
 }
 
 int32 choose_value(int32 n) {
@@ -30,8 +30,8 @@ int32 choose_value(int32 n) {
 } by {
     step_until(function.exit);
     witness(n);
-    known();
-    known();
+    close();
+    close();
 }
 ```
 

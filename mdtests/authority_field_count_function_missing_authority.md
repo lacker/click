@@ -38,22 +38,22 @@ extern int32 read_cell(int32* p) {
 
 int32 run() { ensures result == 0; } by {
     step(); step();
-    branch { true => { step_until(function.exit); solve(); } false => {} }
+    branch { true => { step_until(function.exit); close(); } false => {} }
     step();
     fold(authority(cell(p)));
     let first = fold(cell(p), { model: List<int32>::Cons(7, List<int32>::Nil) });
     unfold(population(p));
-    have population(p) == List<int32>::Cons(1, List<int32>::Nil) by solve();
+    have population(p) == List<int32>::Cons(1, List<int32>::Nil) by close();
     fold(control(p));
     unfold(population(p));
     step(read_cell, { member: first });
     unfold(population(p));
-    have population(p) == List<int32>::Cons(1, List<int32>::Nil) by solve();
-    have first.model == List<int32>::Cons(7, List<int32>::Nil) by solve();
-    have count(cell(p)) == 1 by solve();
+    have population(p) == List<int32>::Cons(1, List<int32>::Nil) by close();
+    have first.model == List<int32>::Cons(7, List<int32>::Nil) by close();
+    have count(cell(p)) == 1 by close();
     unfold(first);
     unfold(authority(cell(p)));
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }
 ```
 

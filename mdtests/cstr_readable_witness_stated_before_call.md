@@ -37,7 +37,7 @@ uint64 fixed_string_length(uint8 bytes[]) {
         enumerate();
     }
     have bytes[2u64] == '\0' by {
-        solve();
+        close();
     }
     have forall (k: uint64) { 0u64 <= k and to_integer(k) < to_integer(2u64 + 1u64) implies defined(bytes[k]) } by {
         enumerate();

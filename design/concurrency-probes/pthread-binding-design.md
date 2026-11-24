@@ -128,7 +128,7 @@ let { result: rc } = step(pthread_create(&first, NULL, fill_range, &first_job), 
 branch then {
     // The C condition is rc != 0: creation failed.
     step(); // return 0; all four cells still belong to the parent.
-    solve();
+    close();
 } else {
     // rc == 0: first is bound to the live completion right.
     // The parent has output[2..4], but cannot access output[0..2].

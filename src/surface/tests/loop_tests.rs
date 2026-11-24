@@ -27,20 +27,20 @@ void walk(int32 n) {
         decreases n;
         invariant n >= 0;
         invariant state.model == Walk::Active;
-        initialize by solve();
+        initialize by close();
         maintain by {
             let { done: intermediate } = stop({ dirty: state });
             let { done: state } = stop({ dirty: intermediate });
-            have n <= 0 or pending(state.model) == 0 by known();
+            have n <= 0 or pending(state.model) == 0 by close();
             step();
         }
         otherwise {
-            have n <= 0 or pending(state.model) == 0 by known();
+            have n <= 0 or pending(state.model) == 0 by close();
         }
     }
     step();
-    have n <= 0 or pending(state.model) == 0 by known();
-    solve();
+    have n <= 0 or pending(state.model) == 0 by close();
+    close();
 }
 "#;
 
@@ -60,8 +60,8 @@ fn scoped_loop_facts_keep_the_proof_both_exits_established() {
 fn scoped_loop_facts_hide_an_intermediate_model_on_a_single_exit() {
     let c = "void walk(int n) { while (1) { break; } }";
     let source = SCOPED_LOOP_MODEL_CLICK.replace(
-        "    step();\n    have n <= 0 or pending(state.model) == 0 by known();",
-        "    step();\n    have pending(state.model) == 1 by solve();",
+        "    step();\n    have n <= 0 or pending(state.model) == 0 by close();",
+        "    step();\n    have pending(state.model) == 1 by close();",
     );
     let failed = || {
         with_proof_trace("walk", || {
@@ -98,12 +98,12 @@ fn scoped_loop_facts_keep_a_guard_disjunction_only_when_proved() {
             loop {
                 invariant n >= 0;
                 decreases n;
-                otherwise { have n <= 0 or m <= 0 by known(); }
+                otherwise { have n <= 0 or m <= 0 by close(); }
             }
-            have n <= 0 or m <= 0 by known();
+            have n <= 0 or m <= 0 by close();
         }
     "#;
-    let without_export = source.replace("otherwise { have n <= 0 or m <= 0 by known(); }", "");
+    let without_export = source.replace("otherwise { have n <= 0 or m <= 0 by close(); }", "");
     super::super::proof::test_with_scoped_loop_exit_facts(|| {
         verify_c_sources(source, &[("program.c", c)]).unwrap();
         let error = verify_c_sources(&without_export, &[("program.c", c)]).unwrap_err();
@@ -137,11 +137,11 @@ fn separately_declared_guarded_invariants_close_at_the_back_edge() {
                 decreases i;
                 invariant x == 0 or x == 1;
                 invariant y == 0 or y == 1;
-                initialize by solve();
+                initialize by close();
                 maintain by {
                     step();
-                    have x == 0 or x == 1 by { known(); }
-                    have y == 0 or y == 1 by { known(); }
+                    have x == 0 or x == 1 by { close(); }
+                    have y == 0 or y == 1 by { close(); }
                 }
             }
             step();
@@ -166,10 +166,10 @@ fn loop_metadata_sees_address_escape_after_the_loop() {
         loop {
             decreases n - i;
             invariant i >= 0;
-            initialize by solve();
+            initialize by close();
             maintain by { step(); }
         }
-        solve();
+        close();
     }"#;
     let error = verify_c_sources(source, &[("bounded.c", c_source)])
         .expect_err("a later address escape still invalidates the ranking component");
@@ -215,7 +215,7 @@ fn loop_clauses_in(tactics: &[ProofTactic], clauses: &mut Vec<StructuralClause>)
 /// must leave `initialize` and `maintain` bodies that contain no smart tactic,
 /// so nothing in them is a leaf `ProofCertificate` refuses. In particular the
 /// automatic preservation planner's own closer is expanded before the phase is
-/// retained; a trailing `solve()` would be rejected here exactly as
+/// retained; a trailing `close()` would be rejected here exactly as
 /// `ProofCertificate::from_proof_tactics` rejects it.
 #[test]
 #[cfg(not(feature = "fast-gate"))]
@@ -418,7 +418,7 @@ fn natural_goto_mixed_return_retains_paths_and_expands() {
 /// second component decreases on the `j > 0` path and only the first on the
 /// other, so the expansion proves the descent member in a `have` at the back
 /// edge, proving the arm that holds and closing the disjunction by
-/// `known()`, and reverifies through the ordinary entry point.
+/// `close()`, and reverifies through the ordinary entry point.
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by loop_batch_00")]
 fn lexicographic_ranking_bundle_prints_its_pivot_arm() {
@@ -431,7 +431,7 @@ fn lexicographic_ranking_bundle_prints_its_pivot_arm() {
         "the back edge closes as a function's exit does, from `have`s: {expanded}"
     );
     assert!(
-        expanded.contains("known();"),
+        expanded.contains("close();"),
         "each pivot is proved in a `have` and closed by `known`: {expanded}"
     );
     verify_c_sources(&expanded, &sources).unwrap_or_else(|error| {
@@ -518,7 +518,7 @@ fn smart_ranking_closure_expands_its_pivot_arm() {
     let expanded = expand_function_proof_source(&click, &sources, "nested_count")
         .unwrap_or_else(|error| panic!("nested-loop expansion failed: {}", error.message()));
     assert!(
-        expanded.contains("known();"),
+        expanded.contains("close();"),
         "the chosen pivot arm must be printed: {expanded}"
     );
     verify_c_sources(&expanded, &sources).unwrap_or_else(|error| {
@@ -529,7 +529,7 @@ fn smart_ranking_closure_expands_its_pivot_arm() {
     });
 }
 
-/// The back edge closes each member with `solve()`, which reads the
+/// The back edge closes each member with `close()`, which reads the
 /// facts in scope. The nested fixture's outer measure needs `j <= m` at the
 /// back edge; dropping the outer `invariant j <= m` leaves that fact in scope
 /// from the inner loop's exit, so the ranking member still closes.
@@ -707,7 +707,7 @@ fn symbolic_alignment_expands_to_ordinary_proof_and_rechecks_without_planning() 
         .collect::<Vec<_>>();
     let click = fixture.click_source.unwrap().replace(
         "    ensures result == 1;\n}",
-        "    ensures result == 1;\n} by {\n    step_until(function.exit);\n    have aligned(p + i, 8) by { solve(); }\n    solve();\n}",
+        "    ensures result == 1;\n} by {\n    step_until(function.exit);\n    have aligned(p + i, 8) by { close(); }\n    close();\n}",
     );
     assert!(click.contains("have aligned(p + i, 8)"));
     let verified_for_expansion = verify_c_sources(&click, &sources).unwrap();
@@ -786,7 +786,7 @@ fn explicit_straight_line_swap_preserves_an_entry_bound() {
                 }
                 have p[$index] == old(p[$index + 1]) by {
                     rewrite(p[$index], at(first_written, p[$index]));
-                    known();
+                    close();
                 }
                 have p[0] == old(p[1]) by {
                     normalize() using { p[$index] == old(p[$index + 1]); j == 0; };
@@ -795,9 +795,9 @@ fn explicit_straight_line_swap_preserves_an_entry_bound() {
                 have p[0] <= p[2] by {
                     rewrite(p[0], old(p[1]));
                     rewrite(p[2], old(p[2]));
-                    known();
+                    close();
                 }
-                step(); solve();
+                step(); close();
             }
         "#
         .replace("$index", index);
@@ -846,7 +846,7 @@ fn explicit_swap_loop_fixture(include_entry_bounds: bool) -> (&'static str, Stri
         }
         have p[2] == at(before_swap, p[2]) by {
             rewrite(p[2], at(statement(3).statement(0).statement(1).exit, p[2]));
-            known();
+            close();
         }
         have separate(statement(3).statement(0).statement(2).footprint, memory(p[0])) by {
             normalize() using { separate(memory(p[j + 1]), memory(p[0])); };
@@ -859,7 +859,7 @@ fn explicit_swap_loop_fixture(include_entry_bounds: bool) -> (&'static str, Stri
         }
         have p[0] == at(before_swap, p[1]) by {
             rewrite(p[0], at(statement(3).statement(0).statement(1).exit, p[0]));
-            known();
+            close();
         }
         have p[1] == at(before_swap, p[0]) by {
             normalize() using { at(before_swap, j) == 0; };
@@ -867,12 +867,12 @@ fn explicit_swap_loop_fixture(include_entry_bounds: bool) -> (&'static str, Stri
         have p[0] <= p[2] by {
             rewrite(p[0], at(before_swap, p[1]));
             rewrite(p[2], at(before_swap, p[2]));
-            known();
+            close();
         }
         have p[1] <= p[2] by {
             rewrite(p[1], at(before_swap, p[0]));
             rewrite(p[2], at(before_swap, p[2]));
-            known();
+            close();
         }
     "#;
     let entry_bounds = if include_entry_bounds {
@@ -892,7 +892,7 @@ fn explicit_swap_loop_fixture(include_entry_bounds: bool) -> (&'static str, Stri
                 invariant j >= 0 and j <= 1;
                 invariant p[0] <= p[2];
                 invariant p[1] <= p[2];
-                initialize by solve();
+                initialize by close();
                 maintain by {{
                     have j == 0 by {{
                         close() using {{ j < 1; j >= 0; }}
@@ -907,7 +907,7 @@ fn explicit_swap_loop_fixture(include_entry_bounds: bool) -> (&'static str, Stri
                     }}
                 }}
             }}
-            step(); solve();
+            step(); close();
         }}
     "#
     );
@@ -966,7 +966,7 @@ fn observed_member_closure_expands_to_direct_assumptions() {
     let expanded = expand_function_proof_source(click, &sources, "count_run")
         .unwrap_or_else(|error| panic!("{}", error.message()));
     assert!(!expanded.contains("solve();"), "{expanded}");
-    assert!(expanded.contains("known();"), "{expanded}");
+    assert!(expanded.contains("close();"), "{expanded}");
     without_implicit_solve(|| verify_c_sources(&expanded, &sources))
         .unwrap_or_else(|error| panic!("{}", error.message()));
 }
@@ -1036,15 +1036,15 @@ fn frontier_local_loop_verifies_and_advances_to_exit() {
                     decreases 3 - i;
                     invariant i >= 0;
                     invariant i <= 3;
-                    initialize by solve();
+                    initialize by close();
                     maintain by {
                         step();
                     }
                 }
-                have at(count.entry, i) == 0 by solve();
-                have at(count.exit, i) == 3 by solve();
+                have at(count.entry, i) == 0 by close();
+                have at(count.exit, i) == 3 by close();
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -1078,15 +1078,15 @@ fn individual_loop_proof_has_no_whole_claim_acceptance_check() {
                     decreases 3 - i;
                     invariant i >= 0;
                     invariant i <= 3;
-                    initialize by solve();
+                    initialize by close();
                     maintain by {
                         step();
                     }
                 }
-                have at(count.entry, i) == 0 by solve();
-                have at(count.exit, i) == 3 by solve();
+                have at(count.entry, i) == 0 by close();
+                have at(count.exit, i) == 3 by close();
                 step();
-                solve();
+                close();
             }
         }
     "#;
@@ -1140,7 +1140,7 @@ fn loop_initialization_theorem_search_retains_checked_fixed_state_proof() {
                 requires x >= 0;
                 ensures acceptable(x) by {
                     unfold(acceptable(x));
-                    solve();
+                    close();
                 }
             }
 
@@ -1152,17 +1152,17 @@ fn loop_initialization_theorem_search_retains_checked_fixed_state_proof() {
                     invariant acceptable(x);
                     initialize by {
                         apply(nonnegative_is_acceptable(x));
-                        solve();
+                        close();
                     }
                     maintain by {
                         step();
                         apply(nonnegative_is_acceptable(x));
-                        solve();
+                        close();
                     }
                 }
                 step();
                 unfold(acceptable(x));
-                solve();
+                close();
             }
         "#;
 
@@ -1218,13 +1218,13 @@ fn loop_initialization_solve_retains_checked_fixed_state_proof() {
             } by {
                 loop diverges {
                     invariant x >= 0;
-                    initialize by solve();
+                    initialize by close();
                     maintain by {
                         step();
                     }
                 }
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -1232,7 +1232,7 @@ fn loop_initialization_solve_retains_checked_fixed_state_proof() {
     verified.expect("loop initialization solve should verify through Proof");
 
     let offset = click_source
-        .find("initialize by solve()")
+        .find("initialize by close()")
         .expect("initialization proof should contain its smart solve")
         + "initialize by ".len();
     let line = click_source[..offset]
@@ -1253,8 +1253,8 @@ fn loop_initialization_solve_retains_checked_fixed_state_proof() {
         column,
     )
     .expect("the retained initialization closer should expand");
-    assert!(!expanded.contains("initialize by solve()"), "{expanded}");
-    assert!(expanded.contains("known();"), "{expanded}");
+    assert!(!expanded.contains("initialize by close()"), "{expanded}");
+    assert!(expanded.contains("close();"), "{expanded}");
     verify_c_sources(&expanded, &[("initialize_by_solve.c", c_source)])
         .expect("expanded initialization closer should independently verify");
 }
@@ -1407,14 +1407,14 @@ fn frontier_local_loop_verifies_a_lowered_c_for_loop() {
                     decreases 3 - i;
                     invariant i >= 0;
                     invariant i <= 3;
-                    initialize by solve();
+                    initialize by close();
                     maintain by {
                         step();
                         step();
                     }
                 }
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -1454,18 +1454,18 @@ fn frontier_local_loop_verifies_at_a_branch_local_frontier() {
                         decreases 2 - i;
                         invariant i >= 0;
                         invariant i <= 2;
-                        initialize by solve();
+                        initialize by close();
                         maintain by {
                             step();
                         }
                     }
                     step();
-                    solve();
+                    close();
                 } else {
                     step();
                     step();
                     step();
-                    solve();
+                    close();
                 }
             }
         "#;
@@ -1484,8 +1484,8 @@ fn frontier_loop_binding_replaces_scope_without_merging_declarations() {
             loop {
                 invariant i >= bound;
                 invariant i >= bound;
-                initialize by solve();
-                maintain by solve();
+                initialize by close();
+                maintain by close();
             }
         }
     "#,
@@ -1563,14 +1563,14 @@ fn frontier_local_loop_verifies_nested_loops_at_their_respective_frontiers() {
                     decreases 2 - i;
                     invariant i >= 0;
                     invariant i <= 2;
-                    initialize by solve();
+                    initialize by close();
                     maintain by {
                         step();
                         loop {
                             decreases 2 - j;
                             invariant j >= 0;
                             invariant j <= 2;
-                            initialize by solve();
+                            initialize by close();
                             maintain by {
                                 step();
                             }
@@ -1579,7 +1579,7 @@ fn frontier_local_loop_verifies_nested_loops_at_their_respective_frontiers() {
                     }
                 }
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -1622,14 +1622,14 @@ fn frontier_loop_step_expansion_uses_the_current_invariant_lowering() {
                 loop {
                     decreases n - i;
                     invariant i >= 0 and i <= n;
-                    initialize by solve();
+                    initialize by close();
                     maintain by {
                         step();
                         step();
                     }
                 }
                 step();
-                solve();
+                close();
             }
         "#;
     let preserve_step = click_source
@@ -1657,7 +1657,7 @@ fn frontier_loop_step_expansion_uses_the_current_invariant_lowering() {
 
     let indent = &click_source[preserve_step + 1 - column..preserve_step];
     let expected = format!(
-        "{}step() by {{\n{indent}    known();\n{indent}}}{}",
+        "{}step() by {{\n{indent}    close();\n{indent}}}{}",
         &click_source[..preserve_step],
         &click_source[preserve_step + "step();".len()..],
     );
@@ -1688,7 +1688,7 @@ fn frontier_local_loop_checks_an_optional_decreases_measure() {
                 loop {
                     decreases n;
                     invariant n >= 0;
-                    initialize by solve();
+                    initialize by close();
                     maintain by {
                         have 0 <= to_integer(n - 1) by {
                             close() using { n > 0; }
@@ -1697,7 +1697,7 @@ fn frontier_local_loop_checks_an_optional_decreases_measure() {
                     }
                 }
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -1734,7 +1734,7 @@ fn frontier_local_loop_keyword_expands_omitted_phases() {
                     invariant i <= n;
                 }
                 step();
-                solve();
+                close();
             }
         "#;
     let loop_offset = click_source
@@ -1793,11 +1793,11 @@ fn loop_exit_solve_expands_invariant_conjuncts_explicitly() {
                     invariant i >= 0 and i <= n;
                 }
                 step();
-                solve();
+                close();
             }
         "#;
     let solve_offset = click_source
-        .rfind("solve();")
+        .rfind("close();")
         .expect("proof should contain its final solve");
     let line = click_source[..solve_offset]
         .bytes()
@@ -1855,7 +1855,7 @@ fn frontier_local_loop_does_not_leak_phase_tactics_into_a_later_expansion() {
                     invariant i <= 3;
                 }
                 step();
-                solve();
+                close();
             }
         "#;
     let post_loop_step = click_source
@@ -1914,17 +1914,17 @@ fn frontier_local_loop_expands_an_explicit_nested_tactic_at_its_own_location() {
                     decreases 3 - i;
                     invariant i >= 0;
                     invariant i <= 3;
-                    initialize by solve();
+                    initialize by close();
                     maintain by {
                         step();
                     }
                 }
                 step();
-                solve();
+                close();
             }
         "#;
     let initialize_solve = click_source
-        .find("initialize by solve()")
+        .find("initialize by close()")
         .expect("proof should contain explicit initialization")
         + "initialize by ".len();
     let line = click_source[..initialize_solve]
@@ -1953,7 +1953,7 @@ fn frontier_local_loop_expands_an_explicit_nested_tactic_at_its_own_location() {
         })
         .collect::<Vec<_>>();
     assert_eq!(matching_inventory.len(), 1, "{inventory:?}");
-    assert_eq!(matching_inventory[0].tactic_name, "solve");
+    assert_eq!(matching_inventory[0].tactic_name, "close");
 
     let expanded = expand_c_tactic_source_at(
         click_source,
@@ -1963,7 +1963,7 @@ fn frontier_local_loop_expands_an_explicit_nested_tactic_at_its_own_location() {
     )
     .expect("explicit initialization tactic should expand at its own source location");
 
-    assert!(!expanded.contains("initialize by solve()"), "{expanded}");
+    assert!(!expanded.contains("initialize by close()"), "{expanded}");
     assert!(expanded.contains("maintain by {"), "{expanded}");
     verify_c_sources(&expanded, &[("count_to_three.c", c_source)])
         .expect("expanded explicit initialization tactic should freshly check");
@@ -1991,7 +1991,7 @@ fn frontier_local_loop_at_function_entry_keeps_initialization_capture_separate()
                 loop {
                     decreases n;
                     invariant n >= 0;
-                    initialize by solve();
+                    initialize by close();
                     maintain by {
                         have 0 <= to_integer(n - 1) by {
                             close() using { n > 0; }
@@ -2000,7 +2000,7 @@ fn frontier_local_loop_at_function_entry_keeps_initialization_capture_separate()
                     }
                 }
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -2049,13 +2049,13 @@ fn frontier_local_loop_expands_a_tactic_inside_preservation_at_its_own_location(
                     decreases 3 - i;
                     invariant i >= 0;
                     invariant i <= 3;
-                    initialize by solve();
+                    initialize by close();
                     maintain by {
                         step();
                     }
                 }
                 step();
-                solve();
+                close();
             }
         "#;
     let preserve_step = click_source
@@ -2089,7 +2089,7 @@ fn frontier_local_loop_expands_a_tactic_inside_preservation_at_its_own_location(
     // A bare `step()` is a simple tactic: expanding it leaves the source as
     // written, and the loop's other phases stay untouched.
     assert_eq!(expanded, click_source);
-    assert!(expanded.contains("initialize by solve()"), "{expanded}");
+    assert!(expanded.contains("initialize by close()"), "{expanded}");
     verify_c_sources(&expanded, &[("count_to_three.c", c_source)])
         .expect("expanded preservation step should freshly check");
 }
@@ -2118,13 +2118,13 @@ fn explicit_loop_closer_cannot_bypass_proof_owned_bundle_check() {
                 loop {
                     invariant i >= 0;
                     invariant i <= 1;
-                    initialize by solve();
+                    initialize by close();
                     maintain by {
                         step();
                     }
                 }
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -2179,11 +2179,11 @@ fn body_final_branch_preservation_completes_at_typed_back_edge_boundary() {
                     decreases n - i;
                     invariant i >= 0;
                     invariant parity >= 0 and parity <= 1;
-                    initialize by solve();
+                    initialize by close();
                     {preserve}
                 }
                 step();
-                solve();
+                close();
             }
         "#;
     let explicit = template.replace(
@@ -2257,13 +2257,13 @@ fn frontier_local_loop_exit_bound_weakens_to_a_looser_ensures() {
                     decreases 3 - i;
                     invariant i >= 0;
                     invariant i <= 3;
-                    initialize by solve();
+                    initialize by close();
                     maintain by {
                         step();
                     }
                 }
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -2300,7 +2300,7 @@ fn whole_claim_expansion_reconstructs_nested_decided_branch_and_loop_match() {
         } by {
             have marker() != Marker::Inactive by {
                 unfold(marker());
-                known();
+                close();
             }
             match marker() {
                 Marker::Active => {
@@ -2309,11 +2309,11 @@ fn whole_claim_expansion_reconstructs_nested_decided_branch_and_loop_match() {
                         decreases 2 - to_integer(x);
                         invariant x >= 1;
                         invariant x <= 2;
-                        initialize by solve();
+                        initialize by close();
                         maintain by {
                             have marker() != Marker::Inactive by {
                                 unfold(marker());
-                                known();
+                                close();
                             }
                             match marker() {
                                 Marker::Active => {
@@ -2326,7 +2326,7 @@ fn whole_claim_expansion_reconstructs_nested_decided_branch_and_loop_match() {
                         }
                     }
                     step();
-                    solve();
+                    close();
                 },
                 Marker::Inactive => {
                     contradiction(marker() == Marker::Inactive);
@@ -2371,7 +2371,7 @@ fn loop_exit_duplicate_invariants_verify_and_reject_false_claims() {
                 invariant 1 == 1;
                 invariant forall (k: int32) { k == k };
             }
-            step(); solve();
+            step(); close();
         }
     "#;
     for source in [
@@ -2409,7 +2409,7 @@ fn changed_break_exit_does_not_label_head_invariants_as_exit_facts() {
     for fact in ["r == 0", "at(loop(0).exit, r) == at(loop(0).exit, 0)"] {
         let false_have = source.replace(
             "    step();\n    close();",
-            &format!("    have {fact} by {{ known(); }}\n    step();\n    close();"),
+            &format!("    have {fact} by {{ close(); }}\n    step();\n    close();"),
         );
         assert_ne!(source, false_have);
         let error = verify_c_sources(&false_have, &sources).unwrap_err();
@@ -2564,7 +2564,7 @@ int32 f(int32 n) {
     loop { decreases 1; invariant n == 5;
         maintain by {
             loop { decreases 1; invariant n == 5;
-                maintain by { step(); have result == 7 by solve(); solve(); }
+                maintain by { step(); have result == 7 by close(); close(); }
             }
         }
     }
@@ -2640,9 +2640,9 @@ int32 f(int32 n) {
         true => {
             step(); step();
             loop { decreases n-i; invariant i >= 0; invariant i <= n; }
-            step(); have result == n by solve(); solve();
+            step(); have result == n by close(); close();
         }
-        false => { step(); solve(); }
+        false => { step(); close(); }
     }
 }
 "#;

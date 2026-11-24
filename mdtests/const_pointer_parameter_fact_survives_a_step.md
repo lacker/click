@@ -46,11 +46,11 @@ int32 peek(const struct node* p) {
 } by {
     unfold(x);
     step();
-    have same(p, p) == 1 by known();
+    have same(p, p) == 1 by close();
     let x = fold(here(p), { tag: 0 });
     step();
     step();
-    solve();
+    close();
 }
 ```
 

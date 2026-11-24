@@ -43,7 +43,7 @@ void caller() {
     requires g[0] == 5;
     owns g[0..4];
     ensures g[0] == 5;
-} by { step_until(function.exit); have g[0] == 1; solve(); }
+} by { step_until(function.exit); have g[0] == 1; close(); }
 ```
 
 ```expect

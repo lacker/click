@@ -400,7 +400,7 @@ fn changed_selection_maps_leaf_proof_and_contract_changes_to_callers() {
 verifying "leaf.c";
 verifying "caller.c";
 verifying "unrelated.c";
-int32 leaf(int32 x) { ensures result == x; } by { step_until(function.exit); solve(); }
+int32 leaf(int32 x) { ensures result == x; } by { step_until(function.exit); close(); }
 int32 caller(int32 x) { ensures result == x; }
 int32 unrelated(int32 x) { ensures result == x; }
 "#;
@@ -426,7 +426,7 @@ int32 unrelated(int32 x) { ensures result == x; }
     ];
 
     for changed in [
-        baseline.replacen("step_until(function.exit); solve();", "step(); solve();", 1),
+        baseline.replacen("step_until(function.exit); close();", "step(); close();", 1),
         baseline.replacen("result == x", "result >= x", 1),
     ] {
         let selection =
@@ -752,7 +752,7 @@ int32 example() {
     ensures result == 0;
 } by {
     step_until(function.exit);
-    solve();
+    close();
 }
 "#;
     let sources = [("example.c", c_source)];
@@ -789,7 +789,7 @@ int32 example() {
     ensures result == 0;
 } by {
     step_until(function.exit);
-    solve();
+    close();
 }
 "#;
     let sources = [("example.c", c_source)];
@@ -841,13 +841,13 @@ int32 count_to_one() {
     step();
     loop {
         invariant i >= 0 and i <= 1;
-        initialize by solve();
+        initialize by close();
         maintain by {
             step();
         }
     }
     step();
-    solve();
+    close();
 }
 "#;
     let sources = [("loop.c", c_source)];
@@ -963,10 +963,10 @@ int32 write_selected(int32 p[2], int32 flag) {
 } by {
     if flag != 0 {
         step_until(function.exit);
-        have result + 1 == 1 by solve();
+        have result + 1 == 1 by close();
     } else {
         step_until(function.exit);
-        have result - 1 == 0 by solve();
+        have result - 1 == 0 by close();
     }
 }
 "#;
@@ -1017,9 +1017,9 @@ int32 flag(int32 x) {
     requires x <= 0;
     ensures result == 0;
 } by {
-    branch { true => { step(); solve(); } false => {} }
+    branch { true => { step(); close(); } false => {} }
     step();
-    solve();
+    close();
 }
 "#;
     let click_path = directory.join("dropped_arm.click");
@@ -1035,7 +1035,7 @@ int32 flag(int32 x) {
         .expect("the dropped arm's solve should be an auditable site");
     let expanded = expand_location(&format_location(&site_location(site)))
         .expect("a smart tactic on a dropped C path should expand");
-    assert!(!expanded.contains("step(); solve();"), "{expanded}");
+    assert!(!expanded.contains("step(); close();"), "{expanded}");
     let source = load_audit_source_from_text(&click_path, expanded.clone()).unwrap();
     let refs = source_refs(&source.c_sources);
     verify_c_sources(&source.click_source, &refs)
@@ -1065,7 +1065,7 @@ fn prepared_audit_reuses_validated_inputs_across_sites() {
     .unwrap();
     fs::write(
         &path,
-        "verifying \"unit.c\";\nint32 identity(int32 x) { ensures result == x; } by { step_until(function.exit); solve(); }\n",
+        "verifying \"unit.c\";\nint32 identity(int32 x) { ensures result == x; } by { step_until(function.exit); close(); }\n",
     )
     .unwrap();
     fs::write(
@@ -1147,12 +1147,12 @@ void object_retain_many(struct object* obj, int32 amount) {
     ensures defined(obj->refs);
 } by {
     with(control(obj)) {
-        have obj->refs == count(reference(obj)) by solve();
+        have obj->refs == count(reference(obj)) by close();
         step();
         fold(amount of reference(obj));
     }
     step_until(function.exit);
-    solve();
+    close();
 }
 "#;
     let click_path = directory.join("scope_have.click");
@@ -1173,8 +1173,8 @@ void object_retain_many(struct object* obj, int32 amount) {
     };
     let sites = inventory_sites(std::slice::from_ref(&click_path)).unwrap();
     for needle in [
-        "have obj->refs == count(reference(obj)) by solve();",
-        "solve();\n}",
+        "have obj->refs == count(reference(obj)) by close();",
+        "close();\n}",
     ] {
         let line = line_of(needle);
         let site = sites
@@ -1222,7 +1222,7 @@ int32 compare_self(uint8 bytes[]) {
         step();
         step();
         have 1 == 1 by { normalize(); }
-        known();
+        close();
     }
 }
 
@@ -1231,7 +1231,7 @@ int32 compare_smart(uint8 bytes[]) {
     ensures 1 == 1 by {
         step();
         step();
-        solve();
+        close();
     }
 }
 "#;
@@ -1299,7 +1299,7 @@ struct node* unpack(struct node* node) {
     unfold(packed(node));
     step_until(function.exit);
     fold(packed(node));
-    known();
+    close();
     close() using {
         aligned(result, 8);
         node->word == address(result) + (node->word & 1);
@@ -1384,7 +1384,7 @@ uint32 count_live(struct cell* node) {
 } by {
     if node == 0 {
         step_until(function.exit);
-        solve();
+        close();
     } else {
         let { next: child } = unfold(tagged(node));
         step_until(statement(2).entry);
@@ -1462,7 +1462,7 @@ int32 stop_at(int32 n) {
         invariant i >= 0;
     }
     step();
-    solve();
+    close();
 }
 "#;
     let click_path = directory.join("stop_at.click");
@@ -1621,7 +1621,7 @@ int32 double_it(int32 x) {
     ensures result == x + x;
 } by {
     step_until(function.exit);
-    solve();
+    close();
 }
 "#,
     )
@@ -1640,11 +1640,11 @@ fn loop_expansion_preserves_match_pointer_theorem_arguments_and_audits_every_sit
     let original = fs::read_to_string(fixture).unwrap();
     let source = original.replacen(
         "function plug(",
-        "theorem ptr_self(p: struct rb_node*) { ensures p == p by { solve(); } }\n\
-         theorem ptr_equal(p: struct rb_node*, q: struct rb_node*) { requires p == q; ensures p == q by { known(); } }\n\nfunction plug(",
+        "theorem ptr_self(p: struct rb_node*) { ensures p == p by { close(); } }\n\
+         theorem ptr_equal(p: struct rb_node*, q: struct rb_node*) { requires p == q; ensures p == q by { close(); } }\n\nfunction plug(",
         1,
-    ).replace("initialize by solve();", "");
-    let anchor = "                    have identity == parent by known();";
+    ).replace("initialize by close();", "");
+    let anchor = "                    have identity == parent by close();";
     assert!(
         source.contains(anchor),
         "fixture must retain the Left arm's pointer equality"
@@ -1653,8 +1653,8 @@ fn loop_expansion_preserves_match_pointer_theorem_arguments_and_audits_every_sit
         anchor,
         &format!(
             "{anchor}\n\
-        have identity == identity by {{ apply(ptr_self(identity)); known(); }}\n\
-        have identity == parent by {{ apply(ptr_equal(identity, parent)); known(); }}"
+        have identity == identity by {{ apply(ptr_self(identity)); close(); }}\n\
+        have identity == parent by {{ apply(ptr_equal(identity, parent)); close(); }}"
         ),
         1,
     );
@@ -1731,7 +1731,7 @@ fn short_circuit_conditions_audit_every_site() {
 }
 
 /// Ranked loops without invariants have an empty initialization certificate.
-/// The printer retains `known();` there; audit must also establish that
+/// The printer retains `close();` there; audit must also establish that
 /// every rewrite parses, re-verifies in the retained session and directly,
 /// reaches an expansion fixed point, and respects the ordinary work limits.
 #[test]
@@ -1934,11 +1934,11 @@ fn result_parameter_postconditions_audit_every_site() {
 #[test]
 fn a_claims_rewrites_combine_into_one_source() {
     let original = "step;\nsolve;\nstep;\nauto;\nstep;\n";
-    let first = "step;\nrewrite(a, b);\nknown();\nstep;\nauto;\nstep;\n";
+    let first = "step;\nrewrite(a, b);\nclose();\nstep;\nauto;\nstep;\n";
     let second = "step;\nsolve;\nstep;\nstep;\n";
     assert_eq!(
         combine_rewrites(original, &[second, first]).as_deref(),
-        Some("step;\nrewrite(a, b);\nknown();\nstep;\nstep;\n"),
+        Some("step;\nrewrite(a, b);\nclose();\nstep;\nstep;\n"),
     );
     assert_eq!(combine_rewrites(original, &[first]).as_deref(), Some(first));
 }
@@ -2043,7 +2043,6 @@ theorem nested(x: int32) {
             have 0 <= x by { close(); }
             close();
         }
-        known();
     }
 }
 "#;
@@ -2079,7 +2078,7 @@ fn inventory_obeys_the_work_and_whole_run_bounds() {
     let path = directory.join("unit.click");
     fs::write(
         &path,
-        "theorem identity() { ensures 0 == 0 by { solve(); } }",
+        "theorem identity() { ensures 0 == 0 by { close(); } }",
     )
     .unwrap();
     let mut arguments = parse_arguments([path.display().to_string()]).unwrap();
@@ -2166,7 +2165,7 @@ int32 compare(uint8 bytes[]) {
     ensures 1 == 1 by {
         step();
         step();
-        solve();
+        close();
     }
 }
 "#;
@@ -2186,7 +2185,7 @@ int32 compare(uint8 bytes[]) {
     // Supply an incomplete expansion at the session boundary. It is valid
     // with implicit solve and has no smart sites, so only the whole-claim
     // cold check can detect the omitted evidence.
-    let incomplete = click_source.replace("solve();", "have 1 == 1 by { normalize(); } known();");
+    let incomplete = click_source.replace("close();", "have 1 == 1 by { normalize(); } close();");
     verify_c_sources(&incomplete, &[("compare.c", c_source)]).unwrap();
     // Even an unchanged candidate must fail if a bare step still relies on
     // implicit solving. Exercise both changed and byte-identical replies.
@@ -2333,7 +2332,7 @@ fn audit_mixed_mdtests_checks_positive_sources() {
     .unwrap();
     fs::write(
         &positive,
-        "```click\ntheorem identity() { ensures 0 == 0 by solve(); }\n```\n```expect\npass\n```\n",
+        "```click\ntheorem identity() { ensures 0 == 0 by close(); }\n```\n```expect\npass\n```\n",
     )
     .unwrap();
     let sites = inventory_sites(&audit_targets(directory.path()).unwrap()).unwrap();
@@ -2342,7 +2341,7 @@ fn audit_mixed_mdtests_checks_positive_sources() {
     run_audit(parse_arguments([directory.path().display().to_string()]).unwrap()).unwrap();
     fs::write(
         &positive,
-        "```click\ntheorem bad() { ensures true && true by solve(); }\n```\n```expect\npass\n```\n",
+        "```click\ntheorem bad() { ensures true && true by close(); }\n```\n```expect\npass\n```\n",
     )
     .unwrap();
     let error =
@@ -2358,13 +2357,13 @@ fn keep_going_audits_other_files_after_an_inventory_failure() {
     let directory = tempfile::tempdir().unwrap();
     fs::write(
         directory.path().join("broken.md"),
-        "```click\ntheorem bad() { ensures true && true by solve(); }\n```\n```expect\npass\n```\n",
+        "```click\ntheorem bad() { ensures true && true by close(); }\n```\n```expect\npass\n```\n",
     )
     .unwrap();
     let healthy = directory.path().join("healthy.md");
     fs::write(
         &healthy,
-        "```click\ntheorem healthy() { ensures 0 == 0 by solve(); }\n```\n```expect\npass\n```\n",
+        "```click\ntheorem healthy() { ensures 0 == 0 by close(); }\n```\n```expect\npass\n```\n",
     )
     .unwrap();
     let arguments = || {
@@ -2403,7 +2402,7 @@ fn inventory_budget_applies_to_each_source() {
         fs::write(
             &path,
             format!(
-                "```click\ntheorem identity{index}() {{ ensures 0 == 0 by solve(); }}\n```\n\
+                "```click\ntheorem identity{index}() {{ ensures 0 == 0 by close(); }}\n```\n\
                  ```expect\npass\n```\n"
             ),
         )
@@ -2453,7 +2452,7 @@ fn body_safety_proofs_have_one_auditable_source_site() {
     let path = directory.path().join("mixed.md");
     fs::write(
         &path,
-        "```c filename=mixed.c\nint32 read_byte(uint8 *p) { return p[0]; }\n```\n```click\nverifying \"mixed.c\";\nint32 read_byte(uint8 *p) { views p[0..1]; }\ntheorem healthy() { ensures 0 == 0 by solve(); }\n```\n```expect\npass\n```\n",
+        "```c filename=mixed.c\nint32 read_byte(uint8 *p) { return p[0]; }\n```\n```click\nverifying \"mixed.c\";\nint32 read_byte(uint8 *p) { views p[0..1]; }\ntheorem healthy() { ensures 0 == 0 by close(); }\n```\n```expect\npass\n```\n",
     )
     .unwrap();
     let arguments =
@@ -2507,7 +2506,7 @@ fn body_safety_proofs_have_one_auditable_source_site() {
     );
     let written = source.click_source.replace(
         "views p[0..1]; }",
-        "views p[0..1]; } by { step_until(function.exit); solve(); }",
+        "views p[0..1]; } by { step_until(function.exit); close(); }",
     );
     let written_sites = c_smart_tactic_source_sites(&written, &source_refs(inputs)).unwrap();
     assert_eq!(
@@ -2543,7 +2542,7 @@ fn body_safety_proofs_have_one_auditable_source_site() {
 /// audit, including cold verification with implicit solving disabled.
 #[test]
 fn a_fully_explicit_script_has_an_auditable_fixed_point() {
-    // The contract closes with one written `known()` per closing goal:
+    // The contract closes with one written `close()` per closing goal:
     // returned resources, allocation lifetime, and write footprint.
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("explicit_identity.md");
@@ -2552,7 +2551,7 @@ fn a_fully_explicit_script_has_an_auditable_fixed_point() {
         "```c filename=explicit_identity.c\nint32 identity(int32 x) {\n    return x;\n}\n```\n\n\
          ```click\nverifying \"explicit_identity.c\";\n\n\
          int32 identity(int32 x) {\n    ensures result == x;\n} by {\n    step();\n    \
-         normalize();\n    known();\n    known();\n    known();\n}\n```\n\n\
+         normalize();\n    close();\n    close();\n    close();\n}\n```\n\n\
          ```expect\npass\n```\n",
     )
     .unwrap();

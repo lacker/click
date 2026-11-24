@@ -34,15 +34,15 @@ int32 drain(int32 n) {
     step();
     branch {
         true => {
-            have 0 <= level(n) by { unfold(level(n)); solve(); }
+            have 0 <= level(n) by { unfold(level(n)); close(); }
             step();
             step();
-            solve();
+            close();
         }
         false => {}
     }
     step();
-    solve();
+    close();
 }
 ```
 

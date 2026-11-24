@@ -10,12 +10,12 @@ theorem t(y: int32) {
     requires y == 7;
     ensures forall (y: int32) { y == y } by {
         intro();
-        have y == 7 by { known(); }
-        solve();
+        have y == 7 by { close(); }
+        close();
     }
 }
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: could not establish `y == 7`
 ```

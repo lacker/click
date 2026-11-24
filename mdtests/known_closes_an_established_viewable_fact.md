@@ -1,7 +1,7 @@
-# `known()` closes a `viewable` goal from the identical established fact
+# `close()` closes a `viewable` goal from the identical established fact
 
 A narrowing established by the separation restriction axioms is an ordinary available fact,
-and `known()` closes the identical `viewable` goal from it through the
+and `close()` closes the identical `viewable` goal from it through the
 same exact indexed lookup it uses for any other goal. The DFS proofs once
 reported
 
@@ -39,7 +39,7 @@ int32 probe(int32 a[], int32 n, int32 k) {
     have viewable(a[0..n]);
     have 0 <= n - 0;
     have n - 0 <= 1073741823;
-    have 0 <= 0 by { known(); }
+    have 0 <= 0 by { close(); }
     have viewable(a[0..k]) by {
         have contains(memory(a[0..n]), memory(a[0..k])) by {
             apply(click::separation::contains_subrange(a, 0, n, 0, k));
@@ -47,7 +47,7 @@ int32 probe(int32 a[], int32 n, int32 k) {
         apply(click::separation::viewable_restrict(memory(a[0..n]), memory(a[0..k])));
     }
     have viewable(a[0..k]) and 0 <= k by {
-        all { viewable(a[0..k]) => { known(); } 0 <= k => { solve(); } }
+        all { viewable(a[0..k]) => { close(); } 0 <= k => { close(); } }
     }
     have forall (j: int32) { 0 <= j and j <= k implies viewable(a[0..j]) } by {
         intro(); intro();
@@ -58,9 +58,9 @@ int32 probe(int32 a[], int32 n, int32 k) {
             }
             apply(click::separation::viewable_restrict(memory(a[0..n]), memory(a[0..j])));
         }
-        known();
+        close();
     }
-    solve();
+    close();
 }
 ```
 

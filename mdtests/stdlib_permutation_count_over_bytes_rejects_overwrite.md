@@ -29,10 +29,10 @@ int32 duplicate_byte(uint8 p[2]) {
     ensures pair_permutation: byte_permutation(p, old(p), 0, 2);
 } by {
     step();
-    have p[0] == 1 by known();
-    have p[1] == 1 by solve();
-    have permutation::count(p, 0, 2, 0u8) == 0 by solve();
-    have permutation::count(old(p), 0, 2, 0u8) == 1 by solve();
+    have p[0] == 1 by close();
+    have p[1] == 1 by close();
+    have permutation::count(p, 0, 2, 0u8) == 0 by close();
+    have permutation::count(old(p), 0, 2, 0u8) == 1 by close();
     step();
     have byte_permutation(p, old(p), 0, 2) by {
         unfold(byte_permutation(p, old(p), 0, 2));
@@ -43,7 +43,7 @@ int32 duplicate_byte(uint8 p[2]) {
             rewrite(permutation::count(old(p), 0, 2, 0u8), 1);
             normalize();
         } else {
-            solve();
+            close();
         }
     }
 }

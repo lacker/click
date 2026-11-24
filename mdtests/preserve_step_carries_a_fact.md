@@ -13,7 +13,7 @@ void keep(int32* p, int32* q) {
     requires *q > 0;
     ensures *q > 0;
 } by {
-    step() by { known(); }
+    step() by { close(); }
     have separate(statement(0).footprint, memory(*q)) by {
         close() using { separate(memory(*p), memory(*q)); };
     }
@@ -22,11 +22,11 @@ void keep(int32* p, int32* q) {
     }
     have *q > 0 by {
         rewrite(*q, at(statement(0).entry, *q));
-        known();
+        close();
     }
     step();
-    known();
-    known(); known(); known(); known();
+    close();
+    close(); close(); close(); close();
 }
 ```
 

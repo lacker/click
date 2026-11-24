@@ -26,13 +26,13 @@ void mint_pair(int32* o, int32 n, int32 m) {
     ensures count(tok(o)) == n;
 } by {
     fold(n of tok(o));
-    have count(tok(o)) == n by solve();
+    have count(tok(o)) == n by close();
     have defined(count(tok(o)) + m) by {
         rewrite(count(tok(o)), n);
-        solve();
+        close();
     }
     fold(m of tok(o));
-    have count(tok(o)) == n by known();
+    have count(tok(o)) == n by close();
 }
 void run(int32* o, int32 n, int32 m) {
     owns authority(tok(o));
@@ -47,5 +47,5 @@ void run(int32* o, int32 n, int32 m) {
 ```
 
 ```expect
-fail: `known` requires the current goal
+fail: could not establish `to_integer(count(tok(o))) == to_integer(n)`
 ```

@@ -15,13 +15,13 @@ int32 unproved_have_case(int32 x) {
     ensures result == x by {
         have x <= 0 by {
             if x <= 0 {
-                solve();
+                close();
             } else {
-                solve();
+                close();
             }
         }
         step();
-        solve();
+        close();
     }
 }
 ```

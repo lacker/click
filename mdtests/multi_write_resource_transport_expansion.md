@@ -30,7 +30,7 @@ void keep(uint8* p) {
     have m.value == at(statement(1).entry, m.value) by {
         preserve(m, statement(1));
     }
-    have m.value == at(statement(0).entry, m.value) by { known(); }
+    have m.value == at(statement(0).entry, m.value) by { close(); }
     step();
 }
 ```

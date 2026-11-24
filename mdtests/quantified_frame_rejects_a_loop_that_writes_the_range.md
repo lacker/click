@@ -28,13 +28,13 @@ void wipe(int32 a[], int32 n) {
         invariant 0 <= i;
         invariant i <= n;
         owns a[0..n];
-        initialize by { solve(); }
+        initialize by { close(); }
         maintain by {
             step();
             step();
         }
     }
-    have forall (k: int32) { 0 <= k and k < n implies a[k] == old(a[k]) } by { solve(); }
+    have forall (k: int32) { 0 <= k and k < n implies a[k] == old(a[k]) } by { close(); }
 }
 ```
 

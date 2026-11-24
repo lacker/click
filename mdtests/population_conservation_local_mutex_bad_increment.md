@@ -55,7 +55,7 @@ void contribute(struct counter* p) {
     step(pthread_mutex_destroy, { lifetime: lifetime });
     unfold(state);
     step();
-    solve();
+    close();
 }
 ```
 

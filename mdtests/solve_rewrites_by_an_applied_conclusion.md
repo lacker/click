@@ -37,13 +37,13 @@ theorem append_nil(xs: IntList) {
         match xs {
             IntList::Nil => {
                 unfold(append(IntList::Nil, IntList::Nil));
-                solve();
+                close();
             }
             IntList::Cons(head, tail) => {
                 apply(ih(tail));
                 unfold(append(IntList::Cons(head, tail), IntList::Nil));
                 rewrite(append(tail, IntList::Nil), tail);
-                known();
+                close();
             }
         }
     }
@@ -54,14 +54,14 @@ theorem rewrite_by_the_applied_lemma(xs: IntList, ys: IntList) {
     ensures ys == xs by {
         apply(append_nil(xs));
         have ys == xs;
-        known();
+        close();
     }
 }
 theorem reversed(xs: IntList) {
     ensures xs == append(xs, IntList::Nil) by {
         apply(append_nil(xs));
         have xs == append(xs, IntList::Nil);
-        known();
+        close();
     }
 }
 
@@ -74,12 +74,12 @@ theorem reversed_in_an_induction_arm(flag: Flag, xs: IntList) {
             Flag::On => {
                 apply(append_nil(xs));
                 have xs == append(xs, IntList::Nil);
-                known();
+                close();
             }
             Flag::Off => {
                 apply(append_nil(xs));
                 have xs == append(xs, IntList::Nil);
-                known();
+                close();
             }
         }
     }

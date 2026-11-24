@@ -26,7 +26,7 @@ int32 prefix_sum_equation(int32 a[], int32 n) {
         step_until(function.exit);
         have 0 <= to_integer(n - 1);
         unfold(icount(a, 0, n));
-        solve();
+        close();
     }
 }
 ```

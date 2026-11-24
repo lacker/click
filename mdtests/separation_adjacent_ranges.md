@@ -29,7 +29,7 @@ theorem joined(p: uint8*, lo: uint64, mid: uint64, hi: uint64) {
 
 theorem empty(p: int32*, i: int32) {
     ensures separate(memory(p[i..i]), memory(p[i..i])) by {
-        have i <= i by { solve(); }
+        have i <= i by { close(); }
         apply(separation::separate_adjacent_ranges(p, i, i, i));
     }
 }

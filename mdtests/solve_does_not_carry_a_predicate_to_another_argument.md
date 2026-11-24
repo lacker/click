@@ -4,7 +4,7 @@
 nothing about an unrelated `q`: with `b` the box of `0`, `holds(b, 0)` is `1`
 and `holds(b, 1)` is `0`.
 
-`solve()` used to prove the theorem below. The certificate it found was made of
+`close()` used to prove the theorem below. The certificate it found was made of
 simple tactics: rewrite the goal's `1` to `holds(b, p)`, unfold both
 applications, and rewrite by the premise. The last step was the unsound one. A
 `rewrite` whose source is a composite term could not substitute through the
@@ -31,7 +31,7 @@ theorem one_argument_says_nothing_about_another(b: Box, p: int32, q: int32) {
     requires holds(b, p) == 1;
 
     ensures holds(b, q) == 1 by {
-        solve();
+        close();
     }
 }
 ```

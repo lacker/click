@@ -35,10 +35,10 @@ void copy_pos(struct cursor *target, struct cursor *source) {
     have separate(memory(target->pos), memory(*source)) by {
         apply(separation::separate_restrict(memory(*target), memory(*source), memory(target->pos), memory(*source)));
     }
-    step() by { known(); }
+    step() by { close(); }
     step();
-    known();
-    known(); known(); known();
+    close();
+    close(); close(); close();
 }
 ```
 

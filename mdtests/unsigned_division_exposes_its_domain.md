@@ -13,32 +13,32 @@ uint32 divide(uint32 x, uint32 y) {
     requires y != 0u32;
     ensures result == x / y;
 } by {
-    step() by { known(); }
-    known();
+    step() by { close(); }
+    close();
 }
 
 uint32 remainder(uint32 x, uint32 y) {
     requires y != 0u32;
     ensures result == x % y;
 } by {
-    step() by { known(); }
-    known();
+    step() by { close(); }
+    close();
 }
 
 uint64 divide_wide(uint64 x, uint64 y) {
     requires y != 0u64;
     ensures result == x / y;
 } by {
-    step() by { known(); }
-    known();
+    step() by { close(); }
+    close();
 }
 
 uint64 remainder_wide(uint64 x, uint64 y) {
     requires y != 0u64;
     ensures result == x % y;
 } by {
-    step() by { known(); }
-    known();
+    step() by { close(); }
+    close();
 }
 ```
 

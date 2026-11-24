@@ -37,7 +37,7 @@ int32 count_from_to(int32 i, int32 n) {
         };
     }
     step();
-    solve();
+    close();
 }
 ```
 

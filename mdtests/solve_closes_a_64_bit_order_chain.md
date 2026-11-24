@@ -1,6 +1,6 @@
 # `solve` closes a 64-bit order chain
 
-`solve()` proves an order goal from a chain of `uint64` or `int64` order
+`close()` proves an order goal from a chain of `uint64` or `int64` order
 facts, as it does for `int32`: the kernel records the facts its 64-bit order
 walk used, and `solve` writes them out as the standard library's
 transitivity lemmas (`integer::uint64_less_than_less_equal_transitive` and its siblings), each link
@@ -15,19 +15,19 @@ import click::integer;
 theorem two_links(a: uint64, b: uint64, c: uint64) {
     requires a < b;
     requires b <= c;
-    ensures a < c by { solve(); }
+    ensures a < c by { close(); }
 }
 theorem three_links(a: uint64, b: uint64, c: uint64, d: uint64) {
     requires a < b;
     requires b <= c;
     requires c <= d;
-    ensures a < d by { solve(); }
+    ensures a < d by { close(); }
 }
 theorem signed_links(a: int64, b: int64, c: int64, d: int64) {
     requires a < b;
     requires c >= b;
     requires c <= d;
-    ensures a < d by { solve(); }
+    ensures a < d by { close(); }
 }
 theorem written_from_the_other_side(a: uint64, b: uint64, c: uint64) {
     requires a < b;

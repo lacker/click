@@ -36,10 +36,10 @@ unsigned long current() {
     have old(counter::state.value) == 7u64;
     step_until(function.exit);
     fold(counter_state());
-    known();
-    known();
+    close();
+    close();
     rewrite(result, old(counter::state.value));
-    solve();
+    close();
 }
 
 int main() {

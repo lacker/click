@@ -11,7 +11,7 @@ theorem conflicting_aliases(a: Walk, b: Walk, flag: int32) {
     requires a == b;
     requires pending(a) == 1;
     requires pending(b) == 0;
-    ensures flag == 42 by { solve(); }
+    ensures flag == 42 by { close(); }
 }
 ```
 

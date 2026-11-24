@@ -15,7 +15,7 @@ void repair() {
 } by {
     step_until(function.exit);
     let tag = fold(marker(), { value: 1 });
-    solve();
+    close();
 }
 void finish(int32* p) {
     views viewed(p);

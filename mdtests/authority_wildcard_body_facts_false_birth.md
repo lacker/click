@@ -25,22 +25,22 @@ authorized resource slot(pool: int32*, p: int32*) {
 verifying "wildcard_body_facts.c";
 int32 lifecycle() { ensures result == 0 or result == 9; } by {
     step(); step(); step(); step();
-    branch { true => { step_until(function.exit); solve(); } false => {} }
+    branch { true => { step_until(function.exit); close(); } false => {} }
     step(); step();
     fold(authority(slot(&pool, _)));
-    have 0 <= p[1] by solve();
+    have 0 <= p[1] by close();
     fold(slot(&pool, p));
     fold(slot(&pool, p + 1));
-    have count(slot(&pool, _)) == 2 by solve();
-    with(slot(&pool, p)) { step(); have 0 <= p[0] by solve(); }
-    have count(slot(&pool, _)) == 2 by solve();
+    have count(slot(&pool, _)) == 2 by close();
+    with(slot(&pool, p)) { step(); have 0 <= p[0] by close(); }
+    have count(slot(&pool, _)) == 2 by close();
     with(slot(&pool, p)) {
         with(slot(&pool, p + 1)) { step(); step(); }
     }
     unfold(slot(&pool, p));
     unfold(slot(&pool, p + 1));
     unfold(authority(slot(&pool, _)));
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }
 ```
 

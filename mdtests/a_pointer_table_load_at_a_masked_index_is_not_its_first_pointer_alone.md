@@ -19,7 +19,7 @@ int32 f(uint32 u) {
     ensures result == 4;
 } by {
     step_until(function.exit);
-    solve();
+    close();
 }
 ```
 

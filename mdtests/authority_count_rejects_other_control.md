@@ -22,7 +22,7 @@ verifying "wrong_count.c";
 void wrong_count(struct object* first, struct object* second) {
     owns control(first);
 } by {
-    have count(reference(second)) == 0 by solve();
+    have count(reference(second)) == 0 by close();
 }
 ```
 

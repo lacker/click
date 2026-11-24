@@ -12,7 +12,7 @@ void inspect(int32* pool, int32* p, int32* q) {
     consumes slot(pool, p);
 } by {
     unfold(slot(pool, p));
-    have count(slot(pool, q)) == 0 by solve();
+    have count(slot(pool, q)) == 0 by close();
 }
 ```
 

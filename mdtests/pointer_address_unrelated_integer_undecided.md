@@ -22,7 +22,7 @@ int32 compare_with_integer(struct node* node, unsigned long word) {
     ensures result == 0;
 } by {
     step_until(function.exit);
-    solve();
+    close();
 }
 ```
 

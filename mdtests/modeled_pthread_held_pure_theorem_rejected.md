@@ -2,7 +2,7 @@
 
 ```click
 theorem always_unheld(m: int32*) {
-    ensures not held(m) by solve();
+    ensures not held(m) by close();
 }
 ```
 

@@ -14,13 +14,13 @@ void clear(int32* p) {
     owns p[0..1];
     requires p[0] > 0 or p[0] == 1;
     ensures p[0] == 0;
-} by { step_until(function.exit); known(); solve(); }
+} by { step_until(function.exit); close(); close(); }
 void caller(int32* p) {
     owns p[0..1];
     requires p[0] == 1;
     ensures p[0] > 0 or p[0] == 1;
-} by { step_until(function.exit); known(); solve(); }
+} by { step_until(function.exit); close(); close(); }
 ```
 ```expect
-fail: solve
+fail: checked outcome `close`
 ```

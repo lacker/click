@@ -20,9 +20,9 @@ void mark(int32 *v, int32 n, int32 i) {
     requires forall (k: int32) { 0 <= k and k < n implies v[k] == 0 };
     ensures forall (k: int32) { 0 <= k and k < n implies v[k] == 0 };
 } by {
-    have forall (k: int32) { 0 <= k and k < n implies old(v[k]) == 0 } by known();
+    have forall (k: int32) { 0 <= k and k < n implies old(v[k]) == 0 } by close();
     step();
-    have forall (k: int32) { 0 <= k and k < n implies v[k] == 0 } by { solve(); }
+    have forall (k: int32) { 0 <= k and k < n implies v[k] == 0 } by { close(); }
 }
 ```
 

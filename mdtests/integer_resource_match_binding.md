@@ -32,7 +32,7 @@ void keep() {
     unfold(c);
     step_until(function.exit);
     fold(c);
-    solve();
+    close();
 }
 ```
 

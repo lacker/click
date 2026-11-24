@@ -45,9 +45,9 @@ int32 count_up(int32 *a, int32 n) {
                 intro();
                 intro();
                 have to_integer(k) <= to_integer(i + 1);
-                solve();
+                close();
             }
-            solve();
+            close();
         }
         maintain by {
             step();

@@ -14,9 +14,9 @@ theorem missing_induction(n: int32) {
     requires n >= 0;
     ensures explicit_countdown(n) == 0 by {
         if n <= 0 {
-            solve();
+            close();
         } else {
-            solve();
+            close();
         }
     }
 }

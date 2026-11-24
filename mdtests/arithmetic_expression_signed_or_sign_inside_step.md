@@ -9,14 +9,14 @@ verifying "arithmetic.c";
 
 int32 divide(int32 n, int32 k) { ensures true; } by {
     step() by {
-        have (k & 7) >= 0 by { known(); }
-        known();
+        have (k & 7) >= 0 by { close(); }
+        close();
     }
 }
 
 theorem sign(k: int32) {
     requires k >= 0;
-    ensures (k | 1) != -1 by { known(); }
+    ensures (k | 1) != -1 by { close(); }
 }
 ```
 

@@ -4,14 +4,14 @@
 theorem circular<T>(value: T) {
     ensures value == value by {
         apply(circular(value));
-        known();
+        close();
     }
 }
 
 theorem expose(value: int32) {
     ensures value == value by {
         apply(circular(value));
-        known();
+        close();
     }
 }
 ```

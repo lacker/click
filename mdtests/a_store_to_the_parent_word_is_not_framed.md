@@ -44,14 +44,14 @@ void rotate_child_link(struct rb_node* gparent, struct rb_node* tmp) {
         invariant parent == gparent->rb_left;
         invariant parent == old(gparent->rb_left);
         decreases 0;
-        initialize by solve();
+        initialize by close();
         maintain by {
             let { child: c } = unfold(s);
             unfold(c);
             mark before_store;
             step();
             have parent->__rb_parent_color == at(before_store, parent->__rb_parent_color) by {
-                solve();
+                close();
             }
             let c = fold(node_at(gparent->rb_left), { v: 0 });
             let s = fold(left_child(gparent), { v: 0, child: c });

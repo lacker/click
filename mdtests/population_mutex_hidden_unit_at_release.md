@@ -52,16 +52,16 @@ uint32 run(struct counter* p) {
 } by {
     step();
     fold(3 of member(p));
-    have count(member(p)) == 3 by solve();
+    have count(member(p)) == 3 by close();
     let state = fold(control(p), { value: p->value });
     let { lifetime: lifetime } = step(pthread_mutex_init, { state: state });
-    branch { true => { unfold(state); unfold(3 of member(p)); step(); solve(); } false => {} }
+    branch { true => { unfold(state); unfold(3 of member(p)); step(); close(); } false => {} }
     step();
     unfold(state);
     step();
     step();
     fold(holder(p));
-    have count(member(p)) == 2 by solve();
+    have count(member(p)) == 2 by close();
     let state = fold(control(p), { value: p->value });
     step();
     step(pthread_mutex_destroy, { lifetime: lifetime });
@@ -69,7 +69,7 @@ uint32 run(struct counter* p) {
     unfold(holder(p));
     unfold(3 of member(p));
     step();
-    solve();
+    close();
 }
 ```
 

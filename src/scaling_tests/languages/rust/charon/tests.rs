@@ -296,7 +296,7 @@ fn charon_chunk_metadata_work_is_independent_of_input_length() {
     let prepared = super::super::super::import::prepared_for_test(export).unwrap();
     let claim = |length: u64| {
         format!(
-            "verifying \"chunks.rs\"; fn tail(bytes: &[u8], size: usize) -> usize {{ requires bytes.len() == {length}u64; requires size == 4u64; ensures result == {}u64; }} by {{ step_until(function.exit); solve(); }}",
+            "verifying \"chunks.rs\"; fn tail(bytes: &[u8], size: usize) -> usize {{ requires bytes.len() == {length}u64; requires size == 4u64; ensures result == {}u64; }} by {{ step_until(function.exit); close(); }}",
             length % 4
         )
     };

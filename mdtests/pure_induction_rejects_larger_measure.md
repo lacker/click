@@ -11,7 +11,7 @@ theorem bad_larger(n: int32) {
         let ih = induct(n);
         have 0 <= to_integer(n + 1);
         apply(ih(n + 1));
-        solve();
+        close();
     }
 }
 ```

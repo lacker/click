@@ -32,6 +32,6 @@ fn increment_first(bytes: &mut [u8]) {
 fn empty(bytes: &[u8]) -> bool {
     ensures result == (bytes.len() == 0);
 } by {
-    if bytes.len() == 0 { step_until(function.exit); solve(); }
-    else { step_until(function.exit); solve(); }
+    if bytes.len() == 0 { step_until(function.exit); close(); }
+    else { step_until(function.exit); close(); }
 }

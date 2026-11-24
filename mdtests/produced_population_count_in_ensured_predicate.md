@@ -49,10 +49,10 @@ void produce_population(struct owner* owner, int32 amount) {
     step();
     if 0 < amount {
         fold(amount of slot(owner));
-        step_until(function.exit); solve();
+        step_until(function.exit); close();
     } else {
         have amount == 0;
-        step_until(function.exit); solve();
+        step_until(function.exit); close();
     }
 }
 

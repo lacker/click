@@ -51,7 +51,7 @@ int32 composite_resource_vector_fill_loop_state(
         invariant i >= 0 and i <= owner->len;
         owns vector(owner);
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             unfold(vector(owner));
             have i < owner->cap;
@@ -91,8 +91,8 @@ int32 composite_resource_vector_fill_loop_state(
     have result == owner->len by {
         normalize();
     }
-    known();
-    known();
+    close();
+    close();
 }
 ```
 

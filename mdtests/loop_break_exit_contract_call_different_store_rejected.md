@@ -45,7 +45,7 @@ void paint(struct node* p, int32 flag) {
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

@@ -22,11 +22,11 @@ int32 overwrite_first(int32 p[3]) {
         step();
         step();
         unfold(same0(p, old(p)));
-        known();
+        close();
     }
 }
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: could not establish `p[0] == old(p)[0]`
 ```

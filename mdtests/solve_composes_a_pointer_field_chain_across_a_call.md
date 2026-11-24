@@ -56,24 +56,24 @@ int32 caller(struct arena* arena, struct region* first, struct region* second) {
     mark m;
     step();
     have second->arena == arena by {
-        solve();
+        close();
     }
     have first->arena == arena by {
-        solve();
+        close();
     }
     have first->arena->data == second->arena->data by {
         rewrite(first->arena, arena);
         rewrite(second->arena, arena);
-        solve();
+        close();
     }
     have second->arena->data == at(m, second->arena->data) by {
-        solve();
+        close();
     }
     have at(m, second->arena->data) == at(m, first->arena->data) by {
-        solve();
+        close();
     }
     have first->arena->data == at(m, first->arena->data) by {
-        solve();
+        close();
     }
 }
 ```

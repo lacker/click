@@ -8,7 +8,7 @@ constructed; it must not guess which held range or missing premise caused it.
 theorem prefix_of_a_viewed_byte_range(v: uint8[], n: int32, k: int32) {
     views v[0..n];
     requires 0 <= k;
-    ensures viewable(v[0..k]) by solve();
+    ensures viewable(v[0..k]) by close();
 }
 ```
 

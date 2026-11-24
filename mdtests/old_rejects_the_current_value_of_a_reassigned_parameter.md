@@ -21,7 +21,7 @@ int32 dec(int32 n) {
     step();
     have old(n) == 0;
     step();
-    solve();
+    close();
 }
 ```
 

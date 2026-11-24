@@ -7,14 +7,14 @@ this goal.
 Before, a local theorem shadowed the library's while an imported one did not:
 the citation silently applied the library theorem.
 
-```click
+```click checked-only
 import "an_imported_theorem_shadows_a_bare_library_theorem_module.click";
 import click::integer;
 
 theorem uses(a: Integer, b: Integer, c: Integer) {
     ensures (a + b) * c == a * c + b * c by {
         apply(multiply_add(a, b, c));
-        known();
+        close();
     }
 }
 ```

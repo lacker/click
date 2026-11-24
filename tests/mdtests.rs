@@ -738,6 +738,17 @@ fn run_mdtest(path: &Path) -> Result<(), String> {
         }
     };
 
+    if mdtest.checked_only {
+        let result = timed_mdtest_phase(path, "verify", || {
+            click::surface::without_proof_search(|| {
+                verify().map_err(|error| {
+                    click::surface::display_source_names(error.message()).into_owned()
+                })
+            })
+        });
+        return check_rendered_expectation(path, expectation, result);
+    }
+
     let (result, samples) = timed_mdtest_phase(path, "verify", || {
         tactic_work::measure(mdtest.quick_solve, verify)
     });
@@ -796,7 +807,7 @@ fn quick_solve_caps_inclusive_work() {
             source_tactic_path: None,
             claim: "transitive".into(),
             tactic_index: 0,
-            tactic_name: "solve".into(),
+            tactic_name: "close".into(),
             class: "smart".into(),
             statement_index: 0,
             source_index: 0,
@@ -814,13 +825,12 @@ fn quick_solve_caps_inclusive_work() {
     direct_close.tactic.tactic_name = "close".into();
     direct_close.tactic.class = "simple".into();
     samples.push(direct_close);
-    for tactic_name in ["solve", "close"] {
-        samples[0].tactic.tactic_name = tactic_name.into();
-        quick_solve::check_quick_solve_with_limit(&samples, &Ok(()), Some(10)).unwrap();
-        let error =
-            quick_solve::check_quick_solve_with_limit(&samples, &Ok(()), Some(9)).unwrap_err();
-        assert!(error.contains("10 deterministic work units (limit 9)"));
-    }
+    quick_solve::check_quick_solve_with_limit(&samples, &Ok(()), Some(10)).unwrap();
+    let error = quick_solve::check_quick_solve_with_limit(&samples, &Ok(()), Some(9)).unwrap_err();
+    assert!(error.contains("10 deterministic work units (limit 9)"));
+
+    let direct_only = &samples[2..];
+    quick_solve::check_quick_solve_with_limit(direct_only, &Ok(()), Some(10)).unwrap();
 }
 
 fn check_expectation(
@@ -828,18 +838,10 @@ fn check_expectation(
     expectation: &MdTestExpectation,
     result: Result<(), ClickError>,
 ) -> Result<(), String> {
-    match (expectation, result) {
-        (MdTestExpectation::Pass, Ok(())) => Ok(()),
-        (MdTestExpectation::Pass, Err(error)) => Err(format!(
-            "`{}` expected pass, but failed: {}",
-            path.display(),
-            error.report()
-        )),
-        (MdTestExpectation::FailContains(expected), Ok(())) => Err(format!(
-            "`{}` expected failure containing `{expected}`, but passed",
-            path.display()
-        )),
-        (MdTestExpectation::FailContains(expected), Err(error)) => {
+    let result = match result {
+        Ok(()) => Ok(()),
+        Err(error) if matches!(expectation, MdTestExpectation::Pass) => Err(error.report()),
+        Err(error) => {
             let report = error.report();
             if let Some(internal) = ["SymbolicMemory {", "HeapMemory {", "pointer(pointer "]
                 .into_iter()
@@ -850,9 +852,28 @@ fn check_expectation(
                     path.display()
                 ));
             }
-            // A failure is read as `click` prints it, with importer names
-            // spelled as their source language spells them.
-            let message = click::surface::display_source_names(error.message());
+            Err(click::surface::display_source_names(error.message()).into_owned())
+        }
+    };
+    check_rendered_expectation(path, expectation, result)
+}
+
+fn check_rendered_expectation(
+    path: &Path,
+    expectation: &MdTestExpectation,
+    result: Result<(), String>,
+) -> Result<(), String> {
+    match (expectation, result) {
+        (MdTestExpectation::Pass, Ok(())) => Ok(()),
+        (MdTestExpectation::Pass, Err(error)) => Err(format!(
+            "`{}` expected pass, but failed: {error}",
+            path.display()
+        )),
+        (MdTestExpectation::FailContains(expected), Ok(())) => Err(format!(
+            "`{}` expected failure containing `{expected}`, but passed",
+            path.display()
+        )),
+        (MdTestExpectation::FailContains(expected), Err(message)) => {
             if message.contains(expected) {
                 Ok(())
             } else {

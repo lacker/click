@@ -27,7 +27,7 @@ uint64 drain(uint64 n) {
  loop {
   decreases n;
   invariant n <= 15u64;
-  initialize by { known(); }
+  initialize by { close(); }
   maintain by {
    if n == 0u64 { step_until(function.exit); } else { step(); }
   }

@@ -105,7 +105,7 @@ needle = "apply(nonnegative_body(y));"
 [[form]]
 id = "have"
 path = "mdtests/post_execution_have_checks_each_path.md"
-needle = "have result == 1 by solve();"
+needle = "have result == 1 by close();"
 
 [[form]]
 id = "with"
@@ -151,11 +151,6 @@ needle = "let candidate = obtain(exists (k: Integer) { k == k });"
 id = "close"
 path = "mdtests/close_tactic.md"
 needle = "close();"
-
-[[form]]
-id = "known"
-path = "mdtests/known_uses_equality_congruence.md"
-needle = "known();"
 
 [[form]]
 id = "outcomes"
@@ -216,11 +211,6 @@ needle = "transport(old(p[0]) == 7, p[0] == 7) using {"
 id = "instantiate"
 path = "mdtests/instantiate_propagates_known_guards.md"
 needle = "}, k);"
-
-[[form]]
-id = "solve"
-path = "mdtests/solve_closes_one_goal.md"
-needle = "solve();"
 
 [[form]]
 id = "close-using"

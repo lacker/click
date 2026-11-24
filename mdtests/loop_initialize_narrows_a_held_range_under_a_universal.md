@@ -3,14 +3,14 @@
 The loop states that every prefix of the viewed range is viewable:
 `forall (k: int32) { 0 <= k and k <= n implies viewable(a[0..k]) }`. Its
 `initialize` proof is the same one a function body writes for the same fact:
-introduce `k` and its antecedent, extract the two bounds, and let `solve()`
+introduce `k` and its antecedent, extract the two bounds, and let `close()`
 narrow the held `views a[0..n]`.
 
 The local `steps` is declared before the loop, so the loop-entry memory is a
 later state than function entry. The function body relates the two when it
 spells the contract's range for a narrowing step; the `initialize` phase is a
 fixed-state proof at the loop entry, and its planner used to see no fixed-state
-view there at all. `solve()` then had no spelling for the entry-state range and
+view there at all. `close()` then had no spelling for the entry-state range and
 refused to narrow it, although an explicit `transport` of the same fact checked.
 A fixed-state proof now offers its own state to that planner.
 
@@ -54,9 +54,9 @@ int32 count_up(int32 *a, int32 n) {
                 intro();
                 have 0 <= k;
                 have k <= n;
-                solve();
+                close();
             }
-            solve();
+            close();
         }
         maintain by {
             step();
@@ -66,7 +66,7 @@ int32 count_up(int32 *a, int32 n) {
                 intro();
                 have 0 <= k;
                 have k <= n;
-                solve();
+                close();
             }
         }
     }

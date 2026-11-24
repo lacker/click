@@ -23,7 +23,7 @@ theorem lift(callback: int32 (*)(int32)) executes callback(int32 amount) {
     requires Exact(callback);
     ensures Progress(callback) as { cell: amount } by {
         step(Exact, { cell: amount });
-        solve();
+        close();
     }
 }
 ```

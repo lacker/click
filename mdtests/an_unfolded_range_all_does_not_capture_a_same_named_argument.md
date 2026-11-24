@@ -26,10 +26,10 @@ int32 f(int32 p[2], int32 j) {
 } by {
     step_until(function.exit);
     unfold(allpos(p, j));
-    solve();
+    close();
 }
 ```
 
 ```expect
-fail: did not complete the retained claim proof
+fail: could not establish `(0..(j as int32)).all
 ```

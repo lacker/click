@@ -189,7 +189,7 @@ ensures result == x by { step_until(function.exit); close(); }
 
 An omitted proof clause runs the function and closes the claim at its exit.
 A tactic script starts at function entry: `step_until(function.exit)` steps
-through the C to the exit, where `solve()` closes the claim. Every script,
+through the C to the exit, where `close()` closes the claim. Every script,
 like the omitted one, ends with an implicit tail that runs any C the script
 left and closes each open goal on every path, so a script holds only the
 steps that need proof work and needs no final closer.

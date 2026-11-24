@@ -2,7 +2,7 @@
 
 A `maintain` script closes the loop's invariants and its `decreases` when it
 reaches the back edge, as a function proof closes its `ensures` when it
-reaches the exit: each by `solve()`, which reads the facts the script has
+reaches the exit: each by `close()`, which reads the facts the script has
 stated. A member that needs help is proved with `have <invariant> by { ... }`
 before the back edge. The tactic that used to name that closing step is
 refused with the replacement.
@@ -34,7 +34,7 @@ int32 count(int32 n) {
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

@@ -487,7 +487,7 @@ The work that ends every proof script, including an omitted one. It runs the
 remaining C, splitting at each C branch the facts do not decide into execution
 paths that each run to function exit. Contract closing creates the remaining
 contract obligations, and the implicit solver attempts every open goal on
-every path: direct closure, `solve`'s search, and, on a returned
+every path: direct closure, bounded proof search, and, on a returned
 path holding the body of a resource the contract produces, a fold of that
 resource. An omitted proof is the implicit tail alone. See [Smart and simple
 tactics](../concepts/smart-and-simple-tactics.md).
@@ -518,7 +518,7 @@ A proposition or resource condition that holds initially and is preserved by
 The members a loop's back edge owes: the loop's declared invariants in
 declaration order, each guarded by the ones before it, followed by the loop's
 [ranking obligations](#ranking-obligation) when it declares a `decreases`
-clause. The back edge closes each member with `solve()`, as a function's exit
+clause. The back edge closes each member with `close()`, as a function's exit
 closes each `ensures`, and `click expand` prints one `have <member> by { ... }`
 per member not already a fact.
 
@@ -1009,10 +1009,10 @@ tactics](../concepts/smart-and-simple-tactics.md).
 ### Smart tactic
 
 A tactic that searches by trying checked simple or structural operations on
-persistent proof states. The written smart tactics are `solve` (with
-`close() using`) and `step_until`; the [implicit tail](#implicit-tail), a
+persistent proof states. Written proof search includes the fallback in `close()`,
+`close() using`, and `step_until`. The [implicit tail](#implicit-tail), a
 simple tactic written with an elided argument that a search fills, and a
-loop back edge's `solve()` closure of its bundle are smart sites too.
+loop back edge's `close()` closure of its bundle are smart sites too.
 Search is untrusted and can succeed only with a completed checked state. See [Smart and simple
 tactics](../concepts/smart-and-simple-tactics.md).
 

@@ -29,23 +29,23 @@ void release(int32* pool, int32* p) {
     ensures count(slot(pool, _)) == old(count(slot(pool, _))) - 1;
 } by {
     unfold(slot(pool, p));
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }
 int32 lifecycle() { ensures result == 0 or result == 2; } by {
     step(); step(); step(); step();
-    branch { true => { step_until(function.exit); solve(); } false => {} }
+    branch { true => { step_until(function.exit); close(); } false => {} }
     step(); step();
     fold(authority(slot(&pool, _)));
     fold(slot(&pool, p));
     fold(slot(&pool, p + 1));
     step();
-    have count(slot(&pool, _)) == 1 by solve();
+    have count(slot(&pool, _)) == 1 by close();
     with(slot(&pool, p + 1)) { step(); step(); }
     unfold(slot(&pool, p + 1));
     unfold(authority(slot(&pool, _)));
     step();
-    have p[0] == 0 by solve();
-    step_until(function.exit); solve();
+    have p[0] == 0 by close();
+    step_until(function.exit); close();
 }
 ```
 

@@ -2,7 +2,7 @@
 
 ```click
 theorem missing(a: int32*, b: int32*) {
-    ensures a != b by { known(); }
+    ensures a != b by { close(); }
 }
 ```
 

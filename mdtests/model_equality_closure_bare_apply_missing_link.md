@@ -17,7 +17,7 @@ function shape(m: Model) -> Shape {
 resource ghost(id: int32) { field model: Model; }
 theorem same_shape(a: Model, b: Model) {
     requires shape(a) == shape(b);
-    ensures shape(a) == shape(b) by { known(); }
+    ensures shape(a) == shape(b) by { close(); }
 }
 void use_models() {
     owns x: ghost(0);

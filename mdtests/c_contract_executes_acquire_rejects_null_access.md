@@ -24,11 +24,11 @@ int32* read_unchecked(int32* (*acquire)(), int32* value) {
         unfold(MaybeCell(program::cell));
         unfold(Cell(program::cell));
         step_until(function.exit);
-        fold(Cell(result)); fold(MaybeCell(result)); solve();
+        fold(Cell(result)); fold(MaybeCell(result)); close();
     } else {
         unfold(MaybeCell(program::cell));
         step_until(function.exit);
-        fold(MaybeCell(result)); solve();
+        fold(MaybeCell(result)); close();
     }
 }
 ```

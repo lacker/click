@@ -7,7 +7,7 @@ spec enum Maybe<T> {
 }
 
 theorem rejected(value: int32*) {
-    ensures Maybe<int32>::Some(value) == Maybe<int32>::None by solve();
+    ensures Maybe<int32>::Some(value) == Maybe<int32>::None by close();
 }
 ```
 

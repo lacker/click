@@ -57,7 +57,7 @@ int32 apply(int32 (*callback)(int32, int32), int32 left, int32 right) {
 theorem compare_is_comparator() {
     ensures Comparator(&compare) by {
         unfold(Comparator(&compare));
-        solve();
+        close();
     }
 }
 

@@ -11,7 +11,7 @@ verifying "using_lists_refuse_a_false_reflexive_premise.c";
 
 theorem strictly_below(lo: int32, n: int32) {
     requires lo < n;
-    ensures lo < n by known();
+    ensures lo < n by close();
 }
 
 int32 probe(int32 n) {
@@ -19,7 +19,7 @@ int32 probe(int32 n) {
 } by {
     step();
     apply(strictly_below(n, n));
-    solve();
+    close();
 }
 ```
 

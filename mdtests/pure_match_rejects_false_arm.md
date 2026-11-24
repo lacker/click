@@ -5,7 +5,7 @@ spec enum Item { Empty, Value(int32) }
 theorem false_case(item: Item) {
     ensures item == Item::Empty by {
         match item {
-            Item::Empty => { known(); },
+            Item::Empty => { close(); },
             Item::Value(value) => { normalize(); },
         }
     }

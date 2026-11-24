@@ -32,7 +32,7 @@ int32 spin(int32 n) {
         invariant i >= 0;
     }
     step();
-    solve();
+    close();
 }
 ```
 

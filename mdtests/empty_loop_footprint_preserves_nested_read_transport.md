@@ -79,7 +79,7 @@ void fill(struct arena *arena, int32 start, int32 end) {
         invariant w.next == i;
         invariant arena->data == old(arena->data);
         invariant arena->occupied == old(arena->occupied);
-        initialize by solve();
+        initialize by close();
         maintain by {
             let { next: m } = unfold(w);
             have m == i;
@@ -126,7 +126,7 @@ void fill(struct arena *arena, int32 start, int32 end) {
                             at(opened, j) < at(opened, end) implies
                             at(opened, arena->occupied[j]) == at(opened, 0)
                     }, k);
-                    known();
+                    close();
                 }
                 have 0 <= k;
                 have k < at(opened, arena->capacity);
@@ -134,7 +134,7 @@ void fill(struct arena *arena, int32 start, int32 end) {
                 have at(opened, separate(memory(arena->occupied[i]), memory(arena->occupied[k]))) by {
                     apply(separation::separate_elements(at(opened, arena->occupied), at(opened, i), k));
                 }
-                have arena->occupied == at(opened, arena->occupied) by { known(); }
+                have arena->occupied == at(opened, arena->occupied) by { close(); }
                 // Select the preserved cell as one complete int32 observation.
                 have contains(at(opened, memory(arena->occupied[k])), at(opened, memory((&arena->occupied[k])[0..1]))) by { normalize(); }
                 apply(separation::contains_refl(at(opened, memory(arena->occupied[i]))));
@@ -142,7 +142,7 @@ void fill(struct arena *arena, int32 start, int32 end) {
                     apply(separation::separate_restrict(at(opened, memory(arena->occupied[i])), at(opened, memory(arena->occupied[k])), at(opened, memory(arena->occupied[i])), at(opened, memory((&arena->occupied[k])[0..1]))));
                 }
                 have separate(loop(0).statement(0).footprint, at(opened, memory((&arena->occupied[k])[0..1]))) by {
-                    known();
+                    close();
                 }
                 have at(loop(0).statement(0).exit, load<int32>(at(opened, &arena->occupied[k])))
                         == at(loop(0).statement(0).entry, load<int32>(at(opened, &arena->occupied[k]))) by {
@@ -150,9 +150,9 @@ void fill(struct arena *arena, int32 start, int32 end) {
                 }
                 have arena->occupied[k] == at(opened, arena->occupied[k]) by {
                     rewrite(arena->occupied, at(opened, arena->occupied));
-                    known();
+                    close();
                 }
-                known();
+                close();
             }
             step();
         }

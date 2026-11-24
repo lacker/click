@@ -37,14 +37,14 @@ uint64 read_terminator(uint8 bytes[], uint64 known_len) {
                 known_len < 18446744073709551615u64;
             };
         }
-        have 0u64 <= k by { known(); }
+        have 0u64 <= k by { close(); }
         instantiate(forall (j: uint64) {
             0u64 <= j and to_integer(j) < to_integer(known_len + 1u64) implies defined(old(bytes[j]))
         }, k);
-        have defined(old(bytes[k])) by { known(); }
-        have separate(memory(length), memory(bytes[k])) by { known(); }
+        have defined(old(bytes[k])) by { close(); }
+        have separate(memory(length), memory(bytes[k])) by { close(); }
         have separate(statement(0).footprint, memory(bytes[k])) by {
-            known();
+            close();
         }
         preserve(memory(bytes[k]), statement(0));
     }
@@ -57,7 +57,7 @@ uint64 read_terminator(uint8 bytes[], uint64 known_len) {
             forall (k: uint64) { to_integer(k) < to_integer(len) + 1 implies defined(bytes[k]) }
     } by {
         witness(known_len);
-        known();
+        close();
     }
     step();
     step();

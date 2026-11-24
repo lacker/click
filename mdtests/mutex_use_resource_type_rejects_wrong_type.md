@@ -37,14 +37,14 @@ void increment(struct counter *counter) {
     let restored = fold(counter_state(counter), { value: counter->value });
     step(pthread_mutex_unlock, { access: access, guard: guard, state: restored });
     step();
-    solve();
+    close();
 }
 void outer(struct counter *counter) {
     owns access: mutex_use(&counter->mu, other_state(counter));
 } by {
     step(increment, { access: access });
     step();
-    solve();
+    close();
 }
 void run(struct counter *counter) {
     owns counter->mu;
@@ -55,7 +55,7 @@ void run(struct counter *counter) {
     step(outer, { access: lifetime });
     step(pthread_mutex_destroy, { lifetime: lifetime });
     step();
-    solve();
+    close();
 }
 ```
 

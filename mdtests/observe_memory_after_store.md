@@ -13,7 +13,7 @@ void update(int32 p[], int32 n) {
 } by {
     step_until(function.exit);
     have viewable(p[0..n]) by { observe(p[0..n]); }
-    known();
+    close();
 }
 ```
 

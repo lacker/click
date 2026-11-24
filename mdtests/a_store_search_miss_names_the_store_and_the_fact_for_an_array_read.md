@@ -10,7 +10,7 @@ cell (`a_store_index_bound_and_disequality_keep_a_cached_element.md`).
 
 The refusal names the statement and the fact the search spelled. A proof
 that splits on `j == 1` before statement(2) can state it in the other case,
-`have ... by solve();`, and keep the cell there.
+`have ... by close();`, and keep the cell there.
 
 ```c filename=a_store_search_miss_names_the_store_and_the_fact_for_an_array_read.c
 int read_first(int j) {

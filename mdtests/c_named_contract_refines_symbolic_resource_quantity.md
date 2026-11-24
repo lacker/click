@@ -54,7 +54,7 @@ theorem preserving_used_preserves_available(
     ensures PreserveAvailable(callback) by {
         unfold(PreserveUsed(callback));
         unfold(PreserveAvailable(callback));
-        solve();
+        close();
     }
 }
 
@@ -76,7 +76,7 @@ void invoke_preserving(
 theorem keep_used_satisfies_PreserveAvailable() {
     ensures PreserveAvailable(&keep_used) by {
         unfold(PreserveAvailable(&keep_used));
-        solve();
+        close();
     }
 }
 

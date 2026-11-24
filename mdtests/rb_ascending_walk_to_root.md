@@ -21,7 +21,7 @@ parent) == 1` says the frame's node is that local, and `c.model ==
 ctx_reroot(c.model, parent)` says the same thing as a model equation. Once
 `ctx_reroot` is unfolded at the matched frame, the equality closure joins
 `Left(identity, ...)` and `Left(parent, ...)` and constructor injectivity gives
-`identity == parent` to `known()` inside each framed arm.
+`identity == parent` to `close()` inside each framed arm.
 
 Three verifier rules meet here, and each was a gap.
 
@@ -267,22 +267,22 @@ theorem reroot_at_null(model: Context, parent: struct rb_node*) {
     requires parent == 0;
     ensures ctx_parent_identity(model) == 0 by {
         match model {
-            Context::Top => { unfold(ctx_parent_identity(Context::Top)); solve(); },
+            Context::Top => { unfold(ctx_parent_identity(Context::Top)); close(); },
             Context::Left(identity, grandparent, color, sibling_model, up_model) => {
                 unfold(ctx_reroot(Context::Left(identity, grandparent, color, sibling_model, up_model), parent));
-                have identity == parent by known();
-                have identity == 0 by solve();
+                have identity == parent by close();
+                have identity == 0 by close();
                 rewrite(model, Context::Left(identity, grandparent, color, sibling_model, up_model));
                 unfold(ctx_parent_identity(Context::Left(identity, grandparent, color, sibling_model, up_model)));
-                solve();
+                close();
             },
             Context::Right(identity, grandparent, color, sibling_model, up_model) => {
                 unfold(ctx_reroot(Context::Right(identity, grandparent, color, sibling_model, up_model), parent));
-                have identity == parent by known();
-                have identity == 0 by solve();
+                have identity == parent by close();
+                have identity == 0 by close();
                 rewrite(model, Context::Right(identity, grandparent, color, sibling_model, up_model));
                 unfold(ctx_parent_identity(Context::Right(identity, grandparent, color, sibling_model, up_model)));
-                solve();
+                close();
             },
         }
     }
@@ -310,7 +310,7 @@ struct rb_node* rb_root_of(struct rb_node* node, struct rb_node* parent,
         invariant c.model == ctx_reroot(c.model, parent);
         invariant plug(c.model, t.model) == plug(old(c.model), old(t.model));
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             match c.model {
                 Context::Top => {
@@ -328,9 +328,9 @@ struct rb_node* rb_root_of(struct rb_node* node, struct rb_node* parent,
                                          sibling_model, up_model) by {
                         unfold(ctx_reroot(Context::Left(identity, grandparent, color,
                                                         sibling_model, up_model), parent));
-                        known();
+                        close();
                     }
-                    have identity == parent by known();
+                    have identity == parent by close();
                     have plug(up_model,
                               RbTree::Node(identity, grandparent, color,
                                            t.model, sibling_model))
@@ -343,7 +343,7 @@ struct rb_node* rb_root_of(struct rb_node* node, struct rb_node* parent,
                                                   sibling_model, up_model), t.model));
                         rewrite(Context::Left(identity, grandparent, color,
                                               sibling_model, up_model), c.model);
-                        known();
+                        close();
                     }
                     let { sibling: s, up: u } = unfold(c);
                     step();
@@ -354,7 +354,7 @@ struct rb_node* rb_root_of(struct rb_node* node, struct rb_node* parent,
                         unfold(rb_parent_is(RbTree::Node(identity, grandparent, color,
                                                          t.model, sibling_model),
                                             grandparent));
-                        known();
+                        close();
                     }
                     let lifted = fold(rb_at(node), {
                         model: RbTree::Node(identity, grandparent, color,
@@ -369,9 +369,9 @@ struct rb_node* rb_root_of(struct rb_node* node, struct rb_node* parent,
                                           sibling_model, up_model) by {
                         unfold(ctx_reroot(Context::Right(identity, grandparent, color,
                                                          sibling_model, up_model), parent));
-                        known();
+                        close();
                     }
-                    have identity == parent by known();
+                    have identity == parent by close();
                     have plug(up_model,
                               RbTree::Node(identity, grandparent, color,
                                            sibling_model, t.model))
@@ -384,7 +384,7 @@ struct rb_node* rb_root_of(struct rb_node* node, struct rb_node* parent,
                                                    sibling_model, up_model), t.model));
                         rewrite(Context::Right(identity, grandparent, color,
                                                sibling_model, up_model), c.model);
-                        known();
+                        close();
                     }
                     let { sibling: s, up: u } = unfold(c);
                     step();
@@ -395,7 +395,7 @@ struct rb_node* rb_root_of(struct rb_node* node, struct rb_node* parent,
                         unfold(rb_parent_is(RbTree::Node(identity, grandparent, color,
                                                          sibling_model, t.model),
                                             grandparent));
-                        known();
+                        close();
                     }
                     let lifted = fold(rb_at(node), {
                         model: RbTree::Node(identity, grandparent, color,
@@ -409,7 +409,7 @@ struct rb_node* rb_root_of(struct rb_node* node, struct rb_node* parent,
             have ctx_parent_identity(c.model) == 0 by {
                 apply(reroot_at_null(c.model, parent));
             }
-            have plug(c.model, t.model) == plug(old(c.model), old(t.model)) by known();
+            have plug(c.model, t.model) == plug(old(c.model), old(t.model)) by close();
         }
     }
     match c.model ensuring {
@@ -420,30 +420,30 @@ struct rb_node* rb_root_of(struct rb_node* node, struct rb_node* parent,
         Context::Left(identity, grandparent, color, sibling_model, up_model) => {
             have identity == 0 by {
                 unfold(ctx_parent_identity(Context::Left(identity, grandparent, color, sibling_model, up_model)));
-                solve();
+                close();
             }
             let { sibling: exit_sibling, up: exit_up } = unfold(c);
-            have identity != 0 by known();
+            have identity != 0 by close();
             contradiction(identity == 0);
         },
         Context::Right(identity, grandparent, color, sibling_model, up_model) => {
             have identity == 0 by {
                 unfold(ctx_parent_identity(Context::Right(identity, grandparent, color, sibling_model, up_model)));
-                solve();
+                close();
             }
             let { sibling: exit_sibling, up: exit_up } = unfold(c);
-            have identity != 0 by known();
+            have identity != 0 by close();
             contradiction(identity == 0);
         },
     }
     have plug(c.model, t.model) == t.model by {
         rewrite(c.model, Context::Top);
         unfold(plug(Context::Top, t.model));
-        known();
+        close();
     }
     have t.model == plug(old(c.model), old(t.model)) by {
         rewrite(t.model, plug(c.model, t.model));
-        known();
+        close();
     }
     unfold(c);
     let ctx = fold(ctx_at(node, root), { model: Context::Top });
@@ -453,7 +453,7 @@ struct rb_node* rb_root_of(struct rb_node* node, struct rb_node* parent,
             have RbTree::Node(identity, parent_model, color, left_model, right_model)
                 == plug(old(c.model), old(t.model)) by {
                 rewrite(RbTree::Node(identity, parent_model, color, left_model, right_model), t.model);
-                known();
+                close();
             }
             let { left: l, right: r } = unfold(t);
             let sub = fold(rb_at(node), {
@@ -462,10 +462,10 @@ struct rb_node* rb_root_of(struct rb_node* node, struct rb_node* parent,
             });
             have sub.model == plug(old(c.model), old(t.model)) by {
                 rewrite(sub.model, RbTree::Node(identity, parent_model, color, left_model, right_model));
-                known();
+                close();
             }
             step();
-            solve();
+            close();
         },
     }
 }

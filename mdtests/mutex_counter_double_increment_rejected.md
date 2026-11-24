@@ -117,13 +117,13 @@ void* increment_counter(void* argument) {
     fold(contribution(counter));
     step();
     let restored = fold(counter_control(counter), { done: done + 1, slack: slack - 1 }) {
-        requires to_integer(counter->value) == to_integer(done + 1) by known();
+        requires to_integer(counter->value) == to_integer(done + 1) by close();
     }
     step(pthread_mutex_unlock, {
         access: access, guard: guard, state: restored
     });
     step();
-    solve();
+    close();
 }
 
 int32 increment_twice(struct mutex_counter* counter) {
@@ -152,7 +152,7 @@ int32 increment_twice(struct mutex_counter* counter) {
             unfold(credit(counter));
             unfold(credit(counter));
             step();
-            solve();
+            close();
         }
         false => {}
     }
@@ -164,7 +164,7 @@ int32 increment_twice(struct mutex_counter* counter) {
             unfold(credit(counter));
             unfold(credit(counter));
             step();
-            solve();
+            close();
         }
         false => {}
     }
@@ -177,7 +177,7 @@ int32 increment_twice(struct mutex_counter* counter) {
             unfold(contribution(counter));
             unfold(credit(counter));
             step();
-            solve();
+            close();
         }
         false => {}
     }
@@ -211,7 +211,7 @@ int32 increment_twice(struct mutex_counter* counter) {
     unfold(contribution(counter));
     unfold(contribution(counter));
     step();
-    solve();
+    close();
 }
 ```
 

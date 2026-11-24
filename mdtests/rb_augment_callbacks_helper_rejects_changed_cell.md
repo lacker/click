@@ -97,7 +97,7 @@ void erase_changed(struct node* node, struct node* parent,
         }
         mark before_propagate;
         step();
-        have contains(memory(parent->left), statement(0).footprint) by { known(); }
+        have contains(memory(parent->left), statement(0).footprint) by { close(); }
         apply(separation::separate_restrict(memory(parent->left), memory(*augment), statement(0).footprint, memory(augment->propagate)));
         have augment->propagate == at(before_propagate, augment->propagate) by { preserve(memory(augment->propagate), statement(0)); }
         apply(separation::separate_restrict(memory(parent->left), memory(*augment), statement(0).footprint, memory(augment->copy)));

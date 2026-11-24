@@ -52,7 +52,7 @@ struct Node* walk(struct Node* p, int32* marker) {
         owns c: path(p);
         decreases t;
         invariant p != 0;
-        initialize by solve();
+        initialize by close();
         maintain by {
             match t.model {
                 Chain::Empty => { unfold(t); contradiction(p == 0); },
@@ -65,7 +65,7 @@ struct Node* walk(struct Node* p, int32* marker) {
             }
         }
     }
-    solve();
+    close();
 }
 ```
 ```expect

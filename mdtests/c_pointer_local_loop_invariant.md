@@ -59,7 +59,7 @@ int32 last_element(int32 arr[], int32 n, int32 cap) {
         rewrite(at(loop(0).exit, i), at(loop(0).exit, n));
         normalize();
     }
-    known();
+    close();
 }
 ```
 

@@ -13,7 +13,7 @@ theorem lift(callback: int32 (*)(int32)) {
         unfold(Source(callback));
         unfold(Target(callback));
         step_until(function.exit);
-        solve();
+        close();
     }
 }
 ```

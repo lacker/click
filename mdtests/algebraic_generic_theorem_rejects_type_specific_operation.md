@@ -5,7 +5,7 @@ integer arithmetic.
 
 ```click
 theorem invalid<T>(value: T) {
-    ensures value + 1 == value by solve();
+    ensures value + 1 == value by close();
 }
 ```
 

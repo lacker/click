@@ -10,7 +10,7 @@ void unwritten(int32 *p) {
 } by {
  step_until(function.exit);
  observe(p[0..2]);
- solve();
+ close();
 }
 ```
 ```expect

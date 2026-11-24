@@ -41,7 +41,7 @@ int32 peek(parse_buffer * const b) {
     ensures result == content[offset] + 1;
 } by {
     step();
-    have b->offset == 7u64 by { solve(); }
+    have b->offset == 7u64 by { close(); }
 }
 ```
 

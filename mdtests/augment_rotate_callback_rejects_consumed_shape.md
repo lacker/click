@@ -98,9 +98,9 @@ struct node* rotate_left(
     // Carry the untouched link reads across each store before folding.
     step_until(statement(2).entry);
     have defined(node->left) by { normalize(); }
-    have separate(memory(node->left), memory(node->right)) by { known(); }
+    have separate(memory(node->left), memory(node->right)) by { close(); }
     have defined(pivot->right) by { normalize(); }
-    have separate(memory(pivot->right), memory(node->right)) by { known(); }
+    have separate(memory(pivot->right), memory(node->right)) by { close(); }
     mark before_right;
     step_until(statement(3).entry);
     have separate(statement(2).footprint, memory(node->left)) by {
@@ -112,12 +112,12 @@ struct node* rotate_left(
     }
     have defined(pivot->right) by { preserve(memory(pivot->right), statement(2)); }
 
-    have separate(memory(node->left), memory(pivot->left)) by { known(); }
+    have separate(memory(node->left), memory(pivot->left)) by { close(); }
     have defined(node->right) by { normalize(); }
     have node->right == middle by { normalize(); }
-    have separate(memory(node->right), memory(pivot->left)) by { known(); }
+    have separate(memory(node->right), memory(pivot->left)) by { close(); }
     have defined(pivot->right) by { normalize(); }
-    have separate(memory(pivot->right), memory(pivot->left)) by { known(); }
+    have separate(memory(pivot->right), memory(pivot->left)) by { close(); }
     mark before_left;
     step_until(statement(4).entry);
     have separate(statement(3).footprint, memory(node->left)) by {
@@ -131,7 +131,7 @@ struct node* rotate_left(
     have node->right == at(before_left, node->right) by { preserve(memory(node->right), statement(3)); }
     have node->right == middle by {
         rewrite(node->right, at(before_left, node->right));
-        known();
+        close();
     }
     have pivot->left == node by { normalize(); }
     have separate(statement(3).footprint, memory(pivot->right)) by {
@@ -143,7 +143,7 @@ struct node* rotate_left(
     fold(shape(pivot));
     step();
     step();
-    solve();
+    close();
 }
 
 struct node* rotate_steal(struct node* node) {
@@ -164,7 +164,7 @@ struct node* rotate_steal(struct node* node) {
     ensures 0 <= result->augmented;
     ensures result->augmented <= 1000;
 } by {
-    have AugmentRotate(&steal) by { solve(); }
+    have AugmentRotate(&steal) by { close(); }
     step_until(function.exit);
 }
 ```

@@ -3,7 +3,7 @@ use super::*;
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by basic_tactics_batch_00")]
 fn omitted_ensure_proof_uses_default_prover() {
-    let source = FILL3_CLICK.replace(" by solve()", "");
+    let source = FILL3_CLICK.replace(" by close()", "");
     let file = parse(&source).expect("sidecar should parse omitted proof clause");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
@@ -22,7 +22,7 @@ fn parses_grouped_function_proof() {
                 ensures p[0] == value;
             } by {
                 step_until(function.exit);
-                solve();
+                close();
             }
         "#;
     let file = parse(source).expect("grouped function proof should parse");
@@ -33,7 +33,7 @@ fn parses_grouped_function_proof() {
         Some(
             [
                 ProofTactic::ExecuteUntil(ExecutionPoint::FUNCTION_EXIT),
-                ProofTactic::Solve
+                ProofTactic::Close
             ]
             .as_slice()
         )
@@ -54,7 +54,7 @@ fn rejects_a_grouped_proof_that_proves_no_claim() {
                 ensures result == value by { step_until(function.exit); }
             } by {
                 step_until(function.exit);
-                solve();
+                close();
             }
         "#;
     let error = parse(source).expect_err("a grouped proof must prove some claim");
@@ -228,7 +228,7 @@ fn grouped_resource_predicate_proof_completes_without_a_body_rerun() {
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by basic_tactics_batch_02")]
 fn parses_proof_tactic_script() {
-    let source = FILL3_CLICK.replace("== 2;", "== 2 by { step_until(function.exit); solve(); }");
+    let source = FILL3_CLICK.replace("== 2;", "== 2 by { step_until(function.exit); close(); }");
     let file = parse(&source).expect("explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
@@ -237,7 +237,7 @@ fn parses_proof_tactic_script() {
         Some(
             [
                 ProofTactic::ExecuteUntil(ExecutionPoint::FUNCTION_EXIT),
-                ProofTactic::Solve
+                ProofTactic::Close
             ]
             .as_slice()
         )

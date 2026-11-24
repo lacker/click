@@ -37,7 +37,7 @@ int32 after_loop() {
         invariant i <= 2;
     }
     step();
-    solve();
+    close();
 }
 ```
 

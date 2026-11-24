@@ -4301,7 +4301,7 @@ pub(super) fn finish_ordered_proof<'a>(
                     // transition up front. A control node defers the transition
                     // to the reached closer, since earlier tactics can decide
                     // which arm will run. An expanded proof closes its
-                    // resource ensures with `known()` and never re-folds.
+                    // resource ensures with `close()` and never re-folds.
                     if !post_execution_tactics.iter().any(|deferred| {
                         matches!(
                             deferred.tactic,
@@ -4558,7 +4558,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             && let Some(crate::kernel::proof::OutcomeGoal::Closing(kind)) =
                                 root.first_open_outcome_goal()?
                         {
-                            return Err(root.step_error(format!("`{closer}` requires a proposition goal; the current contract-closing goal is {}; use `known()` for this closing operation", kind.description())));
+                            return Err(root.step_error(format!("`{closer}` requires a proposition goal; the current contract-closing goal is {}; use `close()` for this closing operation", kind.description())));
                         }
                         // Written `known` and `solve` select the same closing goal.
                         // The implicit solver schedules that primitive for every omitted proof.
@@ -5317,7 +5317,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 | ProofStep::CompatibilityNormalize(Some(_))
                                         ) {
                                             return Err(ClickError::new(
-                                                "`normalize using` requires a return-state proposition; use `known()` for a divergent path",
+                                                "`normalize using` requires a return-state proposition; use `close()` for a divergent path",
                                             ));
                                         }
                                         // Same rule for the explicit arithmetic
@@ -5325,7 +5325,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         // a return state this path does not have.
                                         if matches!(closer_step, ProofStep::ArithmeticUsing(_)) {
                                             return Err(ClickError::new(
-                                                "`arithmetic using` requires a return-state proposition; use `known()` for a divergent path",
+                                                "`arithmetic using` requires a return-state proposition; use `close()` for a divergent path",
                                             ));
                                         }
                                         record_claim_closure(
@@ -6914,10 +6914,10 @@ mod evidence_tests {
         let source = r#"
             verifying "spin.c";
             int32 spin() diverges { ensures 0 == 1; } by {
-                loop diverges { invariant 0 == 0; initialize by solve();
+                loop diverges { invariant 0 == 0; initialize by close();
                     maintain by { step(); }
                 }
-                solve();
+                close();
             }
         "#;
         let verified = verify_c_sources(

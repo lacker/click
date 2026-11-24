@@ -58,7 +58,7 @@ tail alone. The tail runs the C that is left from where the script stopped,
 checking declared loops as it reaches them. At each C branch the facts do not
 decide, it splits into paths that each run to function exit. It then closes
 every open goal on every path with the implicit closer, which tries direct
-closure and then `solve`'s search. On a returned path that holds the body of a
+closure and then bounded proof search. On a returned path that holds the body of a
 resource the contract `produces`, the closer also folds that resource. Folds
 of other resources and theorem applications stay written.
 
@@ -86,8 +86,8 @@ A proof is at one point at a time. Once a script reaches function exit
 on its path, with `step_until(function.exit)` or inside one arm of a proof
 `if`, the tactics that follow act on that path. Its open goals are the
 contract's claims in contract order, resource claims included. `fold`,
-`apply`, and `have` transform the current path. A closer such as `solve()`,
-`known()`, `normalize() using` or `close() using` acts on the first open
+`apply`, and `have` transform the current path. A closer such as `close()`,
+`close()`, `normalize() using` or `close() using` acts on the first open
 goal, the last two from exactly their listed premises when the explicit closer
 is preferable to search, and the implicit tail closes every goal still open.
 A later fact or fold does not retroactively affect an earlier closing step.
@@ -98,13 +98,13 @@ A one-tactic proof needs no braces:
 
 <!-- verified-example: mdtests/algebraic_maybe.md -->
 ```click
-by solve();
+by close();
 ```
 
-`by solve();` means the same as `by { solve(); }`. `solve()` closes the first
+`by close();` means the same as `by { close(); }`. `close()` closes the first
 open goal at the current frontier and runs no C; the implicit tail then runs
 any C that is left and closes the rest. On a `have` or a pure theorem's
-`ensures`, `by solve();` restates what the omitted proof does. On a C
+`ensures`, `by close();` restates what the omitted proof does. On a C
 function's `ensures` it is refused, because execution has not reached function
 exit there; omit the proof instead. See the
 [proof tactics reference](../reference/tactics/index.md).
@@ -114,8 +114,8 @@ expanded proof does not depend on proof search. The
 [tactic reference](../reference/tactics/index.md#automation-and-search) gives
 the order of the implicit closer's searches.
 
-`solve` is the written smart tactic: a contextual simplifier. It is useful for
-straight-line postconditions and unfolded predicate goals. It simplifies logical connectives,
+`close()` first checks whether the available facts prove the goal. If that
+check misses, it searches for a proof. The search simplifies logical connectives,
 constant/reflexive integer comparisons, small arithmetic forms, concrete folds,
 and several kernel equality patterns. For order goals, it also rewrites through
 known equalities, evaluates equality-linked constant arithmetic, and uses the
@@ -168,8 +168,8 @@ expansion output.
   invariant, and resource clauses construct the kernel rule; it never seeks to a
   numbered source loop.
 - The back edge of a `maintain by { ... }` script closes each member of the
-  loop's invariant bundle with `solve()`, as a function's exit closes each
-  `ensures`; prove a member `solve()` misses with `have` before the back edge.
+  loop's invariant bundle with `close()`, as a function's exit closes each
+  `ensures`; prove a member `close()` misses with `have` before the back edge.
   The retired `close_invariants` tactic is rejected.
 - `unfold(predicate(args));`: open one selected application in the current
   facts and goal.
@@ -189,7 +189,7 @@ expansion output.
   conclusions and leaves the resource context intact.
 - `have proposition by { ... }`: run a scoped fixed-state proof and add its proposition
   to the current pure facts. The nested proof accepts
-  `unfold`, `apply`, `obtain`, `witness`, `solve`, nested `have`, and proof-level
+  `unfold`, `apply`, `obtain`, `witness`, `close()`, nested `have`, and proof-level
   `if` case analysis; it cannot execute C or transform resources. Both `if`
   branches prove the local proposition, after which the surrounding proof
   continues. At function exit, the `have` is proved on the current path, where
@@ -214,7 +214,7 @@ expansion output.
   names for multiple witnesses. Use `have` first if the existential needs a proof.
 - `witness(expression);`: prove the current existential goal by substituting
   the given int32 expression for binder `k`.
-- `known();`: close a goal already present as the same semantic fact; it
+- `close();`: close a goal already present as the same semantic fact; it
   does not normalize or transport a new fact.
 - `normalize();`: close a pure goal by context-free computation.
 - `rewrite(from, to);`: rewrite the current proposition once using an exact
@@ -239,7 +239,7 @@ expansion output.
   `not P` or the exact opposite polarity of the same lowered C condition. They are
   accepted only while a pure goal is active, typically inside `have ... by` or
   a theorem proof.
-- `solve();`: close the first open goal by smart contextual simplification.
+- `close();`: close the first open goal by smart contextual simplification.
   It runs no C.
 
 An opaque predicate does not expose the memory footprint needed for framing.
@@ -322,9 +322,9 @@ For example, pure case analysis needs no C execution:
 theorem int32_sign_split(x: int32) {
     ensures x <= 0 or x > 0 by {
         if x <= 0 {
-            solve();
+            close();
         } else {
-            solve();
+            close();
         }
     }
 }
@@ -570,7 +570,7 @@ on every proof branch. It can use ordinary tactics, including `have`,
 resource operations, proof-level `if`, and branch execution.
 
 An explicit initialization proof is an ordinary pure proof at the actual loop
-entry. It can use `apply`, nested `have`, proof-level `if`, `unfold`, and `solve`,
+entry. It can use `apply`, nested `have`, proof-level `if`, `unfold`, and `close()`,
 but it cannot execute C or transform resources. A named loop's entry point
 is bound while this proof runs. The facts it proves are checked against the
 kernel invariant instances before rule construction.
@@ -632,7 +632,7 @@ Failure messages usually include:
 - pure facts
 - resource facts, when the failing tactic has a current resource context
 - remaining proof obligations
-- the goal a failed `solve` could not establish, in source form
+- the goal a failed `close()` could not establish, in source form
 
 Practical approach:
 

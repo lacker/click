@@ -7,7 +7,7 @@ requirement is stated, so the requirement is refused.
 ```click
 theorem outer_only(a: int32, b: int32, c: int32) {
     requires defined(a + b + c);
-    ensures 1 == 1 by solve();
+    ensures 1 == 1 by close();
 }
 ```
 

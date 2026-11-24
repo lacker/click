@@ -26,7 +26,7 @@ void helper(struct Node* p, struct Node* q, struct Root* root) {
     ensures p->tag == old(p->tag);
 } by {
     unfold(before); step_until(function.exit);
-    let after = fold(link(q, root), { model: Tag::Here }); solve();
+    let after = fold(link(q, root), { model: Tag::Here }); close();
 }
 void caller(struct Node* p, struct Node* q, struct Root* root) {
     consumes before: link(p, root);

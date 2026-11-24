@@ -11,11 +11,11 @@ theorem rejected(xs: TestList<int32>) {
         let ih = induct(xs);
         match xs {
             TestList::Nil => {
-                solve();
+                close();
             }
             TestList::Cons(head, tail) => {
                 apply(ih(head));
-                solve();
+                close();
             }
         }
     }

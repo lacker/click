@@ -19,12 +19,12 @@ termination by {
         check_termination_local("leaf");
         check_termination_component("leaf", strict);
         check_termination_component("leaf", normal);
-        known();
+        close();
     }
     check_termination_local("caller");
     check_termination_component("caller", normal);
     check_termination_callbacks();
-    known();
+    close();
 }
 ```
 

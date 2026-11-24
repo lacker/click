@@ -19,12 +19,12 @@ void update(int* p, int* q) {
     unfold(cell(p));
     with(cell(q)) { step_until(function.exit); }
     fold(cell(p));
-    solve();
+    close();
 }
 void caller(int* p) {
     owns cell(p);
     ensures 1 == 1;
-} by { step_until(function.exit); solve(); }
+} by { step_until(function.exit); close(); }
 ```
 ```expect
 fail:A required resource overlaps a live borrow.

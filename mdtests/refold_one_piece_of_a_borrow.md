@@ -43,7 +43,7 @@ void update(int32 p[]) {
     release_view(p[1..2]);
     step();
     step_until(function.exit);
-    solve();
+    close();
 }
 ```
 

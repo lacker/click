@@ -7,7 +7,7 @@ use crate::surface::proof::pure_theorems::PureTheoremContext;
 #[test]
 fn prepared_pure_application_ignores_unrelated_facts() {
     let parsed = crate::surface::parse(
-        "spec enum Count { At(int32) } theorem accept(model: Count) { ensures model == model by solve(); }",
+        "spec enum Count { At(int32) } theorem accept(model: Count) { ensures model == model by close(); }",
     ).unwrap();
     let application = TheoremApplication {
         name: "accept".into(),

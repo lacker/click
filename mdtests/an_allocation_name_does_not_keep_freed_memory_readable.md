@@ -18,12 +18,12 @@ verifying "allocation.c";
 int32 use_allocation() { ensures true; } by {
     step();
     step();
-    have statement(1).result == p by known();
+    have statement(1).result == p by close();
     branch { true => { step(); } false => {} }
     have statement(1).allocation == p;
     have statement(1).allocation != 0;
     step();
-    have statement(1).allocation != 0 by known();
+    have statement(1).allocation != 0 by close();
     step();
 }
 ```

@@ -11,9 +11,9 @@ void touch(struct packet input) {
     owns input.data[0..1];
     requires input.data[0] == 3;
 } by {
-    have input.data[0] == 3 by { known(); }
+    have input.data[0] == 3 by { close(); }
     step_until(function.exit);
-    have input.data[0] == 3 by { known(); }
+    have input.data[0] == 3 by { close(); }
 }
 ```
 

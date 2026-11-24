@@ -27,15 +27,15 @@ int32 planned(int32 u) {
 } by {
     have defined(old(g[0])) by {
         instantiate(forall (k: int32) { 0 <= k and k < 4 implies defined(old(g[k])) }, 0);
-        known();
+        close();
     }
     have old(g[0]) < 2147483647 by {
-        have 100 <= 2147483647 by known();
+        have 100 <= 2147483647 by close();
         apply(click::integer::int32_less_than_less_equal_transitive(old(g[0]), 100, 2147483647));
     }
     have defined(old(g[0]) + 1) by {
         apply(click::integer::int32_increment_below_max_is_defined(old(g[0])));
-        known();
+        close();
     }
     step();
     step();
@@ -45,13 +45,13 @@ int32 planned(int32 u) {
         step();
         step();
         have result == 8 or defined(old(g[0]) + 1);
-        solve();
+        close();
     } else {
         step();
         step();
         step();
         have result == 8 or defined(old(g[0]) + 1);
-        solve();
+        close();
     }
 }
 

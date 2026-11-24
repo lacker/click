@@ -9,7 +9,7 @@ int32 probe(int32 *p) { claim(p); return *p; }
 verifying "viewable_defined_probe.c";
 void claim(int32 *p) {
     requires viewable(p[0..1]);
-    ensures defined(p[0]) by { have defined(p[0]) by { solve(); } }
+    ensures defined(p[0]) by { have defined(p[0]) by { close(); } }
 }
 int32 probe(int32 *p) {
     owns uninitialized(p[0..1]);

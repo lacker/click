@@ -43,7 +43,7 @@ int32 run(void* p, void* q) {
         true => {
             have count(ticket(p)) == 1;
             unfold(ticket(p));
-            step(); solve();
+            step(); close();
         }
         false => {}
     }
@@ -53,7 +53,7 @@ int32 run(void* p, void* q) {
             step();
             unfold(ticket(p));
             have count(ticket(q)) == 1;
-            step(); solve();
+            step(); close();
         }
         false => {}
     }
@@ -61,7 +61,7 @@ int32 run(void* p, void* q) {
     unfold(ticket(p));
     step();
     have count(ticket(p)) == 0;
-    step(); solve();
+    step(); close();
 }
 ```
 

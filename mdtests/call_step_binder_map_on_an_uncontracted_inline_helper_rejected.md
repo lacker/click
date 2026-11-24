@@ -31,7 +31,7 @@ void caller(struct cell* p) {
     produces y: filled(p);
 } by {
     let { result: y } = step(fill, { x: x });
-    solve();
+    close();
 }
 ```
 

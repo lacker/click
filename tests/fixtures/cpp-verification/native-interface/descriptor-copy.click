@@ -15,9 +15,9 @@ int32 probe(struct View& input) {
 } by {
     step_until(call(change, 0).entry);
     step();
-    have input.size == old(input.size) by { known(); }
-    have input.data == old(input.data) by { known(); }
-    have input.data[0] == 9 by { known(); }
+    have input.size == old(input.size) by { close(); }
+    have input.data == old(input.data) by { close(); }
+    have input.data[0] == 9 by { close(); }
     step_until(function.exit);
-    solve();
+    close();
 }

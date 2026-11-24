@@ -34,7 +34,7 @@ void mark_other(int32 a[], int32 b[], int32 n, int32 j) {
     have 0 <= 0;
     have icount(a, 0, 0) == 0 by {
         unfold(icount(a, 0, 0));
-        known();
+        close();
     }
     have to_integer(a[0]) == 5 by { close() using { a[0] == 5; }; }
     have icount(a, 0, 1) == 5 by {

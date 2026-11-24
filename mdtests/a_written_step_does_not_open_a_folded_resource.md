@@ -32,7 +32,7 @@ void bump(struct cell* p) {
     step();
     step();
     step();
-    solve();
+    close();
 }
 ```
 

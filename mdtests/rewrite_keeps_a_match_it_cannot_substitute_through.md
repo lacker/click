@@ -16,7 +16,7 @@ arm's bound variable shadows something the source mentions. It reports that by
 setting a flag and handing back a placeholder, the constant `0`. `rewrite`
 kept the placeholder and dropped the flag, so the whole `match` term became
 `0`, the goal became `0 == 0`, and `normalize()` closed it. Any `int32` claim
-about an unfolded `match` could be closed that way, and `solve()` found such
+about an unfolded `match` could be closed that way, and `close()` found such
 proofs on its own: a postcondition naming the wrong node verified.
 
 A refused scope now leaves that term exactly as it was. Substituting by an

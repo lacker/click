@@ -169,7 +169,7 @@ either, so a file may declare its own declaration with that name
 `mdtests/an_unimported_library_resource_name_is_free_for_a_user_definition.md`).
 A resource named in a contract without its module's import is refused with
 the import to add (`mdtests/a_library_resource_needs_its_module_import.md`).
-Built-in closers such as `solve`, its arithmetic, and loop-invariant closing
+Built-in closers such as `close()`, its arithmetic, and loop-invariant closing
 apply library theorems as part of their own reasoning, whatever the file
 imports. They name a library theorem by its qualified identity, such as
 `click::integer::int32_less_equal_transitive`, so a file may declare

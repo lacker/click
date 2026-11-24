@@ -44,7 +44,7 @@ int32 f() {
     } {
         true => {
             step();
-            solve();
+            close();
         }
         false => {
         }

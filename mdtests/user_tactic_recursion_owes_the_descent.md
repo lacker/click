@@ -84,12 +84,12 @@ tactic convert(p: struct node*) {
             apply(links_len_is_nonnegative(rest_model));
             have 0 <= links_len(r.model) by {
                 rewrite(r.model, rest_model);
-                known();
+                close();
             }
             have links_len(old(x.model)) == links_len(rest_model) + 1 by {
                 rewrite(old(x.model), Links::Cons(rest_model));
                 unfold(links_len(Links::Cons(rest_model)));
-                known();
+                close();
             }
             let { y: r2 } = convert(p->next, { x: r });
             have r2.model == rest_model;
@@ -106,7 +106,7 @@ void user(struct node* p) {
     let { y: b } = convert(p, { x: a });
     step();
     step();
-    solve();
+    close();
 }
 ```
 

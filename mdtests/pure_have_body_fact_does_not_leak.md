@@ -22,7 +22,7 @@ theorem last_cell(p: int32[], lo: int32, hi: int32) {
             close() using { 0 <= lo; 0 < hi; };
         }
         have viewable(p[hi - 1..hi]);
-        known();
+        close();
     }
 }
 ```

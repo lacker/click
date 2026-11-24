@@ -10,7 +10,7 @@ theorem equality_goal(a: Integer, b: Integer, c: Integer) {
     requires c == 3;
     ensures a == 5 by {
         have a == 5;
-        known();
+        close();
     }
 }
 ```

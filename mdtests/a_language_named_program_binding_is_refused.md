@@ -29,7 +29,7 @@ int32 count(int32 n) {
         invariant 0 <= program::iterations and program::iterations <= n;
         invariant c(iterations) == iterations;
     }
-    have loop(0).iterations == n by { solve(); }
+    have loop(0).iterations == n by { close(); }
 }
 ```
 

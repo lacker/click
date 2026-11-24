@@ -26,8 +26,8 @@ int id(int x) {
     ensures r.model == old(r.model);
 } by {
     match r.model {
-        Tag::A => { have x == x by solve(); contradiction(r.model == Tag::A); },
-        Tag::B => { step_until(function.exit); solve(); },
+        Tag::A => { have x == x by close(); contradiction(r.model == Tag::A); },
+        Tag::B => { step_until(function.exit); close(); },
     }
 }
 ```

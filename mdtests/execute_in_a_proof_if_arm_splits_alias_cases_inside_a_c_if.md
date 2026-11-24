@@ -39,7 +39,7 @@ int32 f(int32 u, int32 w) {
     if buf == 0 {
     } else {
         step_until(statement(5).entry);
-        have buf[0] == 3 by known();
+        have buf[0] == 3 by close();
         mark before_store;
         step();
         if u == 0 {
@@ -51,13 +51,13 @@ int32 f(int32 u, int32 w) {
             have separate(memory(buf[3]), memory(buf[0])) by { apply(separation::separate_elements(buf, 3 as uint64, 0 as uint64)); }
             have separate(memory(buf[u]), memory(buf[0])) by {
                 if u == 1 {
-                    rewrite(u, 1); known();
+                    rewrite(u, 1); close();
                 } else {
                     if u == 2 {
-                        rewrite(u, 2); known();
+                        rewrite(u, 2); close();
                     } else {
                         have u == 3 by { close() using { 1 <= u; u < 4; u != 1; u != 2; }; }
-                        rewrite(u, 3); known();
+                        rewrite(u, 3); close();
                     }
                 }
             }
@@ -69,7 +69,7 @@ int32 f(int32 u, int32 w) {
             }
             have buf[0] == 3 by {
                 rewrite(buf[0], at(before_store, buf[0]));
-                known();
+                close();
             }
             if w > 0 { step_until(function.exit); } else { step_until(function.exit); }
         }

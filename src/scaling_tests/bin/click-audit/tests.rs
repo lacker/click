@@ -20,7 +20,7 @@ fn partial_claim_audit_runs_once_after_a_fixed_prefix() {
     .unwrap();
     let path = directory.join("unit.click");
     let samples = [4, 8, 16, 32].map(|size| {
-        let source = format!("verifying \"unit.c\";\nint32 identity(int32 x) {{ ensures result == x; }} by {{\nstep_until(function.exit);\n{}{}solve();\n}}\n", "have x + 0 == x by solve();\n".repeat(8), "have x == x by solve();\n".repeat(size));
+        let source = format!("verifying \"unit.c\";\nint32 identity(int32 x) {{ ensures result == x; }} by {{\nstep_until(function.exit);\n{}{}close();\n}}\n", "have x + 0 == x by close();\n".repeat(8), "have x == x by close();\n".repeat(size));
         fs::write(&path, source).unwrap();
         let sites = inventory_sites(std::slice::from_ref(&path)).unwrap();
         let start = &sites[9];
@@ -39,7 +39,7 @@ fn partial_claim_audit_runs_once_after_a_fixed_prefix() {
         );
     }
     let markdown = directory.join("unit.md");
-    fs::write(&markdown, "# Partial selection in a container\n\n```c filename=unit.c\nint32 identity(int32 x) { return x; }\n```\n\n```click\nverifying \"unit.c\";\nint32 identity(int32 x) { ensures result == x; } by {\nstep_until(function.exit);\nhave x == x by solve();\nhave x + 0 == x by solve();\nsolve();\n}\n```\n\n```expect\npass\n```\n").unwrap();
+    fs::write(&markdown, "# Partial selection in a container\n\n```c filename=unit.c\nint32 identity(int32 x) { return x; }\n```\n\n```click\nverifying \"unit.c\";\nint32 identity(int32 x) { ensures result == x; } by {\nstep_until(function.exit);\nhave x == x by close();\nhave x + 0 == x by close();\nclose();\n}\n```\n\n```expect\npass\n```\n").unwrap();
     let sites = inventory_sites(std::slice::from_ref(&markdown)).unwrap();
     let arguments = parse_arguments([
         "--start-at".to_string(),
@@ -73,9 +73,9 @@ fn bounded_whole_claim_audit_matches_uncapped_work_at_every_size() {
         );
         // Keep the premise set fixed as the independent written sites grow.
         for _ in 0..size {
-            source.push_str("have x == x by solve();\n");
+            source.push_str("have x == x by close();\n");
         }
-        source.push_str("solve();\n}\n");
+        source.push_str("close();\n}\n");
         fs::write(&path, source).unwrap();
         let sites = inventory_sites(std::slice::from_ref(&path)).unwrap();
         assert_eq!(sites.len(), size + 2);

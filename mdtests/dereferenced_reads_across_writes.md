@@ -76,7 +76,7 @@ void keep_pointer_xor(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have (*a ^ 1) == 3 by solve();
+    have (*a ^ 1) == 3 by close();
 }
 
 void keep_pointer_complement(int32 a[], int32 n) {
@@ -89,7 +89,7 @@ void keep_pointer_complement(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have (~*a) == 3 by solve();
+    have (~*a) == 3 by close();
 }
 
 void keep_pointer_byte(int32 a[], int32 n) {
@@ -102,7 +102,7 @@ void keep_pointer_byte(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have (*a as uint8) == 3 by solve();
+    have (*a as uint8) == 3 by close();
 }
 
 void keep_pointer_shift_count(int32 a[], int32 n) {
@@ -115,7 +115,7 @@ void keep_pointer_shift_count(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have (1u32 << (*a & 1)) == 2u32 by solve();
+    have (1u32 << (*a & 1)) == 2u32 by close();
 }
 
 void keep_offset_byte_across_stores(int32 a[], int32 n) {
@@ -128,7 +128,7 @@ void keep_offset_byte_across_stores(int32 a[], int32 n) {
 } by {
     step();
     step();
-    have (*(a + 1) as uint8) == 3 by solve();
+    have (*(a + 1) as uint8) == 3 by close();
 }
 
 void keep_pointer_shift_across_stores(int32 a[], int32 n) {
@@ -141,7 +141,7 @@ void keep_pointer_shift_across_stores(int32 a[], int32 n) {
 } by {
     step();
     step();
-    have (*a >> 1) == 3 by solve();
+    have (*a >> 1) == 3 by close();
 }
 
 void keep_pointer_choice_across_stores(int32 a[], int32 n) {
@@ -154,7 +154,7 @@ void keep_pointer_choice_across_stores(int32 a[], int32 n) {
 } by {
     step();
     step();
-    have (if n == 1 { *a } else { 0 }) == 3 by solve();
+    have (if n == 1 { *a } else { 0 }) == 3 by close();
 }
 
 void keep_pointer_quotient_across_call(int32 a[], int32 n) {
@@ -168,7 +168,7 @@ void keep_pointer_quotient_across_call(int32 a[], int32 n) {
     ensures *a / 2 == 1;
 } by {
     step();
-    have *a / 2 == 1 by solve();
+    have *a / 2 == 1 by close();
 }
 
 void keep_offset_remainder_across_call(int32 a[], int32 n) {
@@ -182,7 +182,7 @@ void keep_offset_remainder_across_call(int32 a[], int32 n) {
     ensures *(a + 1) % 2 == 1;
 } by {
     step();
-    have *(a + 1) % 2 == 1 by solve();
+    have *(a + 1) % 2 == 1 by close();
 }
 
 void keep_pointer_mask_across_call(int32 a[], int32 n) {
@@ -196,7 +196,7 @@ void keep_pointer_mask_across_call(int32 a[], int32 n) {
     ensures (*a & 1) == 1;
 } by {
     step();
-    have (*a & 1) == 1 by solve();
+    have (*a & 1) == 1 by close();
 }
 ```
 

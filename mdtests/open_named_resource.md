@@ -31,7 +31,7 @@ int32 set_and_read(int32* p, int32 x, int32 y) {
             false => { step_until(function.exit); }
         }
     }
-    solve();
+    close();
 }
 ```
 

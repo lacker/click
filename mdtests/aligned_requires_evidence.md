@@ -22,7 +22,7 @@ int32 aligned_requires_evidence(struct node* node) {
     ensures aligned(node, 8);
 } by {
     step_until(function.exit);
-    solve();
+    close();
 }
 ```
 

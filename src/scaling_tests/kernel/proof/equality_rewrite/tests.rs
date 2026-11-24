@@ -441,7 +441,7 @@ fn cited_read_rewrite_requires_unchanged_cells_and_its_named_premise() {
         ProgramValue::Int32(MachineTerm::constant(43)),
     );
     let load = |memory: &SymbolicMemory| {
-        MachineTerm::MemoryLoad(
+        MachineTerm::read_named(
             ProgramPoint::at(&(crate::kernel::intern_memory_ref(memory))),
             Box::new(pointer.clone()),
             crate::kernel::LoadKind::Int32,

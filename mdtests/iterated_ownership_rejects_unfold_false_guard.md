@@ -37,7 +37,7 @@ void poke(int32* data, int32* occupied, int32 capacity, int32 index) {
     } else {
         step_until(function.exit);
         fold(arena_cells(data, occupied, capacity));
-        solve();
+        close();
     }
 }
 ```

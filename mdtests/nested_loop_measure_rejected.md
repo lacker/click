@@ -46,7 +46,7 @@ int32 nest(int32 n) {
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

@@ -6,7 +6,7 @@ script went on against the goal as written before the `unfold`, so the
 `close() using` below read `0 <= w2(a, b)` with `w2` still folded. It then
 reported that the listed premise, the unfolded goal verbatim, did not prove
 it. Naming the step that closed the goal points at the line to delete.
-`known`, a bare `solve()`, and `normalize` after a closed goal remain harmless.
+`known`, a bare `close()`, and `normalize` after a closed goal remain harmless.
 
 ```click
 spec enum Ctx { Top, Up(Ctx) }

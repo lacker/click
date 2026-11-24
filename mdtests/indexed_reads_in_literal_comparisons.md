@@ -38,7 +38,7 @@ void keep_mask_disequality(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have (a[0] & 1) != 0 by solve();
+    have (a[0] & 1) != 0 by close();
 }
 
 void keep_mask_bound(int32 a[], int32 n) {
@@ -51,7 +51,7 @@ void keep_mask_bound(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have 0 < (a[0] & 1) by solve();
+    have 0 < (a[0] & 1) by close();
 }
 
 void keep_masked_condition(int32 p[], int32 i, int32 j, int32 n) {
@@ -74,8 +74,8 @@ void keep_masked_condition(int32 p[], int32 i, int32 j, int32 n) {
     have separate(memory((p + i)[0..1]), memory(p[j..j + 1])) by {
         apply(separation::separate_restrict(memory(p[i..i + 1]), memory(p[j..j + 1]), memory((p + i)[0..1]), memory(p[j..j + 1])));
     }
-    step() by { known(); }
-    have (if (p[j] & 1) != 0 { 1 } else { 0 }) == 1 by solve();
+    step() by { close(); }
+    have (if (p[j] & 1) != 0 { 1 } else { 0 }) == 1 by close();
 }
 
 void keep_reversed_flag_comparison(int32 p[], int32 i, int32 j, int32 n) {
@@ -98,8 +98,8 @@ void keep_reversed_flag_comparison(int32 p[], int32 i, int32 j, int32 n) {
     have separate(memory((p + i)[0..1]), memory(p[j..j + 1])) by {
         apply(separation::separate_restrict(memory(p[i..i + 1]), memory(p[j..j + 1]), memory((p + i)[0..1]), memory(p[j..j + 1])));
     }
-    step() by { known(); }
-    have 1 == (if p[j] > 0 { 1 } else { 0 }) by solve();
+    step() by { close(); }
+    have 1 == (if p[j] > 0 { 1 } else { 0 }) by close();
 }
 ```
 

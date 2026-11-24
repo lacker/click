@@ -93,7 +93,7 @@ void parent_detach(struct parent* p) {
             unfold(link);
             step_until(function.exit);
             let out = fold(parent(p), { link: ParentLink::Empty });
-            solve();
+            close();
         },
     }
 }

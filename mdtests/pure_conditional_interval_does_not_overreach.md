@@ -8,7 +8,7 @@ it.
 ```click quick-solve
 theorem indicator_is_not_at_most_zero(x: int32) {
     ensures if x == 0 { 1 } else { 0 } <= 0 by {
-        solve();
+        close();
     }
 }
 ```

@@ -39,15 +39,15 @@ void probe(struct node *p, struct node *q) {
     match a.model {
         Tag::At(id, cm) => {
             let {kid: kid} = unfold(a);
-            have p == id by known();
+            have p == id by close();
             step(); mark before; step(); step();
-            have p->other == q by known();
-            have p->other == at(before, p->other) by known();
+            have p->other == q by close();
+            have p->other == at(before, p->other) by close();
         },
     }
 }
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: `have` failed for `p->other == at(before, p->other)`
 ```

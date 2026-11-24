@@ -24,7 +24,7 @@ void release(struct object* obj) {
     consumes reference(obj);
 } by {
     with(control(obj)) { unfold(reference(obj)); }
-    solve();
+    close();
 }
 ```
 

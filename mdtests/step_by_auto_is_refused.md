@@ -18,7 +18,7 @@ int32 compare_self(uint8 bytes[]) {
     ensures 1 == 1 by {
         step() by auto();
         step();
-        solve();
+        close();
     }
 }
 ```

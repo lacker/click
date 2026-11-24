@@ -320,9 +320,9 @@ termination by {{
     have termination_returns("leaf") by {{
         check_termination_local("leaf");
         check_termination_component("leaf", normal);
-        known();
+        close();
     }}
-    solve();
+    close();
 }}
 "#
         );
@@ -350,8 +350,8 @@ termination by {{
         let source = format!(
             r#"{SOURCE}
 termination by {{
-    have forall (leaf: int32) {{ termination_returns("leaf") }} by {{ intro(); solve(); }}
-    solve();
+    have forall (leaf: int32) {{ termination_returns("leaf") }} by {{ intro(); close(); }}
+    close();
 }}
 "#
         );
@@ -379,8 +379,7 @@ termination by {{
                 .source
                 .contains("check_termination_component(\"caller\", normal)")
         );
-        assert!(!expansion.source.contains("solve()"));
-        let result = without_implicit_solve_for_claim("program.termination", || {
+        let result = crate::surface::without_proof_search_for_claim("program.termination", || {
             verify_c_sources(&expansion.source, &[("termination.c", C)])
                 .map_err(|error| error.report())
         });
@@ -433,7 +432,7 @@ termination by {{
 
     #[test]
     fn unrelated_have_does_not_complete_the_program_root() {
-        let source = format!("{SOURCE}\ntermination by {{ have true by known(); }}");
+        let source = format!("{SOURCE}\ntermination by {{ have true by close(); }}");
         let error = without_implicit_solve_for_claim("program.termination", || {
             verify_c_sources(&source, &[("termination.c", C)]).map_err(|error| error.report())
         })
@@ -444,7 +443,7 @@ termination by {{
     #[test]
     fn termination_steps_cannot_be_used_in_an_ordinary_theorem() {
         let source =
-            "theorem forged() { ensures true by { check_termination_callbacks(); known(); } }";
+            "theorem forged() { ensures true by { check_termination_callbacks(); close(); } }";
         let error = verify_click_theorems(source).unwrap_err();
         assert!(
             error.report().contains("termination proof"),

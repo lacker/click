@@ -23,13 +23,13 @@ uint32 probe() {
     ensures result == 305419896u32;
 } by {
     step_until(call(fill, 0).entry);
-    have std_span_size(dst) == 4u64 by { solve(); }
+    have std_span_size(dst) == 4u64 by { close(); }
     step();
-    have std_span_data(dst) == ((&obj) as (uint8*)) by { known(); }
-    have ((&obj) as (uint8*))[0] == 120u8 by { solve(); }
-    have ((&obj) as (uint8*))[1] == 86u8 by { solve(); }
-    have ((&obj) as (uint8*))[2] == 52u8 by { solve(); }
-    have ((&obj) as (uint8*))[3] == 18u8 by { solve(); }
+    have std_span_data(dst) == ((&obj) as (uint8*)) by { close(); }
+    have ((&obj) as (uint8*))[0] == 120u8 by { close(); }
+    have ((&obj) as (uint8*))[1] == 86u8 by { close(); }
+    have ((&obj) as (uint8*))[2] == 52u8 by { close(); }
+    have ((&obj) as (uint8*))[3] == 18u8 by { close(); }
     step_until(function.exit);
-    solve();
+    close();
 }

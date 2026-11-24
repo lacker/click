@@ -55,7 +55,7 @@ fn rust_integer_radices_and_separators_verify() {
     }
     theorem mathematical(value: Integer) {
         requires value == 0x1_0000_0000_0000_0000;
-        ensures value == 18_446_744_073_709_551_616 by { known(); }
+        ensures value == 18_446_744_073_709_551_616 by { close(); }
     }"#,
     )
     .unwrap();

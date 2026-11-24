@@ -6,9 +6,9 @@ bool money_nonnegative(const int64& nValue) {
 } by {
     if nValue >= 0i64 {
         step_until(function.exit);
-        solve();
+        close();
     } else {
         step_until(function.exit);
-        solve();
+        close();
     }
 }

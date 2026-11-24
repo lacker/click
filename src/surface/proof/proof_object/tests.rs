@@ -2258,7 +2258,7 @@ fn smart_have_scope_and_explicit_step_scale_with_local_output() {
 #[test]
 fn execution_have_indexes_only_its_delta_and_scales_with_history() {
     let click_file = crate::surface::parse(
-        "int32 idle() { ensures reflexive: result == result by { known(); } }",
+        "int32 idle() { ensures reflexive: result == result by { close(); } }",
     )
     .expect("test contract should parse");
     let function_block = &click_file.function_blocks()[0];
@@ -2670,7 +2670,7 @@ fn proposition_unfold_uses_indexed_facts_and_persistent_local_state() {
         r#"
             predicate selected(x: int32) { x == x }
             int32 identity(int32 x) {
-                ensures returns_x: result == x by { known(); }
+                ensures returns_x: result == x by { close(); }
             }
         "#,
     )
@@ -2825,7 +2825,7 @@ fn fixed_state_proposition_unfold_checks_the_same_retained_step() {
         r#"
             predicate selected(x: int32) { x == x }
             int32 identity(int32 x) {
-                ensures returns_x: result == x by { known(); }
+                ensures returns_x: result == x by { close(); }
             }
         "#,
     )
@@ -3542,7 +3542,7 @@ fn fixed_state_choose_uses_indexed_requirement_and_persistent_local_bindings() {
         r#"
             int32 choose_source(int32 x) {
                 requires exists (k: int32) { k == x };
-                ensures result == x by { known(); }
+                ensures result == x by { close(); }
             }
         "#,
     )
@@ -3740,7 +3740,7 @@ fn initial_entry_origins_keep_nonzero_requirement_identity_after_derived_inserti
                 requires 100 / (x + 1) >= 0;
                 requires selected(x);
                 requires x >= 0;
-                ensures result == x by { known(); }
+                ensures result == x by { close(); }
             }
         "#,
     )
@@ -4553,7 +4553,7 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
         r#"
             theorem less_than_implies_less_equal(left: int32, right: int32) { requires left < right; ensures left <= right; }
             int32 identity(int32 x) {
-                ensures returns_x: result == x by { known(); }
+                ensures returns_x: result == x by { close(); }
             }
         "#,
     )
@@ -5404,7 +5404,7 @@ fn nested_have_accepts_trailing_known_after_closure() {
         r#"
             theorem less_than_implies_less_equal(left: int32, right: int32) { requires left < right; ensures left <= right; }
             int32 identity(int32 x) {
-                ensures returns_x: result == x by { known(); }
+                ensures returns_x: result == x by { close(); }
             }
         "#,
     )
@@ -5548,7 +5548,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
         r#"
             theorem less_than_implies_less_equal(left: int32, right: int32) { requires left < right; ensures left <= right; }
             int32 choose(int32 left, int32 right, int32 choose_left) {
-                ensures reflexive_result: result == result by { known(); }
+                ensures reflexive_result: result == result by { close(); }
             }
         "#,
     )
@@ -5862,7 +5862,7 @@ fn fixed_state_apply_search_uses_indexes_and_retains_its_checked_successor() {
         r#"
             theorem less_than_implies_less_equal(left: int32, right: int32) { requires left < right; ensures left <= right; }
             int32 identity(int32 x) {
-                ensures returns_x: result == x by { known(); }
+                ensures returns_x: result == x by { close(); }
             }
         "#,
     )
@@ -6015,9 +6015,9 @@ fn result_aware_fixed_state_apply_scales_with_unrelated_facts() {
                 step_until(function.exit);
                 have result == result by {
                     apply(result_reflexive(result));
-                    solve();
+                    close();
                 }
-                solve();
+                close();
             }
         "#,
     )
@@ -6111,7 +6111,7 @@ fn result_aware_fixed_state_context_apply_is_indexed_and_transactional() {
             } by {
                 step_until(function.exit);
                 apply(less_than_implies_less_equal(result, upper));
-                solve();
+                close();
             }
         "#,
     )
@@ -6459,7 +6459,7 @@ fn pure_signed_order_solve_builds_its_certificate_with_logarithmic_local_updates
         assert!(root.certificate().steps().is_empty());
 
         // A nested smart `have` must not serialize the goal's ambient
-        // copy as `known()`: the surface proposition may lower in a
+        // copy as `close()`: the surface proposition may lower in a
         // different state when expansion is verified from source.
         // Search through a context weakened by only that exact fact and
         // retain the same checked signed-order theorem path on Proof.
@@ -6492,7 +6492,7 @@ fn pure_signed_order_solve_builds_its_certificate_with_logarithmic_local_updates
             .driver()
             .try_solve_closure()
             .expect("nested smart search must not exceed its deadline")
-            .expect("the exact goal should close directly by `known()`");
+            .expect("the exact goal should close directly by `close()`");
         let allocations = fact_node_allocations() - before;
         // Retaining the exact premise must also keep persistent updates local.
         // Measure their growth against their own smallest sample.
@@ -9497,7 +9497,7 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
         r#"
             predicate selected(x: int32) { x == x }
             int32 identity(int32 x) {
-                ensures returns_x: result == x by { known(); }
+                ensures returns_x: result == x by { close(); }
             }
         "#,
     )
@@ -10475,7 +10475,7 @@ fn execution_transport_forks_without_copying_unrelated_state() {
     let click_file = crate::surface::parse(
         r#"
             int32 identity(int32 x) {
-                ensures returns_x: result == x by { known(); }
+                ensures returns_x: result == x by { close(); }
             }
         "#,
     )
@@ -10594,7 +10594,7 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
     let click_file = crate::surface::parse(
         r#"
             int32 choose_second(int32 first, int32 second) {
-                ensures returns_second: result == second by { known(); }
+                ensures returns_second: result == second by { close(); }
             }
         "#,
     )
@@ -10738,7 +10738,7 @@ fn statement_assignment_step_ignores_unrelated_proof_facts() {
     let click_file = crate::surface::parse(
         r#"
             int32 set_one(int32 x) {
-                ensures returns_one: result == 1 by { known(); }
+                ensures returns_one: result == 1 by { close(); }
             }
         "#,
     )
@@ -10938,7 +10938,7 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
     let click_file = crate::surface::parse(
         r#"
             int32 constant(int32 x) {
-                ensures returns_one: result == 1 by { known(); }
+                ensures returns_one: result == 1 by { close(); }
             }
         "#,
     )
@@ -11065,7 +11065,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
     let click_file = crate::surface::parse(
         r#"
             int32 loop_region(int32 x) {
-                ensures unchanged: result == x by { known(); }
+                ensures unchanged: result == x by { close(); }
             }
         "#,
     )
@@ -11333,7 +11333,7 @@ fn execution_proof_if_split_is_logarithmic_in_unrelated_facts() {
             int32 identity(int32 x) {
                 ensures result == x;
             } by {
-                known();
+                close();
             }
         "#,
     )
@@ -11563,7 +11563,7 @@ fn execution_proof_cases_split_is_logarithmic_in_unrelated_facts() {
             int32 identity(int32 x) {
                 ensures result == x;
             } by {
-                known();
+                close();
             }
         "#,
     )
@@ -11675,7 +11675,7 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
     let click_file = crate::surface::parse(
         r#"
             int32 identity(int32 x) {
-                ensures returns_x: result == x by { known(); }
+                ensures returns_x: result == x by { close(); }
             }
         "#,
     )
@@ -11804,7 +11804,7 @@ fn cursor_execution_branch_join_retains_structural_reads_without_bindings() {
     let click_file = crate::surface::parse(
         r#"
             int32 branch_load(int32 x, int32 p[1]) {
-                ensures returns_any: result == result by { known(); }
+                ensures returns_any: result == result by { close(); }
             }
         "#,
     )
@@ -12195,7 +12195,7 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
             }
 
             int32 constant(int32 x) {
-                ensures returns_one: result == 1 by { known(); }
+                ensures returns_one: result == 1 by { close(); }
             }
         "#,
     )
@@ -12495,7 +12495,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
             }
 
             int32 nonnegative(int32 x) {
-                ensures nonnegative_result: result >= 0 by { known(); }
+                ensures nonnegative_result: result >= 0 by { close(); }
             }
         "#,
     )
@@ -13092,7 +13092,7 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
     let click_file = crate::surface::parse(
         r#"
             int32 nested(int32 x, int32 flag) {
-                ensures nonnegative_result: result >= 0 by { known(); }
+                ensures nonnegative_result: result >= 0 by { close(); }
             }
         "#,
     )
@@ -13441,7 +13441,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     let click_file = crate::surface::parse(
         r#"
             int32 selected(int32 x) {
-                ensures returns_one: result == 1 by { known(); }
+                ensures returns_one: result == 1 by { close(); }
             }
         "#,
     )
@@ -13712,7 +13712,7 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
     let click_file = crate::surface::parse(
         r#"
             int32 choose(int32 x) {
-                ensures returns_one_or_two: result == 1 or result == 2 by { known(); }
+                ensures returns_one_or_two: result == 1 or result == 2 by { close(); }
             }
         "#,
     )

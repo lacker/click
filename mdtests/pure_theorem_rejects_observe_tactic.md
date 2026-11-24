@@ -8,7 +8,7 @@ abstract resource token(x: int32);
 theorem observe_tactic_is_not_pure(x: int32) {
     ensures x == x by {
         observe(token(x));
-        solve();
+        close();
     }
 }
 ```

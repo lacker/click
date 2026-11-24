@@ -4,7 +4,7 @@
 theorem integer_exists_witness(x: Integer) {
     ensures exists (z: Integer) { z == x } by {
         witness(x);
-        solve();
+        close();
     }
 }
 ```

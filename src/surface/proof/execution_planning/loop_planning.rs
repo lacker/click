@@ -165,7 +165,7 @@ struct InitializeScriptLayout<'a> {
     /// The absolute source index of each tactic of `shared`, when it is a
     /// written script.
     shared_source_indices: Vec<usize>,
-    /// Absolute source indices of the trailing `solve()` closers: a smart
+    /// Absolute source indices of the trailing `close()` closers: a smart
     /// tactic that stands for the whole remaining phase rather than for one
     /// invariant.
     closers: Vec<usize>,
@@ -1709,7 +1709,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             } else {
                 // The implicit bundle closer plans a default `solve` body.
                 // Its premise selection is smart work even when the first
-                // checked member happens to close by `known()`.
+                // checked member happens to close by `close()`.
                 let (at, name) = match source.preserve_source_index {
                     Some(at) => (at, crate::instrumentation::IMPLICIT_LOOP_CLOSER_TACTIC),
                     None => (

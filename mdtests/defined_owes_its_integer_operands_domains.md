@@ -7,7 +7,7 @@ domain is owed where the requirement is stated, and nothing establishes it.
 ```click
 theorem integer_operand_owed(a: int32, b: int32) {
     requires defined(to_int32(to_integer(a / b)));
-    ensures 1 == 1 by solve();
+    ensures 1 == 1 by close();
 }
 ```
 

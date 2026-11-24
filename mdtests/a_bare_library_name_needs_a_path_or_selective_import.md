@@ -5,7 +5,7 @@ here is not `list::append`.
 
 ```click
 theorem append_nil_by_bare_name(xs: List<int32>) {
-    ensures append(List<int32>::Nil, xs) == xs by solve();
+    ensures append(List<int32>::Nil, xs) == xs by close();
 }
 ```
 

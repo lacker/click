@@ -36,10 +36,10 @@ void inspect(struct node *p) {
  ensures 1 == 1;
 } by {
  step_until(loop(0).entry);
- loop { owns t: parent(root); invariant p == tree_identity(t.model); decreases 0; initialize by solve(); maintain by {
+ loop { owns t: parent(root); invariant p == tree_identity(t.model); decreases 0; initialize by close(); maintain by {
  match t.model { Tree::At(pid, cm) => {
- have p == tree_identity(Tree::At(pid, cm)) by { rewrite(Tree::At(pid, cm), t.model); known(); }
- have p == pid by { unfold(tree_identity(Tree::At(pid, cm))); solve(); }
+ have p == tree_identity(Tree::At(pid, cm)) by { rewrite(Tree::At(pid, cm), t.model); close(); }
+ have p == pid by { unfold(tree_identity(Tree::At(pid, cm))); close(); }
  let { child: c } = unfold(t);
  match c.model {
   Pair::At(identity) => {
@@ -51,10 +51,10 @@ void inspect(struct node *p) {
    step(copy_tag);
    have q->tag == at(rotation,p->tag);
    have identity->tag == q->tag by { normalize() using { q == identity; }; }
-   have identity->tag == at(rotation,p->tag) by { rewrite(identity->tag, q->tag); known(); }
+   have identity->tag == at(rotation,p->tag) by { rewrite(identity->tag, q->tag); close(); }
    have identity->right == at(rotation, q->right) by { normalize() using { q == identity; }; }
    let child = fold(cell(q), { model: Pair::At(identity) });
-   have child.model == cm by { rewrite(child.model, Pair::At(identity)); known(); }
+   have child.model == cm by { rewrite(child.model, Pair::At(identity)); close(); }
    let t = fold(parent(root), { model: Tree::At(pid, cm), child: child });
    step(); step();
   },

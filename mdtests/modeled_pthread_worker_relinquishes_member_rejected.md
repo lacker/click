@@ -32,10 +32,10 @@ int32 run(void* p) {
 } by {
     step();
     step();
-    branch { true => { unfold(ticket(p)); step(); solve(); } false => {} }
+    branch { true => { unfold(ticket(p)); step(); close(); } false => {} }
     step();
     step();
-    solve();
+    close();
 }
 ```
 

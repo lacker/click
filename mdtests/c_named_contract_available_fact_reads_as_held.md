@@ -42,7 +42,7 @@ int32 pick(void (*callback)(int32*), int32 x) {
             }
         }
         step();
-        solve();
+        close();
     }
 }
 ```

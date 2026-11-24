@@ -21,11 +21,11 @@ int32 repair(int32* p) {
     produces output: Ready(p);
     ensures output.value == 1;
     ensures result == 0;
-} by { unfold(input); step_until(function.exit); let output = fold(Ready(p), { value: 1 }); solve(); }
+} by { unfold(input); step_until(function.exit); let output = fold(Ready(p), { value: 1 }); close(); }
 theorem repair_contract() executes repair(int32* p) {
     ensures Repair(&repair) as { input: input, output: output } by {
         let { output: output } = step(repair, { input: input });
-        solve();
+        close();
     }
 }
 void direct(int32* x) {
@@ -34,9 +34,9 @@ void direct(int32* x) {
     ensures done.value == 1;
 } by {
     let { result: status, output: done } = step(Repair, { input: dirty });
-    have status == 0 by { known(); }
+    have status == 0 by { close(); }
     unfold(done);
-    have x[0] == 1 by { known(); }
+    have x[0] == 1 by { close(); }
     let done = fold(Ready(x), { value: 1 });
 }
 ```

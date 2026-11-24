@@ -19,7 +19,7 @@ resource outer() { owns child: inner(); }
 tactic keep_tag() {
     owns slot: leaf();
     ensures slot.tag == old(slot.tag);
-} by { have slot.tag == old(slot.tag) by known(); }
+} by { have slot.tag == old(slot.tag) by close(); }
 
 void by_unfold() {
     owns r: outer();
@@ -29,9 +29,9 @@ void by_unfold() {
     unfold(r.child);
     observe(r.child.item);
     keep_tag({ slot: r.child.item });
-    have r.child.item.tag == old(r.child.item.tag) by known();
+    have r.child.item.tag == old(r.child.item.tag) by close();
     unfold(r.child.item);
-    have r.child.item.tag == old(r.child.item.tag) by known();
+    have r.child.item.tag == old(r.child.item.tag) by close();
     fold(r.child.item);
     fold(c);
     fold(r);
@@ -43,7 +43,7 @@ void by_scope() {
 } by {
     with(r) {
         with(r.child) {
-            have r.child.item.tag == old(r.child.item.tag) by known();
+            have r.child.item.tag == old(r.child.item.tag) by close();
             step_until(function.exit);
         }
     }

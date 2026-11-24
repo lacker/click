@@ -64,7 +64,7 @@ void init_cells(int32* data, int32* occupied, int32 capacity) {
         0 <= k and k < capacity implies occupied[k] == 0
     } by {
         rewrite(capacity, i);
-        known();
+        close();
     }
     fold(arena_cells(data, occupied, capacity)[..]);
     mark clause_args;
@@ -93,7 +93,7 @@ void init_full(int32* data, int32* occupied, int32 capacity) {
         0 <= k and k < capacity implies occupied[k] == 1
     } by {
         rewrite(capacity, i);
-        known();
+        close();
     }
     fold(arena_cells(data, occupied, capacity)[..]);
     fold(arena_cells(data, occupied, capacity));

@@ -209,7 +209,7 @@ uint64 adler32_z(uint64 adler, const uint8* buf, uint64 len) {
     rewrite(buf, at(before_decrement, buf) + 1u64);
     rewrite(old(len) - len, (old(len) - at(before_decrement, len)) + 1u64);
     rewrite(at(before_decrement, buf), old(buf) + (old(len) - at(before_decrement, len)));
-    known();
+    close();
    }
    have to_integer(len) == to_integer(at(before_decrement, len) - 1u64) by close();
    have len == (at(before_decrement, len) - 1u64);

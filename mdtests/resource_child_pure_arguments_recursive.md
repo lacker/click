@@ -32,14 +32,14 @@ int32 read_left(int32* p, int32* left, int32* right) {
     ensures result == 2;
     ensures root.model == old(root.model);
 } by {
-    have root_pointer(Tree::Leaf(left, 2)) == left by { unfold(root_pointer(Tree::Leaf(left, 2))); known(); }
-    have root_pointer(Tree::Leaf(right, 3)) == right by { unfold(root_pointer(Tree::Leaf(right, 3))); known(); }
+    have root_pointer(Tree::Leaf(left, 2)) == left by { unfold(root_pointer(Tree::Leaf(left, 2))); close(); }
+    have root_pointer(Tree::Leaf(right, 3)) == right by { unfold(root_pointer(Tree::Leaf(right, 3))); close(); }
     let { left: l, right: r } = unfold(root);
     unfold(l);
     step_until(function.exit);
     let l = fold(cache(left), { model: Tree::Leaf(left, 2) });
     let root = fold(cache(p), { model: Tree::Branch(p, Tree::Leaf(left, 2), Tree::Leaf(right, 3)), left: l, right: r });
-    solve();
+    close();
 }
 ```
 ```expect

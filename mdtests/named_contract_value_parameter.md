@@ -48,7 +48,7 @@ int32 apply(int32 (*f)(int32), int32 x, int32 k) {
 theorem add3_is_adds_three() {
     ensures Adds(&add3, { amount: 3 }) by {
         unfold(Adds(&add3, { amount: 3 }));
-        solve();
+        close();
     }
 }
 

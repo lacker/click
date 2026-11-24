@@ -34,7 +34,7 @@ uint64 mark(parse_buffer * const b, uint8* out) {
     step();
     step();
     step();
-    have separate(memory(out[0..2]), memory(b->content[0u64..b->length])) by { solve(); }
+    have separate(memory(out[0..2]), memory(b->content[0u64..b->length])) by { close(); }
 }
 ```
 

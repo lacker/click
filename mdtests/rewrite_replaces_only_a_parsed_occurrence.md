@@ -10,7 +10,7 @@ theorem left_prefix_occurs(x: int32, y: int32, w: int32, z: int32) {
     requires x + y == z;
     ensures x + y + w == z + w by {
         rewrite(x + y, z);
-        known();
+        close();
     }
 }
 

@@ -37,10 +37,10 @@ int32 peek(struct node* p) {
     step();
     loop {
         invariant i >= 0 and i <= 1;
-        initialize by solve();
+        initialize by close();
         maintain by { step(); }
     }
-    have p == p by known();
+    have p == p by close();
     match x.model {
         Cell::Missing => {
         },

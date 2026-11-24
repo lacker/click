@@ -27,7 +27,7 @@ resource identity(p: struct Node*) {
 void set_word(struct Node* q, struct Node* r, uint64 stamp) {
     owns q->tag;
     ensures q->tag == address(r) + stamp;
-} by { step_until(function.exit); solve(); }
+} by { step_until(function.exit); close(); }
 void put(struct Node *p, struct Node *q, int32 x, uint64 stamp) {
     owns p->next;
     requires p->next == q;
@@ -42,7 +42,7 @@ void put(struct Node *p, struct Node *q, int32 x, uint64 stamp) {
         step(); step(); step(); step();
         step(set_word);
         have child == q;
-        have child->tag == address(id) + stamp by { rewrite(id, r); solve(); }
+        have child->tag == address(id) + stamp by { rewrite(id, r); close(); }
         branch ensuring { fact child->tag == address(id) + stamp; } {
             true => {
                 step();
@@ -55,7 +55,7 @@ void put(struct Node *p, struct Node *q, int32 x, uint64 stamp) {
         }
         mark joined;
         have at(joined, child->tag) - stamp == address(id);
-        step_until(function.exit); solve();
+        step_until(function.exit); close();
     }, }
 }
 ```

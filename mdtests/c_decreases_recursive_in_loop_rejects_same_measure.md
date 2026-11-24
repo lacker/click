@@ -37,23 +37,23 @@ int32 stuck_loop(int32 n) {
         invariant i >= 0;
         invariant i <= 1;
         invariant result == 0;
-        initialize by solve();
+        initialize by close();
         maintain by {
             if n > 0 {
                 step();
                 step();
-                solve();
+                close();
                 step();
             } else {
                 step();
                 step();
-                solve();
+                close();
                 step();
             }
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

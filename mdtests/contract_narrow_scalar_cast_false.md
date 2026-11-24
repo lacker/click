@@ -2,7 +2,7 @@
 
 ```click
 theorem wrong() {
-    ensures 65521 as uint16 == 0 as uint16 by solve();
+    ensures 65521 as uint16 == 0 as uint16 by close();
 }
 ```
 

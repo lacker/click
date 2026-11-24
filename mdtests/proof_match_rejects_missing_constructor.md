@@ -27,8 +27,8 @@ int read(int* p) {
     ensures c.model == old(c.model);
 } by {
     match c.model {
-        Tri::Zero => { unfold(c); step_until(function.exit); fold(c); solve(); },
-        Tri::One(value) => { unfold(c); step_until(function.exit); fold(c); solve(); },
+        Tri::Zero => { unfold(c); step_until(function.exit); fold(c); close(); },
+        Tri::One(value) => { unfold(c); step_until(function.exit); fold(c); close(); },
     }
 }
 ```

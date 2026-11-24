@@ -12,7 +12,7 @@ theorem guarded_universal_reordered() {
         intro();
         have k >= 0;
         intro();
-        known();
+        close();
     }
 }
 ```

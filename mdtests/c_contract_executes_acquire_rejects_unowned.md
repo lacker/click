@@ -9,7 +9,7 @@ theorem lift(acquire: int32* (*)()) executes acquire() {
     ensures Owned(acquire) by {
         step(Nonnull);
         fold(Cell(result));
-        solve();
+        close();
     }
 }
 ```

@@ -1900,7 +1900,7 @@ mod tests {
             path.display().to_string(),
         ])
         .expect("program termination retains its checked path for CLI tracing");
-        fs::write(&path, "verifying \"program.c\"; int32 leaf() { ensures result == 7; } termination by { check_termination_component(\"leaf\", normal); known(); }").unwrap();
+        fs::write(&path, "verifying \"program.c\"; int32 leaf() { ensures result == 7; } termination by { check_termination_component(\"leaf\", normal); close(); }").unwrap();
         let error = entry_with([path.display().to_string()]).unwrap_err();
         assert!(
             error.contains("--trace-proof program.termination"),
@@ -1915,7 +1915,7 @@ mod tests {
             "oversized_{}",
             "n".repeat(click::surface::DEFAULT_DIAGNOSTIC_BYTE_LIMIT)
         );
-        let source = format!("theorem {name}(x: Integer) {{ ensures x == 0 by {{ known(); }} }}");
+        let source = format!("theorem {name}(x: Integer) {{ ensures x == 0 by {{ close(); }} }}");
         let (_root, path) = temporary_project("ordinary-byte-limit", "void f() {}", &source);
         let report = entry_with([path.display().to_string()]).expect_err("false theorem");
         assert!(report.len() <= click::surface::DEFAULT_DIAGNOSTIC_BYTE_LIMIT);
@@ -2033,7 +2033,7 @@ mod tests {
             verifying "program.c";
             theorem negative(n: int32) {
                 requires n < 0;
-                ensures n < 1 by { solve(); }
+                ensures n < 1 by { close(); }
             }
             extern int32 child(int32 x) {
                 requires 0 <= x;
@@ -2048,7 +2048,7 @@ mod tests {
                     apply(negative(r));
                 }
                 step();
-                solve();
+                close();
             }
         "#,
         );
@@ -2102,7 +2102,7 @@ mod tests {
 
     #[test]
     fn user_defined_tactic_trace_selects_its_own_checked_path() {
-        let source = "verifying \"program.c\";\ntactic keep(x: int32) {\n    requires x == 3;\n    ensures x == 3;\n} by {\n    have x == 3 by { known(); }\n}\ntactic broken(x: int32) { ensures x == 4; } by { have x == 4 by { known(); } }\n";
+        let source = "verifying \"program.c\";\ntactic keep(x: int32) {\n    requires x == 3;\n    ensures x == 3;\n} by {\n    have x == 3 by { close(); }\n}\ntactic broken(x: int32) { ensures x == 4; } by { have x == 4 by { close(); } }\n";
         let (root, path) = temporary_project("tactic-trace", "void unused() {}", source);
         let loaded = load_target_inputs(&path, None).unwrap();
         assert!(matches!(
@@ -2134,7 +2134,7 @@ mod tests {
         let ordinary = entry_with([path.display().to_string()]).unwrap_err();
         assert!(ordinary.contains("--trace-proof broken"), "{ordinary}");
         fs::write(root.join("library.click"),
-            "tactic imported(x: int32) { requires x == 3; ensures x == 3; } by { have x == 3 by { known(); } }")
+            "tactic imported(x: int32) { requires x == 3; ensures x == 3; } by { have x == 3 by { close(); } }")
             .unwrap();
         fs::write(&path, format!("import \"library.click\";\n{source}")).unwrap();
         let imported = entry_with([
@@ -2210,15 +2210,15 @@ tactic choose() { owns x: choice(); ensures 0 == 0; } by {
     #[test]
     fn declined_theorem_application_preserves_checked_trace() {
         let source = r#"verifying "program.c";
-theorem positive(x: int32) { requires x > 0; ensures x > 0 by { known(); } }
+theorem positive(x: int32) { requires x > 0; ensures x > 0 by { close(); } }
 void walk(int32 n) { requires n >= 0; ensures 0 == 0; } by {
     step(); step();
     loop {
         decreases n - i;
         invariant 0 <= i and i <= n;
-        initialize by solve();
+        initialize by close();
         maintain by {
-            have i >= 0 by { known(); }
+            have i >= 0 by { close(); }
             apply(positive(0));
             step();
         }
@@ -2226,7 +2226,7 @@ void walk(int32 n) { requires n >= 0; ensures 0 == 0; } by {
     step(); normalize();
 }
 void plain(int32 n) { requires n >= 0; ensures 0 == 0; } by {
-    have n >= 0 by { known(); }
+    have n >= 0 by { close(); }
     apply(positive(0));
     step_until(function.exit); normalize();
 }
@@ -2274,11 +2274,11 @@ void walk(int32 n) { requires n == 12; ensures 0 == 0; } by {
             source.push_str(&format!("        invariant i >= -{bound};\n"));
         }
         source.push_str(
-            r#"        initialize by solve();
+            r#"        initialize by close();
         maintain by { step(); }
     }
     have 0 == 1 by { normalize(); }
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }
 "#,
         );
@@ -2339,7 +2339,7 @@ int32 read_first(int32 m) {
             step_until(function.exit);
         } else {
             step_until(statement(3).entry);
-            have q[0] == 7 by solve();
+            have q[0] == 7 by close();
             step_until(function.exit);
         }
     }
@@ -2551,7 +2551,7 @@ int32 read_first(int32 m) {
         let target = |index: &ProofSourceIndex, line, column| {
             resolve_trace_target(index, 8, &TraceTo { line, column })
         };
-        let source = "theorem shared() {\n    ensures true by { solve(); solve(); }\n}\ntheorem alone() {\n    ensures true by {\n        solve();\n    }\n}\n";
+        let source = "theorem shared() {\n    ensures true by { close(); close(); }\n}\ntheorem alone() {\n    ensures true by {\n        close();\n    }\n}\n";
         let shared = index(source);
         assert_eq!(
             target(&shared, 14, None).unwrap(),
@@ -2571,14 +2571,14 @@ int32 read_first(int32 m) {
         assert!(target(&shared, 10, Some(31)).is_err());
 
         // A `cases` arm's block follows `=>`; its tactics are targets too.
-        let arm = "theorem arm() {\n    ensures true by {\n        cases {\n            true => {\n                solve();\n            }\n            false => {\n                solve();\n            }\n        }\n    }\n}\n";
+        let arm = "theorem arm() {\n    ensures true by {\n        cases {\n            true => {\n                close();\n            }\n            false => {\n                close();\n            }\n        }\n    }\n}\n";
         assert_eq!(
             target(&index(arm), 13, None).unwrap(),
             click::surface::SourcePosition::new(5, 17),
         );
 
         // A `have` with its proof on the same line is that line's target.
-        let nested = "theorem nested() {\n    ensures true by {\n        have true by { solve(); }\n    }\n}\n";
+        let nested = "theorem nested() {\n    ensures true by {\n        have true by { close(); }\n    }\n}\n";
         assert_eq!(
             target(&index(nested), 11, None).unwrap(),
             click::surface::SourcePosition::new(3, 9),
@@ -2916,7 +2916,7 @@ int32 read_first(int32 m) {
                      ensures result == 0;\n\
                  } by {\n\
                      step_until(function.exit);\n\
-                     solve();\n\
+                     close();\n\
                  }\n",
             );
             let LoadedTarget {
@@ -2981,7 +2981,7 @@ int32 read_first(int32 m) {
                  ensures result == x;\n\
              } by {\n\
                  step_until(function.exit);\n\
-                 solve();\n\
+                 close();\n\
              }\n",
         );
         let (result, events) = collect(|| entry_with([click_path.display().to_string()]));
@@ -3040,7 +3040,7 @@ int32 read_first(int32 m) {
             r#"verifying "program.c";
                int32 f(int32 x) { ensures result == x; } by {
                    step();
-                   solve();
+                   close();
                }
             "#,
         );
@@ -3088,7 +3088,7 @@ int32 read_first(int32 m) {
                  ensures result == x;\n\
              } by {\n\
                  step_until(function.exit);\n\
-                 solve();\n\
+                 close();\n\
              }\n",
         );
         let error = entry_with([

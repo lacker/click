@@ -25,7 +25,7 @@ int32 count_to_three_bad_invariant() {
         invariant i < 3;
     }
     step();
-    solve();
+    close();
 }
 ```
 

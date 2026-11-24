@@ -7,7 +7,7 @@ where it is stated.
 ```click
 theorem unguarded(a: uint64, s: uint64) {
     ensures (if 64u64 <= s { a << s } else { 0u64 }) == 0u64 by {
-        solve();
+        close();
     }
 }
 ```

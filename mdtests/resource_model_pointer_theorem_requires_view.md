@@ -24,7 +24,7 @@ theorem bounded_pointer_association(base: const uint8*, index: int32) {
 }
 theorem readable_byte_pointer(base: const uint8*) {
  requires viewable(base[0..4]);
- ensures viewable(base[0..4]) by known();
+ ensures viewable(base[0..4]) by close();
 }
 void keep(const uint8* p, int32 i) {
  requires 0 <= i;

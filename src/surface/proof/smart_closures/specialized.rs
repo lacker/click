@@ -474,7 +474,7 @@ mod tests {
         for source in [
             "theorem bad(a: Integer,b: Integer,f: Integer) { requires a <= b; ensures b*f <= a*f by { normalize() using { a <= b; }; } }",
             "theorem bad(x: Integer,k: Integer) { requires 0 <= k; ensures truncating_quotient(x + 3*k,3) == truncating_quotient(x,3)+k by { normalize() using { 0 <= k; }; } }",
-            "theorem bad(a: Integer,b: Integer) { ensures (a+b)*(a-b) == a*a+b*b by { solve(); } }",
+            "theorem bad(a: Integer,b: Integer) { ensures (a+b)*(a-b) == a*a+b*b by { close(); } }",
             "theorem bad(p: int32*, q: int32*, r: int32*) { requires p == q; requires q == r; ensures p == r by { close() using { p == q; }; } }",
         ] {
             assert!(verify_c_sources(source, &[]).is_err(), "{source}");
@@ -497,7 +497,7 @@ mod historical_read_tests {
                 ensures result == old(counter) + 1;
             } by {
                 step_until(function.exit);
-                solve();
+                close();
             }"#;
         let expanded = expand_c_claim_source(
             source,
@@ -524,14 +524,14 @@ mod historical_read_tests {
                 loop {
                     decreases box->len;
                     invariant 0 <= box->len;
-                    initialize by solve();
+                    initialize by close();
                     maintain by {
                         have 0 <= to_integer(box->len - 1);
                         step();
                     }
                 }
                 step();
-                solve();
+                close();
             }"#;
         let expanded = expand_c_claim_source(
             source,

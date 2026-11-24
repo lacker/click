@@ -30,7 +30,7 @@ void reset(struct counter *counter) {
     let { lifetime: after } = step(pthread_mutex_init, { state: state });
     step(pthread_mutex_destroy, { lifetime: before });
     step();
-    solve();
+    close();
 }
 ```
 

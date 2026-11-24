@@ -25,7 +25,7 @@ void update(struct box* box) {
 } by {
     step_until(function.exit);
     observe(at(function.entry, box->data)[0..2]);
-    known();
+    close();
 }
 void update_byte(struct byte_box* box) {
     owns *box;
@@ -34,7 +34,7 @@ void update_byte(struct byte_box* box) {
 } by {
     step_until(function.exit);
     observe(old(box->data)[0..2]);
-    known();
+    close();
 }
 int32 update_bounds(struct box* box, int32 n) {
     requires 1 < n;
@@ -47,10 +47,10 @@ int32 update_bounds(struct box* box, int32 n) {
     mark saved;
     step();
     step_until(function.exit);
-    have at(saved, count) == n by { known(); }
+    have at(saved, count) == n by { close(); }
     observe(at(saved, memory(box->data[0..count])));
-    have viewable(at(function.entry, memory(box->data[0..n]))) by { known(); }
-    known();
+    have viewable(at(function.entry, memory(box->data[0..n]))) by { close(); }
+    close();
 }
 ```
 

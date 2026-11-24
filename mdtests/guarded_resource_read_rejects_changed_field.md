@@ -34,13 +34,13 @@ int32 f(struct cell* root) {
     ensures child.number == old(child.number);
     ensures root->value == old(child.number);
 } by { unfold(child); step_until(statement(3).entry);
-    have separate(memory(selected->value), memory(root->base.left)) by { solve(); }
+    have separate(memory(selected->value), memory(root->base.left)) by { close(); }
     have contains(memory(selected->value), memory((&selected->value)[0..1])) by { normalize(); }
     have contains(memory(root->base.left), memory(root->base.left)) by { apply(click::separation::contains_refl(memory(root->base.left))); }
     have separate(memory((&selected->value)[0..1]), memory(root->base.left)) by {
         apply(click::separation::separate_restrict(memory(selected->value), memory(root->base.left), memory((&selected->value)[0..1]), memory(root->base.left)));
     }
-    step_until(function.exit); fold(child); solve(); }
+    step_until(function.exit); fold(child); close(); }
 ```
 
 ```expect

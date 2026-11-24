@@ -24,12 +24,12 @@ void copy_c(char* dst, const char* src) {
         step();
         unfold(bytes::equal(dst, 0u64, old(src), 0u64, 4u64));
         have forall (k: uint64) { true and k < 4u64 implies *(&dst[0u64 + k] as (uint8 *)) == old(*(&src[0u64 + k] as (uint8 *))) } by {
-            known();
+            close();
         }
         have forall (k: uint64) { true and k < 4u64 implies *&dst[0u64 + k] == old(*&src[0u64 + k]) } by {
-            known();
+            close();
         }
-        known();
+        close();
     }
 }
 ```

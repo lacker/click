@@ -66,7 +66,7 @@ void carve_overlapping(struct arena* arena, struct region* first, struct region*
     step();
     let b = fold(arena_prefix_region(arena, second), { start: 1, end: 3 });
     let a = fold(arena_prefix_region(arena, first), { start: 0, end: 2 });
-    solve();
+    close();
 }
 ```
 

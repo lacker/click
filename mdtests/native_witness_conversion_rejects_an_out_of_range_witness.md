@@ -9,7 +9,7 @@ theorem native_witness_conversion() {
         k == 256 and to_uint8(to_integer(k)) == to_uint8(to_integer(k))
     } by {
         witness(256);
-        solve();
+        close();
     }
 }
 ```

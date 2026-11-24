@@ -33,7 +33,7 @@ void bump(int32* p) {
     unfold(c);
     step_until(function.exit);
     let c = fold(cell(p), { rank: 0 });
-    solve();
+    close();
 }
 
 int32 caller(int32* p) {

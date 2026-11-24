@@ -1081,7 +1081,7 @@ execution can then mutate the flag. `step_until(function.exit)` runs it to the
 function exit, which establishes the `called` body's exact fact;
 `fold(called(flag))` checks it, consumes the contained owned resource, and adds
 the folded `called(flag)` resource. If a body fact needs derivation, state it
-first with `have ... by { ... }`; `fold` itself does not invoke `solve`. The
+first with `have ... by { ... }`; `fold` itself does not invoke `close()`. The
 implicit tail at the end of the `by { ... }` block closes the overall claim.
 
 `fold` also builds a composite resource from lower-level resources at a

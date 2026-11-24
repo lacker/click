@@ -42,7 +42,7 @@ uint32 count_nodes(struct node* node) {
 } by {
     if node == 0 {
         step_until(function.exit);
-        solve();
+        close();
     } else {
         let { next: child } = unfold(marked_list(node));
         step_until(statement(1).entry);
@@ -54,17 +54,17 @@ uint32 count_nodes(struct node* node) {
         have *((&node->word) as (int32 **)) == at(before_local, *((&node->word) as (int32 **))) by {
             preserve(memory(node->word), statement(1).region(0));
         }
-        have ((node->word & ~1) as (struct node *)) == child by { known(); }
-        have separate(marked_list(child), memory(node->word)) by { known(); }
+        have ((node->word & ~1) as (struct node *)) == child by { close(); }
+        have separate(marked_list(child), memory(node->word)) by { close(); }
         mark before_call;
         step();
-        have contains(marked_list(child), statement(1).region(1).footprint) by { known(); }
+        have contains(marked_list(child), statement(1).region(1).footprint) by { close(); }
         apply(separation::contains_refl(memory(node->word)));
         apply(separation::separate_restrict(marked_list(child), memory(node->word), statement(1).region(1).footprint, memory(node->word)));
         have *((&node->word) as (int32 **)) == at(before_call, *((&node->word) as (int32 **))) by {
             preserve(memory(node->word), statement(1).region(1));
         }
-        have ((node->word & ~1) as (struct node *)) == child by { known(); }
+        have ((node->word & ~1) as (struct node *)) == child by { close(); }
         mark before_assignment;
         step();
         have separate(statement(1).assignment(rest, 0).footprint, memory(node->word)) by {
@@ -73,7 +73,7 @@ uint32 count_nodes(struct node* node) {
         have *((&node->word) as (int32 **)) == at(before_assignment, *((&node->word) as (int32 **))) by {
             preserve(memory(node->word), statement(1).assignment(rest, 0));
         }
-        have ((node->word & ~1) as (struct node *)) == child by { known(); }
+        have ((node->word & ~1) as (struct node *)) == child by { close(); }
         fold(marked_list(node));
 
     }

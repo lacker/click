@@ -20,7 +20,7 @@ int32 forall_scope(int32 value) {
         step_until(function.exit);
         intro();
         intro();
-        solve();
+        close();
     }
 }
 ```

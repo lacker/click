@@ -18,7 +18,7 @@ contract void Target(int32* pool) {
 }
 theorem lift(callback: void (*)(int32*)) executes callback(int32* pool) {
     requires Raw(callback);
-    ensures Target(callback) by { step(Raw); solve(); }
+    ensures Target(callback) by { step(Raw); close(); }
 }
 ```
 

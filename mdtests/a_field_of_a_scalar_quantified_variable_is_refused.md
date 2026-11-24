@@ -11,7 +11,7 @@ void f(int32* p) {
     requires true;
     ensures true;
 } by {
-    have forall (k: int32) { k.n == 5 } by { solve(); }
+    have forall (k: int32) { k.n == 5 } by { close(); }
 }
 ```
 

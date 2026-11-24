@@ -24,7 +24,7 @@ const uint8* at_offset(const uint8* p, uint64 k) {
     views p[0..4];
     ensures result == p + k;
 } by {
-    have p + k == p + (k as int64) by { solve(); }
+    have p + k == p + (k as int64) by { close(); }
 }
 ```
 

@@ -46,7 +46,7 @@ struct object* object_retain(struct object* obj) {
         fold(object_ref(obj));
         step_until(function.exit);
     }
-    solve();
+    close();
 }
 
 int32 caller(struct object* obj) {

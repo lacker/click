@@ -29,7 +29,7 @@ uint8 first(const uint8* p, uint64 n, uint64 k) {
         }
     }
     step_until(function.exit);
-    solve();
+    close();
 }
 ```
 

@@ -47,20 +47,20 @@ int32 parent(int32 *a, int32 *b, int32 n, int32 i) {
         true => {
             have r != 0 implies exists (path: Path) {
                 pick(at(before_call, a[i]), path) == r
-            } by { known(); }
+            } by { close(); }
             have exists (path: Path) {
                 pick(at(before_call, a[i]), path) == r
-            } by { solve(); }
+            } by { close(); }
             let rest = obtain(exists (rest: Path) {
                 pick(at(before_call, a[i]), rest) == r
             });
             step_until(function.exit);
-            solve();
+            close();
         }
         false => {}
     }
     step();
-    solve();
+    close();
 }
 ```
 

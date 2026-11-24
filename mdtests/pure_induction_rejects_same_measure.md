@@ -6,7 +6,7 @@ theorem bad_same(n: int32) {
     ensures n == n by {
         let ih = induct(n);
         apply(ih(n));
-        solve();
+        close();
     }
 }
 ```

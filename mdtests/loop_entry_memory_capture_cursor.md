@@ -26,14 +26,14 @@ int32 cursor(const uint8* p, int32 n) {
    have to_integer(old(n) - n) <= 14 by close() using { 0 <= n; n <= old(n); old(n) <= 15; n > 0; };
    mark head;
    step_until(loop.back_edge);
-   have p == at(head, p) + 1 by solve();
+   have p == at(head, p) + 1 by close();
    have to_integer(old(n) - n) == to_integer((old(n) - at(head, n)) + 1) by close() using {
     at(head, n) > 0; at(head, n) <= old(n); old(n) <= 15;
    };
    have p == old(p) + (old(n) - n) by {
     rewrite(p, at(head, p) + 1);
     rewrite(to_integer(old(n) - n), to_integer((old(n) - at(head, n)) + 1));
-    have defined((old(n) - at(head, n)) + 1) by solve();
+    have defined((old(n) - at(head, n)) + 1) by close();
     apply(click::integer::uint8_pointer_translate_int32(at(head, p), old(p), 0, old(n) - at(head, n), 1, (old(n) - at(head, n)) + 1));
    }
    have 0 <= n by close() using { at(head, n) > 0; at(head, n) <= old(n); old(n) <= 15; };

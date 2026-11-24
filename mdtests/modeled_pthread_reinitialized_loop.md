@@ -41,7 +41,7 @@ int32 run(struct holder *holder, int32 n) {
         invariant not held(&holder->mu);
     }
     step();
-    solve();
+    close();
 }
 ```
 

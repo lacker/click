@@ -11,7 +11,7 @@ theorem rejected(value: int32, fallback: int32) {
         Maybe::None => fallback,
         Maybe::Some(first) => first,
         Maybe::Some(second) => second,
-    } == value by solve();
+    } == value by close();
 }
 ```
 

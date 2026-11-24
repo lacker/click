@@ -229,7 +229,7 @@ theorem countdown_is_zero(n: int32) {
             apply(ih(n - 1));
             unfold(countdown(n));
             rewrite(countdown(n - 1), 0);
-            known();
+            close();
         }
     }
 }
@@ -330,7 +330,7 @@ introduce proof-scope names. A proof-level `match` performs case analysis; after
 its immediate recursive fields also admit applications of the hypothesis.
 
 `unfold(function(args))` explicitly exposes one symbolic defining equation.
-A recursive call produced by that layer stays opaque. Neither `solve` nor
+A recursive call produced by that layer stays opaque. Neither `close()` nor
 repeated evaluation silently starts induction or unfolds to a depth limit.
 Pure theorem induction is also unrelated to a C function's optional
 termination evidence: it proves a proposition about specification values, not

@@ -28,7 +28,7 @@ void init(struct pool* pool, int32 capacity) {
 void f(struct pool* pool) {
     consumes *pool;
     produces control(pool);
-} by { step(); have defined(pool->capacity - 1) by solve(); }
+} by { step(); have defined(pool->capacity - 1) by close(); }
 ```
 
 ```expect

@@ -27,7 +27,7 @@ void f(int32* data, int32* occupied, int32 capacity, int32 index) {
     unfold(cells(data, occupied, capacity)[index]);
     fold(cells(data, occupied, capacity)[index]);
     fold(cells(data, occupied, capacity));
-    solve();
+    close();
 }
 ```
 

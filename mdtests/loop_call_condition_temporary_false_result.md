@@ -19,7 +19,7 @@ int32 walk(int32 n) { requires n >= 0; ensures result == 1; } by {
     loop {
         decreases n - i;
         invariant i == 0;
-        initialize by solve();
+        initialize by close();
         maintain by { step(); step(); step(); }
     }
 }

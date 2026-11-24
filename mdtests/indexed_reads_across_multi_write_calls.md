@@ -74,7 +74,7 @@ void keep_mask(int32 a[], int32 n) {
     ensures (a[0] & 1) == 1;
 } by {
     step();
-    have (a[0] & 1) == 1 by solve();
+    have (a[0] & 1) == 1 by close();
 }
 
 void keep_xor(int32 a[], int32 n) {
@@ -88,7 +88,7 @@ void keep_xor(int32 a[], int32 n) {
     ensures (a[0] ^ 1) == 3;
 } by {
     step();
-    have (a[0] ^ 1) == 3 by solve();
+    have (a[0] ^ 1) == 3 by close();
 }
 
 void keep_complement(int32 a[], int32 n) {
@@ -102,7 +102,7 @@ void keep_complement(int32 a[], int32 n) {
     ensures (~a[0]) == 3;
 } by {
     step();
-    have (~a[0]) == 3 by solve();
+    have (~a[0]) == 3 by close();
 }
 
 void keep_right_shift(int32 a[], int32 n) {
@@ -116,7 +116,7 @@ void keep_right_shift(int32 a[], int32 n) {
     ensures (a[0] >> 1) == 3;
 } by {
     step();
-    have (a[0] >> 1) == 3 by solve();
+    have (a[0] >> 1) == 3 by close();
 }
 
 void keep_narrowed_read(int32 a[], int32 n) {
@@ -130,7 +130,7 @@ void keep_narrowed_read(int32 a[], int32 n) {
     ensures (a[0] as uint8) == 3;
 } by {
     step();
-    have (a[0] as uint8) == 3 by solve();
+    have (a[0] as uint8) == 3 by close();
 }
 
 void keep_shift_count(int32 a[], int32 n) {
@@ -144,7 +144,7 @@ void keep_shift_count(int32 a[], int32 n) {
     ensures (1u32 << (a[0] & 1)) == 2u32;
 } by {
     step();
-    have (1u32 << (a[0] & 1)) == 2u32 by solve();
+    have (1u32 << (a[0] & 1)) == 2u32 by close();
 }
 
 void keep_quotient(int32 a[], int32 n) {
@@ -158,7 +158,7 @@ void keep_quotient(int32 a[], int32 n) {
     ensures a[0] / 2 == 1;
 } by {
     step();
-    have a[0] / 2 == 1 by solve();
+    have a[0] / 2 == 1 by close();
 }
 
 void keep_remainder(int32 a[], int32 n) {
@@ -172,7 +172,7 @@ void keep_remainder(int32 a[], int32 n) {
     ensures a[0] % 2 == 1;
 } by {
     step();
-    have a[0] % 2 == 1 by solve();
+    have a[0] % 2 == 1 by close();
 }
 
 void keep_conditional_read(int32 a[], int32 n) {
@@ -186,7 +186,7 @@ void keep_conditional_read(int32 a[], int32 n) {
     ensures (if n == 1 { a[0] } else { 0 }) == 3;
 } by {
     step();
-    have (if n == 1 { a[0] } else { 0 }) == 3 by solve();
+    have (if n == 1 { a[0] } else { 0 }) == 3 by close();
 }
 
 void keep_upper_bound(int32 a[], int32 n) {
@@ -200,7 +200,7 @@ void keep_upper_bound(int32 a[], int32 n) {
     ensures a[0] <= 7;
 } by {
     step();
-    have a[0] <= 7 by solve();
+    have a[0] <= 7 by close();
 }
 ```
 

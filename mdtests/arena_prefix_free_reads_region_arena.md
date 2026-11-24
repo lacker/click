@@ -78,7 +78,7 @@ void arena_release(struct region* region) {
     let { start: s, end: e } = unfold(freed);
     have separate(memory(*region), memory(region->arena->live_regions));
     have region->arena->data == old(region->arena->data);
-    have defined(region->arena) by { known(); }
+    have defined(region->arena) by { close(); }
     mark before_store;
     step();
     have separate(statement(0).footprint, memory(region->arena)) by {
@@ -117,14 +117,14 @@ void arena_release(struct region* region) {
     }
     have region->arena == at(before_store, region->arena) by {
         rewrite(region->arena, at(after_declare, region->arena));
-        known();
+        close();
     }
     mark after_assignment;
     have arena == at(after_assignment, region->arena);
     have separate(memory(at(after_assignment, &arena->live_regions)[0]), memory((&arena->data)[0..1]));
     have separate(memory(at(after_assignment, &arena->live_regions)[0]), memory(at(after_assignment, &region->arena->data)[0])) by {
         rewrite(at(after_assignment, region->arena), arena);
-        known();
+        close();
     }
     have separate(memory(arena->live_regions), memory(region->arena));
     step();
@@ -147,27 +147,27 @@ void arena_release(struct region* region) {
     }
     have region->arena->data == load<int32*>(at(after_assignment, &region->arena->data)) by {
         rewrite(region->arena, at(after_assignment, region->arena));
-        known();
+        close();
     }
     have region->arena->data == at(after_assignment, region->arena->data) by {
         rewrite(region->arena->data, load<int32*>(at(after_assignment, &region->arena->data)));
-        known();
+        close();
     }
     have region->arena == at(before_store, region->arena) by {
         rewrite(region->arena, at(after_assignment, region->arena));
-        known();
+        close();
     }
     step_until(function.exit);
-    have defined(region->arena) by { solve(); }
+    have defined(region->arena) by { close(); }
     have region->start == s by {
-        known();
+        close();
     }
     have region->end == e by {
-        known();
+        close();
     }
     have region->arena->data == old(region->arena->data);
     let after = fold(arena_live_count(region->arena), { live: n - 1 });
-    solve();
+    close();
 }
 ```
 

@@ -133,7 +133,7 @@ void write(struct job *job, int32 *dest) {
             click.push_str(&format!(
                 r#"
     mark before_{index};
-    step() by {{ known(); }}
+    step() by {{ close(); }}
     mark after_{index};
     have job->output == at(before_{index}, job->output) by {{
         have separate(statement({index}).footprint, memory(job->output)) by {{
@@ -148,14 +148,14 @@ void write(struct job *job, int32 *dest) {
                     r#"
     have job->output == at(entry, job->output) by {{
         rewrite(job->output, at(before_{index}, job->output));
-        known();
+        close();
     }}
 "#
                 ));
             }
         }
         c.push_str("}\n");
-        click.push_str("step();\nknown(); known();\nknown(); known(); known();\n}\n");
+        click.push_str("step();\nclose(); close();\nclose(); close(); close();\n}\n");
         let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
             crate::surface::without_implicit_solve(|| verify_c_sources(&click, &[("probe.c", &c)]))
         });
@@ -186,7 +186,7 @@ fn prepared_call_obligations_execute_once_as_contract_and_context_grow() {
             let ambient = (1..=size)
                 .map(|n| format!("requires unrelated != -{n};\n"))
                 .collect::<String>();
-            let body = "have positive(a) == 1 by { unfold(positive(a)); normalize() using { a > 0; }; } known();";
+            let body = "have positive(a) == 1 by { unfold(positive(a)); normalize() using { a > 0; }; } close();";
             let step = if mode == "bare" {
                 "step();".to_string()
             } else if mode == "by" {
@@ -209,8 +209,8 @@ int32 caller(int32 a, int32 unrelated) {{
     ensures result == a;
 }} by {{
     {step}
-    have positive(a) == 1 by known();
-    step(); solve();
+    have positive(a) == 1 by close();
+    step(); close();
 }}
 "#
             );
@@ -287,12 +287,12 @@ fn known_obligation_scaling(tactic: &str, related: bool) {
             .map(|i| format!("requires {variable} < {};", 100 + i))
             .collect::<String>();
         let (body, produces, operation) = if tactic == "step" {
-            ("needs(x);", "", "step() by { known(); }")
+            ("needs(x);", "", "step() by { close(); }")
         } else {
             (
                 "",
                 "produces positive(x);",
-                "fold(positive(x)) by { known(); }",
+                "fold(positive(x)) by { close(); }",
             )
         };
         let c = format!("void needs(int32 x) {{}} void check(int32 x, int32 y) {{{body}}}");
@@ -304,7 +304,7 @@ void needs(int32 x) {{ requires x > 0; ensures 1 == 1; }}
 void check(int32 x, int32 y) {{ requires x > 0; {ambient} {produces} ensures 1 == 1; }} by {{
     {operation}
     step_until(function.exit);
-    solve();
+    close();
 }}
 "#
         );
@@ -380,7 +380,7 @@ void pack(int32* p) {{
 #[cfg(not(feature = "fast-gate"))]
 #[ignore = "nightly: three fold preparation forms"]
 fn prepared_named_fold_constructs_once() {
-    for suffix in [";", " by { known(); }", " { requires x > 0 by known(); }"] {
+    for suffix in [";", " by { close(); }", " { requires x > 0 by close(); }"] {
         let source = format!(
             r#"
 verifying "fold.c";
@@ -427,10 +427,10 @@ void make(int32 x) {{ requires x > 0; produces p: positive_value(x); }} by {{
     {steps}
     let p = fold(positive_value(x), {{ value: x }}) by {{
         have positive(x) == 1 by {{ unfold(positive(x)); normalize() using {{ x > 0; }}; }}
-        known();
+        close();
     }}
-    have positive(x) == 1 by known();
-    step(); solve();
+    have positive(x) == 1 by close();
+    step(); close();
 }}
 "#
         );
@@ -470,7 +470,7 @@ resource positive(x: int32) {{ field value: int32; fact value > 0; }}
 void make(int32 x) {{ requires x > 0; produces p: positive(x); }} by {{
     step_until(function.exit);
     {facts}
-    let p = fold(positive(x), {{ value: x }}) by {{ known(); }}
+    let p = fold(positive(x), {{ value: x }}) by {{ close(); }}
 }}
 "#
         );
@@ -541,10 +541,10 @@ void make(int32* p, int32 x) {{
 }} by {{
     {before}
     {history}
-    let c = fold(control(p, x), {{ value: x }}) by {{ known(); }}
+    let c = fold(control(p, x), {{ value: x }}) by {{ close(); }}
     unfold(c);
     {after}
-    solve();
+    close();
 }}
 "#
                 );
@@ -568,9 +568,9 @@ void make(struct pool* pool) {{
     unfold(control(pool));
     {before}
     {history}
-    fold(control(pool)) by {{ solve(); }}
+    fold(control(pool)) by {{ close(); }}
     {after}
-    solve();
+    close();
 }}
 "#
                     )
@@ -599,8 +599,8 @@ void make(struct pool* pool) {{
                     for source in [
                         source.clone(),
                         source
-                            .replace(" by { known(); }", ";")
-                            .replace(" by { solve(); }", ";"),
+                            .replace(" by { close(); }", ";")
+                            .replace(" by { close(); }", ";"),
                     ] {
                         let expanded =
                             expand_function_proof_source(&source, &sources, "make").unwrap();
@@ -651,15 +651,15 @@ resource positive(x: int32) {{ fact x > 0; }}
 void make(int32 x) {{ requires x > 0; produces positive(x); }} by {{
     step_until(function.exit);
     {history}
-    fold(positive(x)) by {{ known(); }}
-    solve();
+    fold(positive(x)) by {{ close(); }}
+    close();
 }}
 "#
             );
             let source = if opaque {
                 source.replace("resource positive", "predicate positive_value(x: int32) { x > 0 }\nresource positive")
                 .replace("fact x > 0;", "fact positive_value(x);")
-                .replace("by { known(); }", "by { have positive_value(x) by { unfold(positive_value(x)); known(); } known(); }")
+                .replace("by { close(); }", "by { have positive_value(x) by { unfold(positive_value(x)); close(); } close(); }")
             } else {
                 source
             };
@@ -714,8 +714,8 @@ int32 caller(int32 a, int32* p) {{
     ensures result == a;
 }} by {{
     {history}
-    step() by {{ known(); }}
-    step(); solve();
+    step() by {{ close(); }}
+    step(); close();
 }}
 "#
             );
@@ -777,14 +777,14 @@ fn prepared_guarded_statement_does_not_retry_execution() {
                 (
                     "int32 values[4]; int32 f(int32 x) { int32 r; r = values[x]; return r; }",
                     "owns values[0..4]; requires x == 1 or x == 2;",
-                    "step(); step() { requires x >= 0 and x < 4 by { cases { x == 1 => { solve(); } x == 2 => { solve(); } } } } step(); step(); solve();",
+                    "step(); step() { requires x >= 0 and x < 4 by { cases { x == 1 => { close(); } x == 2 => { close(); } } } } step(); step(); close();",
                     "verification statement: assert",
                 )
             } else {
                 (
                     "int32 f(int32 x) { return x + 1; }",
                     "requires x == 5 or x == 7;",
-                    "step() by { cases { x == 5 => { solve(); } x == 7 => { solve(); } } } solve();",
+                    "step() by { cases { x == 5 => { close(); } x == 7 => { close(); } } } close();",
                     "verification statement: return",
                 )
             };
@@ -845,7 +845,7 @@ void make(struct holder* h) {{
     step();
     let z = fold(cells(old(h->data)), {{next: 0}});
     step_until(function.exit);
-    solve();
+    close();
 }}
 "#
         );
@@ -881,7 +881,7 @@ void make(int32* p, int32 n) {
     step();
     let r = fold(cell(p), { value: n + 1 });
     step_until(function.exit);
-    solve();
+    close();
 }
 "#;
     let sources = [("fold.c", "void make(int32* p, int32 n) { *p = n + 1; }")];
@@ -994,7 +994,7 @@ fn check_word_store_source_publication(
         let equation =
             format!("at(statement({depth}).exit, {reads}) == at(statement({depth}).entry, x)");
         let click = format!(
-            "verifying \"store.c\";\nvoid set(uint32* p, {index_parameter}uint32 x) {{ {contract} }} by {{\n{steps}    have {equation} by {{ known(); }}\n}}"
+            "verifying \"store.c\";\nvoid set(uint32* p, {index_parameter}uint32 x) {{ {contract} }} by {{\n{steps}    have {equation} by {{ close(); }}\n}}"
         );
         let sources = [("store.c", source.as_str())];
         let (result, events) =
@@ -1029,7 +1029,14 @@ fn check_word_store_source_publication(
                 &equation,
                 &format!("at(statement({depth}).exit, {reads}) == x"),
             );
-            assert!(verify_c_sources(&wrong, &sources).is_err());
+            let error = crate::surface::without_proof_search(|| {
+                verify_c_sources(&wrong, &sources).map_err(|error| error.report())
+            })
+            .expect_err("the stored value is the old value of x");
+            assert!(
+                error.contains("requires the current goal as an available semantic fact"),
+                "{error}"
+            );
         }
     }
     assert!(

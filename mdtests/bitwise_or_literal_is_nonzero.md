@@ -3,7 +3,7 @@
 ```click quick-solve
 theorem set_bit32(d: uint32) {
     ensures (d | 1u32) != 0u32 by {
-        solve();
+        close();
     }
 }
 ```

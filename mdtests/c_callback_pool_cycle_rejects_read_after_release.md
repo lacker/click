@@ -51,11 +51,11 @@ int32 cycle(int32* (*acquire)(int32*), void (*release)(int32*, int32*), int32* p
         step();
         step();
         step(Release);
-        step_until(function.exit); solve();
+        step_until(function.exit); close();
     } else {
         unfold(Acquisition(pool, program::cell));
         unfold(Unavailable(pool, program::cell));
-        step_until(function.exit); solve();
+        step_until(function.exit); close();
     }
 }
 ```

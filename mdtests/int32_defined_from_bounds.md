@@ -78,7 +78,7 @@ int32 sum_by_solve(int32 a, int32 b) {
     ensures to_integer(result) == to_integer(a + b);
 } by {
     have defined(a + b) by {
-        solve();
+        close();
     }
 }
 
@@ -89,7 +89,7 @@ int32 difference_by_solve(int32 a, int32 b) {
     ensures to_integer(result) == to_integer(a - b);
 } by {
     have defined(a - b) by {
-        solve();
+        close();
     }
 }
 

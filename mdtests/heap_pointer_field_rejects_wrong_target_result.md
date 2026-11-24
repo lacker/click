@@ -40,7 +40,7 @@ int32 run() {
         } else {
             step(); step();
             step(put);
-            have defined(h->target) by { known(); }
+            have defined(h->target) by { close(); }
             mark stored;
             step();
             have defined(h->target) by {

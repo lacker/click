@@ -8,14 +8,14 @@ std::span<std::byte> probe(const std::span<int>& span) {
     ensures std_span_data(span) == old(std_span_data(span));
     ensures std_span_size(span) == old(std_span_size(span));
 } by {
-    have separate(memory(((&result) as (uint8 *))[0..16]), memory(std_span_data(span))) by { known(); }
-    have separate(memory(((&result) as (uint8 *))[0..16]), memory(std_span_size(span))) by { known(); }
+    have separate(memory(((&result) as (uint8 *))[0..16]), memory(std_span_data(span))) by { close(); }
+    have separate(memory(((&result) as (uint8 *))[0..16]), memory(std_span_size(span))) by { close(); }
     step() {
         requires separate(
             memory(((&result) as (uint8 *))[0..16]),
             memory(std_span_data(span)) * memory(std_span_size(span))
-        ) by { solve(); }
+        ) by { close(); }
     }
     step_until(function.exit);
-    solve();
+    close();
 }

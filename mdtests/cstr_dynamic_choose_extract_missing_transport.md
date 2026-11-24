@@ -32,12 +32,12 @@ uint64 read_terminator(uint8 bytes[]) {
             }));
             witness(found_len);
             all {
-                found_len < 18446744073709551615u64 implies to_integer(found_len + 1u64) <= 9223372036854775807u64 => { solve(); }
-                found_len < 18446744073709551615u64 => { solve(); }
-                viewable(bytes[0..found_len + 1u64]) => { solve(); }
-                forall (k: uint64) { k < found_len implies bytes[k] != 0u8 } => { solve(); }
-                bytes[found_len] == 0u8 => { solve(); }
-                forall (k: uint64) { to_integer(k) < to_integer(found_len + 1u64) implies defined(bytes[k]) } => { solve(); }
+                found_len < 18446744073709551615u64 implies to_integer(found_len + 1u64) <= 9223372036854775807u64 => { close(); }
+                found_len < 18446744073709551615u64 => { close(); }
+                viewable(bytes[0..found_len + 1u64]) => { close(); }
+                forall (k: uint64) { k < found_len implies bytes[k] != 0u8 } => { close(); }
+                bytes[found_len] == 0u8 => { close(); }
+                forall (k: uint64) { to_integer(k) < to_integer(found_len + 1u64) implies defined(bytes[k]) } => { close(); }
             }
         }
     }

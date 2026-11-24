@@ -28,7 +28,7 @@ int32 wait_while_nonzero(int32 flag[]) diverges {
         invariant flag[0] == old(flag[0]);
     }
     step();
-    solve();
+    close();
 }
 
 int32 call_wait(int32 flag[]) {

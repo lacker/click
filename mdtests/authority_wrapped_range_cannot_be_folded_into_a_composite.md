@@ -33,7 +33,7 @@ int32 wrapped_fold(int32* p, int32 n) {
 } by {
     step_until(function.exit);
     fold(slice_of(p, n));
-    solve();
+    close();
 }
 ```
 

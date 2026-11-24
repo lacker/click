@@ -38,7 +38,7 @@ void spin(struct cell* p, int32 n) {
         invariant i >= 0;
         invariant i <= n;
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             step();
         }

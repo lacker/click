@@ -17,7 +17,7 @@ fn integer_parameter_preserves_machine_literal_and_cast_behavior() {
             let source = format!(
                 "theorem compatibility(x: {interface_type}{extra}) {{
                     requires x == {expression};
-                    ensures x == {expression} by {{ known(); }}
+                    ensures x == {expression} by {{ close(); }}
                 }}"
             );
             verify_click_theorems(&source)
@@ -41,7 +41,7 @@ fn integer_constant_aliases_stay_shared_before_a_tactic_starts() {
             ));
         }
         source.push_str(&format!(
-            "requires a{depth} == a{depth}; ensures a{depth} == a{depth} by {{ known(); }} }}"
+            "requires a{depth} == a{depth}; ensures a{depth} == a{depth} by {{ close(); }} }}"
         ));
         let limits = crate::instrumentation::TacticWorkLimits {
             simple: 1000,
@@ -57,7 +57,7 @@ fn integer_constant_aliases_stay_shared_before_a_tactic_starts() {
 #[cfg_attr(feature = "fast-gate", ignore = "covered by surface_syntax_batch_00")]
 fn integer_solve_expansion_rechecks_without_smart_search() {
     for (parameters, requires, claim, proof) in [
-        ("x: Integer", "", "2 * x + 1 > x + x", "solve();"),
+        ("x: Integer", "", "2 * x + 1 > x + x", "close();"),
         (
             "x: Integer, y: Integer",
             "requires x <= y; requires y <= x;",
@@ -73,7 +73,7 @@ fn integer_solve_expansion_rechecks_without_smart_search() {
         if parameters.contains("y: Integer") {
             assert!(expanded.contains("le_antisymmetric"), "{expanded}");
         } else {
-            assert!(expanded.contains("known();"), "{expanded}");
+            assert!(expanded.contains("close();"), "{expanded}");
             assert!(!expanded.contains("normalize("), "{expanded}");
         }
         assert!(!expanded.contains("solve"), "{expanded}");
@@ -100,7 +100,7 @@ fn integer_alias_certificates_preserve_types_and_linear_source_on_expansion() {
         ));
         let verified = verify_click_theorems(&source).unwrap();
         let expanded = verified[0].expanded_proof_source().unwrap();
-        assert!(expanded.contains("known();"), "{expanded}");
+        assert!(expanded.contains("close();"), "{expanded}");
         assert!(
             expanded.len() < 400 * (depth + 1),
             "expansion must retain aliases"
@@ -284,7 +284,7 @@ fn false_library_list_equality_has_a_bounded_diagnostic() {
         r#"
         theorem false_order() {
             ensures List<int32>::Cons(1, List<int32>::Nil)
-                == List<int32>::Cons(2, List<int32>::Nil) by { solve(); }
+                == List<int32>::Cons(2, List<int32>::Nil) by { close(); }
         }
     "#,
     )
@@ -708,7 +708,7 @@ fn parser_preserves_mixed_grouped_proposition_and_contract_expression_syntax() {
     let source = r#"
         theorem mixed_parentheses(x: int32, y: int32) {
             requires (x < y) and ((x + 1) == y);
-            ensures x == x by { known(); }
+            ensures x == x by { close(); }
         }
     "#;
     parser::parse_file_items(source)
@@ -1028,7 +1028,7 @@ fn parses_c_function_pointer_type_in_pure_theorem_parameter() {
             theorem callback_identity(
                 callback: int32 (*)(int32, struct item*)
             ) {
-                ensures callback == callback by solve();
+                ensures callback == callback by close();
             }
         "#;
 
@@ -1063,7 +1063,7 @@ fn parses_and_prints_pure_induction_tactics() {
             ensures n == n by {
                 let ih = induct(n);
                 apply(ih(n - 1));
-                solve();
+                close();
             }
         }
     "#;
@@ -1100,7 +1100,7 @@ fn parses_and_prints_pure_induction_tactics() {
         &reparsed[1],
         ProofTactic::ApplyInduction { hypothesis, .. } if hypothesis == "ih"
     ));
-    assert!(matches!(&reparsed[2], ProofTactic::Known));
+    assert!(matches!(&reparsed[2], ProofTactic::Close));
 
     let source = r#"
         spec enum Nodes { End, Next(Nodes) }
@@ -1162,11 +1162,11 @@ fn parses_and_prints_structural_induction_arms() {
                 let ih = induct(xs);
                 match xs {
                     TestList::Nil => {
-                        known();
+                        close();
                     }
                     TestList::Cons(head, tail) => {
                         apply(ih(tail));
-                        known();
+                        close();
                     }
                 }
             }
@@ -1341,7 +1341,7 @@ fn float_reflexive_smart_expansion_replays_as_known() {
     let source = r#"
         theorem finite_float_reflexive(value: float) {
             requires isfinite(value);
-            ensures value == value by { solve(); }
+            ensures value == value by { close(); }
         }
         theorem finite_double_reflexive(value: double) {
             requires isfinite(value);
@@ -1351,13 +1351,13 @@ fn float_reflexive_smart_expansion_replays_as_known() {
     let verified = verify_click_theorems(source).expect("finite float reflexivity should verify");
     let mut rechecked = source.to_owned();
     for (theorem, original) in verified.iter().zip([
-        "by { solve(); }",
+        "by { close(); }",
         "by { close() using { isfinite(value); }; }",
     ]) {
         let expanded = theorem
             .expanded_proof_source()
             .expect("float reflexivity should expand");
-        assert!(expanded.contains("known()"), "{expanded}");
+        assert!(expanded.contains("close()"), "{expanded}");
         for forbidden in ["normalize(", "solve("] {
             assert!(!expanded.contains(forbidden), "{expanded}");
         }
@@ -1370,10 +1370,10 @@ fn float_reflexive_smart_expansion_replays_as_known() {
     assert_eq!(planning, 0, "ordinary float recheck must not plan");
 
     for source in [
-        "theorem missing(x: float) { ensures x == x by known(); }",
+        "theorem missing(x: float) { ensures x == x by close(); }",
         "theorem omitted(x: double) { requires isfinite(x); ensures x == x by { close() using {}; } }",
-        "theorem other(x: float, y: float) { requires isfinite(y); ensures x == x by known(); }",
-        "theorem wrong(x: double) { requires isfinite(x); ensures x < x by known(); }",
+        "theorem other(x: float, y: float) { requires isfinite(y); ensures x == x by close(); }",
+        "theorem wrong(x: double) { requires isfinite(x); ensures x < x by close(); }",
     ] {
         crate::surface::parse(source).expect("refusal control should parse");
         crate::surface::without_implicit_solve(|| verify_click_theorems(source))
@@ -1610,7 +1610,7 @@ fn pure_bare_apply_builds_a_checked_proof_object_certificate() {
     let source = r#"
         theorem equality_symmetric(first: int32, second: int32) {
             requires first == second;
-            ensures second == first by solve();
+            ensures second == first by close();
         }
 
         theorem use_equality_symmetric(first: int32, second: int32) {
@@ -1623,7 +1623,7 @@ fn pure_bare_apply_builds_a_checked_proof_object_certificate() {
         theorem use_equality_from_conjunction(first: int32, second: int32) {
             requires (first == second) and (second == second);
             ensures second == first by {
-                have first == second by known();
+                have first == second by close();
                 apply(equality_symmetric(first, second));
             }
         }
@@ -1660,7 +1660,7 @@ fn pure_solve_exposes_explicit_arithmetic_steps() {
     let source = r#"
         theorem positive_is_nonnegative(x: int32) {
             requires 0 < x;
-            ensures 0 <= x by solve();
+            ensures 0 <= x by close();
         }
     "#;
 
@@ -1681,7 +1681,7 @@ fn pure_solve_after_unfold_exposes_an_explicit_certificate() {
             requires equality_chain(x, y, z);
             ensures x == z by {
                 unfold(equality_chain(x, y, z));
-                solve();
+                close();
             }
         }
     "#;
@@ -1707,9 +1707,9 @@ fn branching_pure_solve_exposes_explicit_branch_certificates() {
         theorem equality_is_decidable(x: int32) {
             ensures x == 0 or not (x == 0) by {
                 if x == 0 {
-                    solve();
+                    close();
                 } else {
-                    solve();
+                    close();
                 }
             }
         }
@@ -1733,35 +1733,35 @@ fn verifies_explicit_structural_logic_tactics() {
         theorem conjunction_rule(x: int32) {
             requires x == x;
             ensures x == x and x == x by {
-                known();
+                close();
             }
         }
 
         theorem left_rule(x: int32) {
             requires x == x;
             ensures x == x or x != x by {
-                known();
+                close();
             }
         }
 
         theorem right_rule(x: int32) {
             requires x == x;
             ensures x != x or x == x by {
-                known();
+                close();
             }
         }
 
         theorem left_condition_polarity_rule(x: int32, y: int32) {
             requires not (x < y);
             ensures x >= y or x == y by {
-                known();
+                close();
             }
         }
 
         theorem right_condition_polarity_rule(x: int32, y: int32) {
             requires not (x < y);
             ensures x == y or x >= y by {
-                known();
+                close();
             }
         }
 
@@ -1771,7 +1771,7 @@ fn verifies_explicit_structural_logic_tactics() {
                 if x != x and x == x {
                     contradiction(x == x);
                 } else {
-                    known();
+                    close();
                 }
             }
         }
@@ -1779,14 +1779,14 @@ fn verifies_explicit_structural_logic_tactics() {
         theorem intro_implication_rule(x: int32) {
             ensures x == x implies x == x by {
                 intro();
-                known();
+                close();
             }
         }
 
         theorem intro_forall_rule() {
             ensures forall (k: int32) { k == k } by {
                 intro();
-                known();
+                close();
             }
         }
 
@@ -2192,7 +2192,7 @@ fn proof_source_printing_preserves_long_sum_association_without_nested_prefixes(
             .collect::<Vec<_>>()
             .join(" + ");
         let source = format!(
-            "theorem sum(a: Integer) {{ ensures a == a by {{ have {sum} == {size} * a by {{ close() using {{}}; }} known(); }} }}"
+            "theorem sum(a: Integer) {{ ensures a == a by {{ have {sum} == {size} * a by {{ close() using {{}}; }} close(); }} }}"
         );
         let file = parse(&source).unwrap();
         let proof = file.theorem_definitions()[0].ensures()[0].proof();
@@ -2212,7 +2212,7 @@ fn proof_source_printing_preserves_long_sum_association_without_nested_prefixes(
     }
     // C addition may overflow at an intermediate result. In particular the
     // right-associated operand must not be folded into the left spine.
-    let source = "int32 sum(int32 a, int32 b, int32 c) { ensures result == a; } by { have to_integer(a + (b + c)) == to_integer((a + b) + c) by { known(); } }";
+    let source = "int32 sum(int32 a, int32 b, int32 c) { ensures result == a; } by { have to_integer(a + (b + c)) == to_integer((a + b) + c) by { close(); } }";
     let file = parse(source).unwrap();
     let proof = file.function_blocks()[0].grouped_proof().unwrap();
     let SourceProof::Script(tactics) = proof else {
@@ -2315,7 +2315,7 @@ theorem reflexive_choice() {
 theorem reflexive_choice() {
     ensures 1 == 1 or 2 == 3 by {
         have 1 == 1 by { normalize(); }
-        known();
+        close();
     }
 }
 "#;
@@ -2325,7 +2325,7 @@ theorem reflexive_choice() {
 theorem reflexive_choice() {
     ensures 2 == 3 or 1 == 1 by {
         have 1 == 1 by { normalize(); }
-        known();
+        close();
     }
 }
 "#;
@@ -2347,11 +2347,11 @@ theorem cited_choice(x: int32) {
 fn smart_context_free_disjunction_retains_known_leaf() {
     let source = r#"
 theorem choose_left() {
-    ensures 1 == 1 or 2 == 3 by { solve(); }
+    ensures 1 == 1 or 2 == 3 by { close(); }
 }
 
 theorem choose_right() {
-    ensures 2 == 3 or 1 == 1 by { solve(); }
+    ensures 2 == 3 or 1 == 1 by { close(); }
 }
 "#;
     let verified =
@@ -2384,7 +2384,7 @@ theorem reflexive_implication(x: int32) {
 theorem reflexive_implication(x: int32) {
     ensures x == 0 implies x == 0 by {
         intro();
-        known();
+        close();
     }
 }
 "#;
@@ -2406,23 +2406,23 @@ theorem cited_implication(x: int32) {
 fn smart_context_free_implication_retains_explicit_introduction() {
     let source = r#"
 theorem reflexive_implication(x: int32) {
-    ensures x == 0 implies x == 0 by { solve(); }
+    ensures x == 0 implies x == 0 by { close(); }
 }
 
 theorem true_consequent(x: int32) {
-    ensures x == 0 implies 1 == 1 by { solve(); }
+    ensures x == 0 implies 1 == 1 by { close(); }
 }
 
 theorem nested_choice(x: int32) {
-    ensures x == 0 implies (x == 0 or 1 == 2) by { solve(); }
+    ensures x == 0 implies (x == 0 or 1 == 2) by { close(); }
 }
 
 theorem conjunctive_guard(x: int32, y: int32) {
-    ensures (x == 0 and y == 1) implies x == 0 by { solve(); }
+    ensures (x == 0 and y == 1) implies x == 0 by { close(); }
 }
 
 theorem false_guard(x: int32) {
-    ensures 1 == 2 implies x == 0 by { solve(); }
+    ensures 1 == 2 implies x == 0 by { close(); }
 }
 "#;
     let verified =
@@ -2820,7 +2820,7 @@ fn transport_using_retains_declared_resource_argument_types() {
                 ) using {
                     contains(wrapper(owner), memory(owner[0..1]));
                 }
-                known();
+                close();
             }
         }
     "#;
@@ -3005,7 +3005,7 @@ fn parses_chained_struct_fields_with_imported_pointee_types() {
         int32 read_nested(struct node* root) {
             ensures result == root->child->value;
         } by {
-            known();
+            close();
         }
     "#;
     let file = parse_click_file_with_c_sources(click_source, &[("read_nested.c", c_source)])
@@ -3243,13 +3243,13 @@ fn rejects_legacy_read_write_resource_spelling() {
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by surface_syntax_batch_23")]
 fn parses_block_by_clause() {
-    let source = FILL3_CLICK.replace("== 2;", "== 2 by { solve(); }");
+    let source = FILL3_CLICK.replace("== 2;", "== 2 by { close(); }");
     let file = parse(&source).expect("sidecar should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
     assert_eq!(
         ensure.proof().tactics(),
-        Some([ProofTactic::Solve].as_slice())
+        Some([ProofTactic::Close].as_slice())
     );
 }
 
@@ -3294,7 +3294,7 @@ fn integer_datatype_match_bindings_shadow_each_source_carrier() {
         theorem extraction(value: Integer) {
             ensures match Pair::Make(0, value) {
                 Pair::Make(value, inner) => inner,
-            } == value by { known(); }
+            } == value by { close(); }
         }
     "#;
     verify_click_theorems(source).unwrap();
@@ -3583,7 +3583,7 @@ fn loop_diverges_round_trips_through_expansion() {
                 return 0;
             }
         "#;
-    let body = "loop spinning diverges { invariant 0 == 0; initialize by solve(); maintain by { step(); } } solve();";
+    let body = "loop spinning diverges { invariant 0 == 0; initialize by close(); maintain by { step(); } } close();";
     let click_source = format!(
         r#"verifying "spin.c";
 
@@ -3610,7 +3610,7 @@ fn loop_diverges_round_trips_through_expansion() {
     // Locating the proof body in the source skips the signature markers, so
     // in-place expansion must see past `diverges` as it does past `throws`.
     let closer = click_source
-        .rfind("solve();")
+        .rfind("close();")
         .expect("proof should contain its direct closer");
     let line = click_source[..closer]
         .bytes()
@@ -3655,7 +3655,7 @@ fn a_diverges_function_never_yields_termination_evidence() {
                 loop {
                     decreases n;
                     invariant n >= 0;
-                    initialize by solve();
+                    initialize by close();
                     maintain by {
                         have 0 <= to_integer(n - 1) by {
                             close() using { n > 0; }
@@ -3665,13 +3665,13 @@ fn a_diverges_function_never_yields_termination_evidence() {
                 }
                 loop diverges {
                     invariant n == 0;
-                    initialize by solve();
+                    initialize by close();
                     maintain by {
                         step();
                     }
                 }
                 step();
-                solve();
+                close();
             }
         "#;
     let (session, _) =
@@ -3913,7 +3913,7 @@ fn a_child_resource_is_owned_like_any_other() {
     let c_source = "struct cell { int32 value; int32 other; }; \
         int32 get(struct cell* p) { return p->value; }";
     let proof = "int32 get(struct cell* p) { owns outer(p); ensures result == result; } by { \
-        unfold(outer(p)); unfold(inner(p)); step_until(function.exit); fold(inner(p)); fold(outer(p)); solve(); }";
+        unfold(outer(p)); unfold(inner(p)); step_until(function.exit); fold(inner(p)); fold(outer(p)); close(); }";
     let inner = "resource inner(p: struct cell*) { owns p->value; }";
     let source = format!(
         "{inner} resource outer(p: struct cell*) {{ owns inner(p); owns p->other; }} \
@@ -3950,7 +3950,7 @@ fn an_invariant_label_names_it_in_a_failure() {
         format!(
             "verifying \"count.c\"; int32 count(int32 n) {{ requires 0 <= n; ensures result == result; }} by {{ \
              step_until(loop(0).entry); loop {{ decreases n - i; invariant {invariant} i <= n - 1; \
-             }} step_until(function.exit); solve(); }}"
+             }} step_until(function.exit); close(); }}"
         )
     };
     let labelled = verify_c_sources(&sidecar("upper:"), &[("count.c", c_source)])
@@ -4188,8 +4188,8 @@ fn a_hidden_record_needs_its_child_declared_first() {
 #[cfg_attr(feature = "fast-gate", ignore = "covered by surface_syntax_batch_29")]
 fn a_rust_sidecar_compares_a_bitwise_operand_without_parentheses() {
     let bare =
-        "verifying \"flip.rs\"; fn flip(b: u32) -> u32 { ensures result == b ^ 1u32; } by solve();";
-    let parenthesized = "verifying \"flip.rs\"; fn flip(b: u32) -> u32 { ensures result == (b ^ 1u32); } by solve();";
+        "verifying \"flip.rs\"; fn flip(b: u32) -> u32 { ensures result == b ^ 1u32; } by close();";
+    let parenthesized = "verifying \"flip.rs\"; fn flip(b: u32) -> u32 { ensures result == (b ^ 1u32); } by close();";
     assert_eq!(
         parser::parse(bare)
             .expect("a Rust sidecar groups `b ^ 1u32` as Rust does")
@@ -4199,7 +4199,7 @@ fn a_rust_sidecar_compares_a_bitwise_operand_without_parentheses() {
             .function_blocks(),
     );
     let c =
-        "verifying \"flip.c\"; uint32 flip(uint32 b) { ensures result == b ^ 1u32; } by solve();";
+        "verifying \"flip.c\"; uint32 flip(uint32 b) { ensures result == b ^ 1u32; } by close();";
     let error = parser::parse(c).expect_err("a C sidecar must parenthesize the operand");
     assert!(
         error.message().contains("parenthesize a `^` operand"),
@@ -4230,15 +4230,15 @@ fn a_rust_sidecar_states_its_signature_in_rust_syntax() {
     );
     for (source, expected) in [
         (
-            "verifying \"bytes.rs\"; uint32 f(const uint8* bytes, uint64 bytes_len) { ensures result == 0u32; } by solve();",
+            "verifying \"bytes.rs\"; uint32 f(const uint8* bytes, uint64 bytes_len) { ensures result == 0u32; } by close();",
             "write `fn f(bytes: &[u8]) -> u32`",
         ),
         (
-            "uint32 f(const uint8* bytes, uint64 bytes_len) { ensures result == 0u32; } by solve(); verifying \"bytes.rs\";",
+            "uint32 f(const uint8* bytes, uint64 bytes_len) { ensures result == 0u32; } by close(); verifying \"bytes.rs\";",
             "write `fn f(bytes: &[u8]) -> u32`",
         ),
         (
-            "verifying \"borrow.rs\"; fn f(p: &u32) -> u32 { ensures result == p->f; } by solve();",
+            "verifying \"borrow.rs\"; fn f(p: &u32) -> u32 { ensures result == p->f; } by close();",
             "replace `p->f` with `p.f`",
         ),
         (
@@ -4777,7 +4777,7 @@ fn inline_callback_identity_rejects_ambiguous_translation_units() {
         contract int32 One() { ensures result == 1; }
         int32 callback() { ensures result == 1; } by { step_until(function.exit); normalize(); }
         theorem callback_contract() {
-            ensures One(&callback) by { unfold(One(&callback)); solve(); }
+            ensures One(&callback) by { unfold(One(&callback)); close(); }
         }
     "#;
     let inputs = [
@@ -4822,7 +4822,7 @@ fn a_rust_sidecar_writes_click_types_in_rust() {
         }
         theorem a_comparison_is_a_bool_value(b: bool) {
             requires b == (5u32 > 3u32);
-            ensures b by solve();
+            ensures b by close();
         }
         theorem an_index_is_a_usize(n: usize) {
             ensures forall (k: usize) { k < n implies k < n };
@@ -4844,7 +4844,7 @@ fn a_rust_sidecar_writes_click_types_in_rust() {
     let error = verify_c_sources(
         "verifying \"bytes.rs\"; theorem wrong(b: bool) {
              requires b == (3u32 > 5u32);
-             ensures b by solve();
+             ensures b by close();
          }",
         &rust_source,
     )
@@ -4900,7 +4900,7 @@ fn rust_integer_casts_read_historical_operands() {
             "verifying \"bytes.rs\";
              fn bytes::bump(x: u32) -> u32 {{
                  ensures ({cast}) == ({cast});
-             }} by {{ mark before; step_until(function.exit); solve(); }}"
+             }} by {{ mark before; step_until(function.exit); close(); }}"
         )
     };
     for cast in [
@@ -5388,7 +5388,7 @@ fn printed_machine_arithmetic_keeps_exact_transport_premises() {
         };
         let printed = printing::source_click_proposition(&premise);
         let source = format!(
-            "theorem retained(hi: {ty}) {{ requires 0 < hi; requires hi < 100; requires {authored}; ensures {printed} by {{ known(); }} }}"
+            "theorem retained(hi: {ty}) {{ requires 0 < hi; requires hi < 100; requires {authored}; ensures {printed} by {{ close(); }} }}"
         );
         verify_click_theorems(&source).unwrap_or_else(|error| panic!("{source}\n{error:?}"));
     }

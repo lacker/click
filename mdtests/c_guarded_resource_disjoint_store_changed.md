@@ -39,7 +39,7 @@ int32 f(struct cell* root) {
         apply(click::separation::separate_restrict(memory(selected->value), memory(root->base.left), memory((&selected->value)[0..1]), memory(root->base.left)));
     }
     step_until(function.exit);
-    fold(child); solve();
+    fold(child); close();
 }
 ```
 ```expect

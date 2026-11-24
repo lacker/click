@@ -2575,7 +2575,7 @@ fn guard_path_disjunction_has_nothing_to_export_without_two_stating_paths() {
 /// consult a reserved set -- a heap identity, a re-bound loop binder's model
 /// fields, an arbitrary algebraic binding, an aggregate field -- was handed
 /// an identity a live abstracted local was still using. With `malloc` after
-/// a `branch`, `have fresh == picked by { solve(); }` closed outright
+/// a `branch`, `have fresh == picked by { close(); }` closed outright
 /// (mdtest `branch_join_variable_is_not_a_later_allocation`).
 ///
 /// The join now counts from the arms' counter and reports where it left it,
@@ -2722,7 +2722,7 @@ fn the_execution_identity_counter_refuses_at_the_first_reserved_range() {
 /// from the execution budget. Those are one allocator. When they were two
 /// streams over the same range they both started at `v1000000`, so the
 /// havocked `i` and the re-bound binder's `c.rank` were literally the same
-/// kernel variable and `have c.rank == i by { solve(); }` closed with nothing
+/// kernel variable and `have c.rank == i by { close(); }` closed with nothing
 /// relating them (mdtest `loop_resource_binder_field_is_not_a_local`).
 #[test]
 fn a_rebound_binder_field_never_reuses_a_havocked_local_variable() {

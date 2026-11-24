@@ -20,7 +20,7 @@ void increment(int32* state) {
     unfold(first);
     step_until(function.exit);
     let first = fold(Counter(), { revision: 1 });
-    solve();
+    close();
 }
 
 void caller(int32* state) {

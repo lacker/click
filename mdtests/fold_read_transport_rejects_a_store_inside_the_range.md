@@ -28,8 +28,8 @@ void mark_inside(int32 *v, int32 lo, int32 hi, int32 j, int32 n) {
     have zeros(at(entry, v), lo, hi) == zeros(at(entry, v), lo, hi) by normalize();
     step();
     have zeros(at(entry, v), lo, hi) == zeros(v, lo, hi) by {
-        solve();
-        known();
+        close();
+        close();
     }
 }
 ```

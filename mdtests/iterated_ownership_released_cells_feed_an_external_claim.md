@@ -82,7 +82,7 @@ void recycle(int32* data, int32* occupied, int32 capacity, int32 a, int32 b) {
     unfold(region(data, a, a + 1));
     unfold(region(data, b, b + 1));
     step();
-    have occupied[b] == 0 by { known(); }
+    have occupied[b] == 0 by { close(); }
     have to_integer(a + 1) == to_integer(a) + 1 by {
         apply(click::integer::int32_add_to_integer(a, 1));
     }
@@ -99,13 +99,13 @@ void recycle(int32* data, int32* occupied, int32 capacity, int32 a, int32 b) {
     }
     have occupied[b] == 0 by {
         rewrite(occupied[b], at(statement(1).entry, occupied[b]));
-        known();
+        close();
     }
-    have occupied[a] == 0 by { known(); }
+    have occupied[a] == 0 by { close(); }
     fold(arena_window(data, occupied, capacity, a + 1, b)[b]);
     fold(arena_window(data, occupied, capacity, a + 1, b)[a]);
     let w = fold(arena_window(data, occupied, capacity, a, b + 1), { next: a });
-    have separate(memory(data[a..b + 1]), memory(occupied[0..capacity])) by solve();
+    have separate(memory(data[a..b + 1]), memory(occupied[0..capacity])) by close();
     step(claim_run, { w: w });
 }
 ```

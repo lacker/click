@@ -13,25 +13,25 @@ int32 use_obtain(int32 n) {
 } by {
     step_until(function.exit);
     let k = obtain((0..n).any(|i| { i != 1 }));
-    have 0 <= k by known();
-    have k != 1 by known();
+    have 0 <= k by close();
+    have k != 1 by close();
     if k < n {
-        have k < n by known();
+        have k < n by close();
     } else {
-        have false by known();
+        have false by close();
     }
     if result == n {
         let j = obtain(at(function.entry, (0..n).any(|j| { j != 1 })));
         if j >= n {
-            have false by known();
+            have false by close();
         } else {
-            have j < n by known();
+            have j < n by close();
         }
     } else {
-        have false by known();
+        have false by close();
     }
     witness(k);
-    solve();
+    close();
 }
 ```
 

@@ -1244,14 +1244,14 @@ fn charon_chunks_check_boundaries_authority_and_false_claims() {
         // Each claim follows from `core`'s own `chunks_exact`, `remainder`
         // and `next`, run over the iterator's fields.
         let claim = format!(
-            "{LIBRARY_CHUNKS} verifying \"chunks.rs\"; fn tail(bytes: &[u8], size: usize) -> usize {{ requires bytes.len() == {length}u64; requires size == {size}u64; ensures result == {}u64; }} by {{ have size != 0u64; step_until(function.exit); solve(); }}",
+            "{LIBRARY_CHUNKS} verifying \"chunks.rs\"; fn tail(bytes: &[u8], size: usize) -> usize {{ requires bytes.len() == {length}u64; requires size == {size}u64; ensures result == {}u64; }} by {{ have size != 0u64; step_until(function.exit); close(); }}",
             length % size
         );
         ProgramVerificationSession::new_program_prepared(&claim, &prepared).unwrap();
     }
     for length in [0u64, 3, 4, 7, 8] {
         let result = if length < 4 { 0 } else { 4 };
-        let proof = "step_until(function.exit); solve();";
+        let proof = "step_until(function.exit); close();";
         let claim = format!(
             "{LIBRARY_CHUNKS} verifying \"chunks.rs\"; fn next_len(bytes: &[u8]) -> usize {{ requires bytes.len() == {length}u64; ensures result == {result}u64; }} by {{ {proof} }}"
         );
@@ -1261,7 +1261,7 @@ fn charon_chunks_check_boundaries_authority_and_false_claims() {
         let offset = length - length % 4;
         let tail = length % 4;
         let claim = format!(
-            "{LIBRARY_CHUNKS} verifying \"chunks.rs\"; fn tail_byte(bytes: &[u8]) -> u8 {{ requires bytes.len() == {length}u64; views bytes[0..{length}]; ensures result == old(bytes[{offset}]); }} by {{ have bytes.len() % 4u64 == {tail}u64; have bytes.len() - bytes.len() % 4u64 == {offset}u64; step_until(assignment(tail, 0).entry); step(); step(); have tail.len() == {tail}u64; have tail == bytes + {offset}u64; step_until(function.exit); solve(); }}"
+            "{LIBRARY_CHUNKS} verifying \"chunks.rs\"; fn tail_byte(bytes: &[u8]) -> u8 {{ requires bytes.len() == {length}u64; views bytes[0..{length}]; ensures result == old(bytes[{offset}]); }} by {{ have bytes.len() % 4u64 == {tail}u64; have bytes.len() - bytes.len() % 4u64 == {offset}u64; step_until(assignment(tail, 0).entry); step(); step(); have tail.len() == {tail}u64; have tail == bytes + {offset}u64; step_until(function.exit); close(); }}"
         );
         ProgramVerificationSession::new_program_prepared(&claim, &prepared).unwrap();
     }
@@ -1551,7 +1551,7 @@ fn charon_slice_failure_has_a_focused_trace() {
         "verifying \"slices.rs\";\n",
         "fn length(bytes: &[u8]) -> usize { ensures result == 0u64; } by {\n",
         "    step_until(function.exit);\n",
-        "    solve();\n",
+        "    close();\n",
         "}\n",
         "theorem good(x: int32) { ensures x == x by { normalize(); } }\n",
     );
@@ -1559,7 +1559,7 @@ fn charon_slice_failure_has_a_focused_trace() {
     let (line, column) = source
         .lines()
         .enumerate()
-        .find_map(|(line, text)| text.find("solve();").map(|column| (line + 1, column + 1)))
+        .find_map(|(line, text)| text.find("close();").map(|column| (line + 1, column + 1)))
         .expect("the failing proof must contain a written closer");
     let trace_to = format!("{line}:{column}");
     let output = p.cli(&["verify"]);
@@ -2079,7 +2079,7 @@ fn charon_loop_array_copy_empty_input_never_reads_uninitialized_storage() {
         .expect("the sidecar states `walk` after its helper")
         .0;
     let claim = format!(
-        "{helper} fn quad::walk(bytes: &[u8]) -> u32 {{ requires bytes.len() == 0u64; ensures result == 0u32; }} by {{ step_until(loop(0).entry); have loop(0).iter.v.len() == 0u64; step_until(function.exit); solve(); }}"
+        "{helper} fn quad::walk(bytes: &[u8]) -> u32 {{ requires bytes.len() == 0u64; ensures result == 0u32; }} by {{ step_until(loop(0).entry); have loop(0).iter.v.len() == 0u64; step_until(function.exit); close(); }}"
     );
     ProgramVerificationSession::new_program_prepared(&claim, &prepared).unwrap();
 }
@@ -2548,7 +2548,7 @@ fn rust_slice_value_proofs_expand_to_verified_proofs() {
          have bytes[2..].len() == 2u64;\n    \
          have forall (k: uint64) { k <= 4u64 implies bytes[k..].len() == bytes.len() - k };\n    \
          have bytes[0..4] == slice::from_raw_parts(bytes, 4u64);\n    \
-         step_until(function.exit);\n    solve();\n}\n",
+         step_until(function.exit);\n    close();\n}\n",
     )
     .unwrap();
     p.refresh().unwrap();
@@ -2584,7 +2584,7 @@ fn rust_boolean_return_and_local_initialization_verify() {
     let p = Project::new("pub fn invert(x:bool)->bool { let answer = !x; answer }");
     p.refresh().unwrap();
     let prepared = p.prepared().unwrap();
-    let claim = "verifying \"borrow.rs\"; fn invert(x: bool) -> bool { ensures result == (if x == true { false } else { true }); } by { if x == false { step_until(function.exit); solve(); } else { step_until(function.exit); solve(); } }";
+    let claim = "verifying \"borrow.rs\"; fn invert(x: bool) -> bool { ensures result == (if x == true { false } else { true }); } by { if x == false { step_until(function.exit); close(); } else { step_until(function.exit); close(); } }";
     ProgramVerificationSession::new_program_prepared(claim, &prepared).unwrap();
 }
 
@@ -3168,7 +3168,7 @@ fn rust_enum_claims_are_checked_and_step_names_the_match_split() {
             "{owner} accepted a false claim"
         );
     }
-    let stepped = "verifying \"shapes.rs\";\nfn is_empty(s: Shape) -> bool { ensures result == (s == Shape::Empty); } by { step(); step(); step(); step(); step(); step(); step(); solve(); }\n";
+    let stepped = "verifying \"shapes.rs\";\nfn is_empty(s: Shape) -> bool { ensures result == (s == Shape::Empty); } by { step(); step(); step(); step(); step(); step(); step(); close(); }\n";
     let error = ProgramVerificationSession::new_program_prepared(stepped, &prepared)
         .err()
         .expect("step() does not pass an open match");
@@ -3216,7 +3216,7 @@ fn rust_enum_signed_match_explicit_split_verifies() {
     let p = signed_match_project();
     let prepared = p.prepared().unwrap();
     let explicit = format!(
-        "{} by {{ match amount {{ Amount::Credit(x) => {{ step_until(function.exit); solve(); }}, Amount::Debit(x) => {{ step_until(function.exit); have result == -1i32 * x by {{ solve(); }} have match amount {{ Amount::Credit(y) => y as i32, Amount::Debit(y) => 0i32 - y }} == 0i32 - x by {{ rewrite(amount, Amount::Debit(x)); normalize(); }} solve(); }} }} }}",
+        "{} by {{ match amount {{ Amount::Credit(x) => {{ step_until(function.exit); close(); }}, Amount::Debit(x) => {{ step_until(function.exit); have result == -1i32 * x by {{ close(); }} have match amount {{ Amount::Credit(y) => y as i32, Amount::Debit(y) => 0i32 - y }} == 0i32 - x by {{ rewrite(amount, Amount::Debit(x)); normalize(); }} close(); }} }} }}",
         SIGNED_MATCH_SIDECAR.trim()
     );
     ProgramVerificationSession::new_program_prepared(&explicit, &prepared)
@@ -3736,8 +3736,8 @@ fn unwrap_value(x: u32) -> u32 { ensures result == x; } by {
     step_until(statement(0).call(choose, 0).entry);
     step();
     match statement(0).call(choose, 0).result {
-        Choice::Some(payload) => { step_until(function.exit); solve(); },
-        Choice::None => { step_until(function.exit); solve(); },
+        Choice::Some(payload) => { step_until(function.exit); close(); },
+        Choice::None => { step_until(function.exit); close(); },
     }
 }
 "#;
@@ -4801,7 +4801,7 @@ fn a_rust_pointer_local_keeps_its_c_meaning_in_arithmetic() {
 fn right_length(bytes: &[u8], mid: usize) -> usize {\n\
     requires mid <= bytes.len();\n\
     ensures result == bytes.len() - mid;\n\
-} by { step_until(assignment(right, 0).entry); step(); have right == bytes + mid; have right == left + mid; step_until(function.exit); solve(); }\n";
+} by { step_until(assignment(right, 0).entry); step(); have right == bytes + mid; have right == left + mid; step_until(function.exit); close(); }\n";
     fs::write(p.root.join("borrow.click"), sidecar).unwrap();
     let prepared = p.prepared().unwrap();
     ProgramVerificationSession::new_program_prepared(sidecar, &prepared)
@@ -4900,7 +4900,7 @@ fn front(bytes: &[u8]) -> usize {
     ensures result == 7u64;
 } by {
     step_until(function.exit);
-    solve();
+    close();
 }
 fn first_len(bytes: &[u8]) -> usize {
     requires bytes.len() == 7u64;
@@ -5060,12 +5060,12 @@ fn borrowed_array(x: u32) -> u32 {
     ensures result == x;
 } by {
     step_until(statement(0).call(read, 0).entry);
-    have borrowed_array.compound_literal(0)[1] == 7u32 by solve();
+    have borrowed_array.compound_literal(0)[1] == 7u32 by close();
     step_until(statement(1).call(read, 0).entry);
-    have borrowed_array.compound_literal(1)[1] == x by solve();
-    have at(statement(0).call(read, 0).entry, borrowed_array.compound_literal(0)[1]) == 7u32 by solve();
+    have borrowed_array.compound_literal(1)[1] == x by close();
+    have at(statement(0).call(read, 0).entry, borrowed_array.compound_literal(0)[1]) == 7u32 by close();
     step_until(function.exit);
-    solve();
+    close();
 }
 "#;
     let file = p.root.join("borrow.click");
@@ -5122,10 +5122,10 @@ fn read(pair: &Pair) -> u32 {
 }
 fn borrowed_record(x: u32) -> u32 { ensures result == x; } by {
     step_until(statement(1).call(read, 0).entry);
-    have borrowed_record.compound_literal(1).value == x by solve();
+    have borrowed_record.compound_literal(1).value == x by close();
     step_until(function.exit);
-    have at(statement(1).call(read, 0).entry, borrowed_record.compound_literal(1).spare) == 9u32 by solve();
-    solve();
+    have at(statement(1).call(read, 0).entry, borrowed_record.compound_literal(1).spare) == 9u32 by close();
+    close();
 }
 "#;
     let file = p.root.join("borrow.click");
@@ -5165,12 +5165,12 @@ fn joined_value(x: u32) -> u32 {
 } by {
     if x == 0u32 {
         step_until(function.exit);
-        have statement(0).result == 3u32 by solve();
-        solve();
+        have statement(0).result == 3u32 by close();
+        close();
     } else {
         step_until(function.exit);
-        have statement(0).result == x by solve();
-        solve();
+        have statement(0).result == x by close();
+        close();
     }
 }
 "#;
@@ -5965,7 +5965,7 @@ fn rust_usize_arithmetic_casts_and_expansion_verify() {
 } by {
     apply(usize::product_bound_from_division(x, y));
     apply(usize::multiply_to_integer(x, y));
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }"#,
     );
     assert_ne!(general_mul, sidecar);
@@ -6251,7 +6251,7 @@ fn rust_while_loop_panic_paths_are_rejected() {
             ""
         };
         let sidecar = format!(
-            "verifying \"borrow.rs\"; {signature} {{ {requirements} }} by {{ {prefix} loop {{ invariant {invariant}; }} step_until(function.exit); solve(); }}"
+            "verifying \"borrow.rs\"; {signature} {{ {requirements} }} by {{ {prefix} loop {{ invariant {invariant}; }} step_until(function.exit); close(); }}"
         );
         let error = ProgramVerificationSession::new_program_prepared(&sidecar, &prepared)
             .err()
@@ -6273,7 +6273,7 @@ fn rust_nested_while_loop_invariants_keep_preorder_indices() {
     );
     p.refresh().unwrap();
     let prepared = p.prepared().unwrap();
-    let sidecar = "verifying \"borrow.rs\"; fn nested() -> i32 { ensures result == 1; } by { step_until(loop(0).entry); loop { decreases 1-i; invariant 0<=i and i<=1; maintain by { step_until(loop(1).entry); loop { decreases 1-j; invariant 0<=j and j<=1; } step_until(loop.back_edge); } } step_until(function.exit); solve(); }";
+    let sidecar = "verifying \"borrow.rs\"; fn nested() -> i32 { ensures result == 1; } by { step_until(loop(0).entry); loop { decreases 1-i; invariant 0<=i and i<=1; maintain by { step_until(loop(1).entry); loop { decreases 1-j; invariant 0<=j and j<=1; } step_until(loop.back_edge); } } step_until(function.exit); close(); }";
     ProgramVerificationSession::new_program_prepared(sidecar, &prepared).unwrap();
     fs::write(p.root.join("borrow.click"), sidecar).unwrap();
     assert_cli(&p, &["expand", "--claim", "nested.contract", "--in-place"]);
@@ -6329,7 +6329,7 @@ fn shadow(bytes: &[u8]) -> usize {
     have slice.len() == 2u64;
     have at(first_slice, slice.len()) == 1u64;
     step_until(function.exit);
-    solve();
+    close();
 }
 "#;
     ProgramVerificationSession::new_program_prepared(sidecar, &prepared)
@@ -6371,7 +6371,7 @@ fn shadow(bytes: &[u8]) -> usize {
     step_until(function.exit);
     have bytes.len() == 4u64;
     have program::bytes.len() == 4u64;
-    solve();
+    close();
 }
 "#;
     ProgramVerificationSession::new_program_prepared(sidecar, &prepared)
@@ -6719,7 +6719,7 @@ fn rust_chunks_exact_remainder_metadata_and_bytes() {
         ensures result == bytes.len() % size;
     } by {
         step_until(function.exit);
-        solve();
+        close();
     }
     fn tail_byte(bytes: &[u8]) -> u8 {
         requires bytes.len() == 5u64; views bytes[0..5];
@@ -6731,7 +6731,7 @@ fn rust_chunks_exact_remainder_metadata_and_bytes() {
         have tail.len() == 1u64;
         have tail == bytes + 4u64;
         step_until(function.exit);
-        solve();
+        close();
     }";
     ProgramVerificationSession::new_program_prepared(sidecar, &prepared).unwrap();
     for invalid in [
@@ -6761,7 +6761,7 @@ fn chunks_exact_is_proved_from_its_fields() {
         ensures result == bytes.len() % size;
     } by {
         step_until(function.exit);
-        solve();
+        close();
     }
     fn count(bytes: &[u8]) -> usize {
         views bytes[0..bytes.len()];
@@ -6778,7 +6778,7 @@ fn chunks_exact_is_proved_from_its_fields() {
             invariant to_integer(n) * 4 + to_integer(iter.v.len()) == to_integer(bytes.len()) - to_integer(bytes.len() % 4u64);
             initialize by {
                 have bytes.len() % 4u64 <= bytes.len();
-                solve();
+                close();
             }
             maintain by {
                 if 4u64 <= iter.v.len() {
@@ -6803,7 +6803,7 @@ fn chunks_exact_is_proved_from_its_fields() {
         }
         have loop(0).iter.v.len() < 4u64;
         step_until(function.exit);
-        solve();
+        close();
     }";
     ProgramVerificationSession::new_program_prepared(sidecar, &prepared).unwrap();
     for invalid in [
@@ -6935,7 +6935,7 @@ fn rust_chunks_exact_boundaries_and_full_width_sizes() {
         (5, u64::MAX),
     ] {
         let sidecar = format!(
-            "{LIBRARY_CHUNKS} verifying \"borrow.rs\"; fn length(bytes: &[u8], size: usize) -> usize {{ requires bytes.len() == {length}u64; requires size == {size}u64; ensures result == {}u64; }} by {{ step_until(function.exit); solve(); }}",
+            "{LIBRARY_CHUNKS} verifying \"borrow.rs\"; fn length(bytes: &[u8], size: usize) -> usize {{ requires bytes.len() == {length}u64; requires size == {size}u64; ensures result == {}u64; }} by {{ step_until(function.exit); close(); }}",
             length % size
         );
         ProgramVerificationSession::new_program_prepared(&sidecar, &prepared).unwrap();
@@ -6968,13 +6968,13 @@ fn rust_chunks_exact_evaluates_size_once_and_keeps_shadowed_iterators_distinct()
     fn size(p: &mut i32) -> usize {{ requires *p == 0; owns *p; ensures *p == 1; ensures result == 4u64; }}
     fn length(bytes: &[u8], p: &mut i32) -> usize {{ requires bytes.len() == 5u64; requires *p == 0; owns *p; ensures *p == 1; ensures result == 1u64; }} by {{
         step_until(function.exit);
-        solve();
+        close();
     }}
     fn shadow(bytes: &[u8]) -> usize {{ requires bytes.len() == 5u64; ensures result == 0u64; }} by {{
         step_until(assignment(tail, 0).entry); step(); step();
         have tail.len() == 1u64;
         step_until(function.exit);
-        solve();
+        close();
     }}");
     ProgramVerificationSession::new_program_prepared(&sidecar, &prepared)
         .unwrap_or_else(|error| panic!("{}", error.message()));
@@ -7136,7 +7136,7 @@ fn rust_u16_arithmetic_checks_its_own_width() {
     let sidecar = "verifying \"borrow.rs\";
         fn add(x: u16) -> u16 { requires x <= 65534; ensures result as u32 == x as u32 + 1u32; }
         fn sub(x: u16) -> u16 { requires 1 <= x; ensures result as u32 == x as u32 - 1u32; }
-        fn mul(x: u16) -> u16 { requires x <= 21845; ensures result as u32 == x as u32 * 3u32; } by { have 0 <= (x as i32) * 3 by { close() using { 0 <= x; x <= 21845; } } have (x as i32) * 3 <= 65535 by { close() using { 0 <= x; x <= 21845; } } step_until(function.exit); solve(); }
+        fn mul(x: u16) -> u16 { requires x <= 21845; ensures result as u32 == x as u32 * 3u32; } by { have 0 <= (x as i32) * 3 by { close() using { 0 <= x; x <= 21845; } } have (x as i32) * 3 <= 65535 by { close() using { 0 <= x; x <= 21845; } } step_until(function.exit); close(); }
         fn div(x: u16, d: u16) -> u16 { requires 0 < d; ensures result as u32 == x as u32 / d as u32; }
         fn rem(x: u16, d: u16) -> u16 { requires 0 < d; ensures result as u32 == x as u32 % d as u32; }";
     ProgramVerificationSession::new_program_prepared(sidecar, &prepared).unwrap();
@@ -7792,11 +7792,11 @@ fn rust_pure_function_slice_arguments_are_one_value() {
     let accepted = sidecar(
         "    have head(slice::from_raw_parts(bytes, bytes.len())) == head(bytes);\n    \
          have old(head(bytes)) == head(old(bytes));\n    \
-         step_until(function.exit);\n    solve();",
+         step_until(function.exit);\n    close();",
     );
     ProgramVerificationSession::new_program_prepared(&accepted, &prepared).unwrap();
     let spread = sidecar(
-        "    have head(bytes, bytes.len()) == head(bytes);\n    step_until(function.exit);\n    solve();",
+        "    have head(bytes, bytes.len()) == head(bytes);\n    step_until(function.exit);\n    close();",
     );
     let error = ProgramVerificationSession::new_program_prepared(&spread, &prepared)
         .err()
@@ -7807,7 +7807,7 @@ fn rust_pure_function_slice_arguments_are_one_value() {
         "{error}"
     );
     let failing =
-        sidecar("    have head(bytes) == 7u8;\n    step_until(function.exit);\n    solve();");
+        sidecar("    have head(bytes) == 7u8;\n    step_until(function.exit);\n    close();");
     let error = ProgramVerificationSession::new_program_prepared(&failing, &prepared)
         .err()
         .expect("an unproved fact must fail")
@@ -7839,8 +7839,8 @@ fn rust_methods_resolve_by_the_receivers_type() {
              function some_half(bytes: &[u8]) -> Option<&[u8]> {{ Option::Some(half(bytes)) }}\n\
              fn first(bytes: &[u8]) -> u8 {{\n    requires bytes.len() == 4u64;\n    views bytes[0..4];\n    ensures result == bytes[0];\n}} by {{\n    \
              have half(bytes).len() == 2u64;\n    \
-             have some_half(bytes) == Option::Some(half(bytes)) by {{ unfold(some_half(bytes)); solve(); }}\n{claims}\n    \
-             step_until(function.exit);\n    solve();\n}}\n"
+             have some_half(bytes) == Option::Some(half(bytes)) by {{ unfold(some_half(bytes)); close(); }}\n{claims}\n    \
+             step_until(function.exit);\n    close();\n}}\n"
         )
     };
     let accepted = sidecar(
@@ -7905,7 +7905,7 @@ fn retarget(bytes: &[u8], left_len: usize) -> usize {
     have at(statement(1).entry, left.len()) == 1u64;
     have left_len == 7u64;
     step_until(function.exit);
-    solve();
+    close();
 }
 fn scalar(words: &[u32], view_len: usize) -> usize {
     requires words.len() == 4u64;
@@ -7954,7 +7954,7 @@ fn rust_slice_parameter_length_and_source_parameter_are_distinct() {
         } by {
             have bytes.len() < bytes_len;
             step_until(function.exit);
-            solve();
+            close();
         }
         fn word_count(words: &[u32], words_len: usize) -> usize {
             requires words.len() == 4u64;
@@ -7990,7 +7990,7 @@ fn rust_slice_values_sidecar(claims: &str) -> String {
          function some_half(bytes: &[u8]) -> Option<&[u8]> {{ Option::Some(half(bytes)) }}\n\
          function size(bytes: &[u8]) -> usize {{ bytes.len() }}\n\
          spec enum Window {{ Window(&[u8], usize), }}\n\
-         fn first(bytes: &[u8]) -> u8 {{\n    requires bytes.len() == 4u64;\n    views bytes[0..4];\n    ensures result == bytes[0];\n}} by {{\n{claims}\n    step_until(function.exit);\n    solve();\n}}\n"
+         fn first(bytes: &[u8]) -> u8 {{\n    requires bytes.len() == 4u64;\n    views bytes[0..4];\n    ensures result == bytes[0];\n}} by {{\n{claims}\n    step_until(function.exit);\n    close();\n}}\n"
     )
 }
 

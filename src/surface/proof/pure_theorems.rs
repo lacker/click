@@ -3443,7 +3443,7 @@ mod tests {
             let guard = format!("requires defined({expression});");
             let observation = format!("requires to_integer({expression}) == 1;");
             let source = format!(
-                "theorem guarded({parameters}) {{ {guard} {observation} ensures to_integer({expression}) == 1 by {{ known(); }} }}"
+                "theorem guarded({parameters}) {{ {guard} {observation} ensures to_integer({expression}) == 1 by {{ close(); }} }}"
             );
             crate::surface::verify_c_sources(&source, &[]).unwrap();
             let expanded =
@@ -3464,11 +3464,11 @@ mod tests {
                 );
             }
             let caller = format!(
-                "{source} theorem caller({parameters}) {{ {guard} {observation} ensures to_integer({expression}) == 1 by {{ apply(guarded({arguments})); known(); }} }}"
+                "{source} theorem caller({parameters}) {{ {guard} {observation} ensures to_integer({expression}) == 1 by {{ apply(guarded({arguments})); close(); }} }}"
             );
             crate::surface::verify_c_sources(&caller, &[]).unwrap();
         }
-        let source = "theorem byte_at_next(bytes: uint8[], n: int32, value: Integer) { requires defined(n + 1); requires value == to_integer(bytes[n + 1] as int32); ensures value == to_integer(bytes[n + 1] as int32) by { known(); } }";
+        let source = "theorem byte_at_next(bytes: uint8[], n: int32, value: Integer) { requires defined(n + 1); requires value == to_integer(bytes[n + 1] as int32); ensures value == to_integer(bytes[n + 1] as int32) by { close(); } }";
         crate::surface::verify_c_sources(source, &[]).unwrap();
         assert!(
             crate::surface::verify_c_sources(&source.replace("requires defined(n + 1);", ""), &[])
@@ -3482,8 +3482,8 @@ mod tests {
     fn ordinary_pure_scripts_retain_completion_without_compatibility() {
         for body in [
             "normalize();",
-            "solve();",
-            "have x == x by { solve(); } known();",
+            "close();",
+            "have x == x by { close(); } close();",
             "if x == 0 { normalize(); } else { normalize(); }",
         ] {
             let source = format!("theorem ordinary(x: int32) {{ ensures x == x by {{ {body} }} }}");
@@ -3496,7 +3496,7 @@ mod tests {
             assert!(!verified.proof_certificate().unwrap().steps().is_empty());
         }
         let error = verify_instantiation_theorem(
-            "theorem bad(x: int32) { ensures x == 0 by { normalize(); solve(); } }",
+            "theorem bad(x: int32) { ensures x == 0 by { normalize(); close(); } }",
         )
         .unwrap_err();
         assert!(
@@ -3520,14 +3520,14 @@ mod tests {
     #[test]
     fn ordinary_pure_fact_producers_preserve_written_suffixes() {
         let source = r#"
-            theorem identity(x: int32) { requires x == 0; ensures x == 0 by { known(); } }
+            theorem identity(x: int32) { requires x == 0; ensures x == 0 by { close(); } }
             theorem application(x: int32) {
                 requires x == 0;
                 ensures x == 0 by { apply(identity(x)); rewrite(x, 0); normalize(); }
             }
             theorem extraction(x: int32) {
                 requires x == 0 and x <= 1;
-                ensures x == 0 by { have x == 0 by known(); rewrite(x, 0); normalize(); }
+                ensures x == 0 by { have x == 0 by close(); rewrite(x, 0); normalize(); }
             }
         "#;
         let verified = crate::surface::verify_click_theorems(source).unwrap();
@@ -3595,7 +3595,7 @@ mod tests {
             .unwrap()
             .0;
         let global_before_local = format!(
-            "theorem ih(n: int32) {{ ensures n == n by known(); }}\n{}",
+            "theorem ih(n: int32) {{ ensures n == n by close(); }}\n{}",
             source.replace("have n == n;", "have n == n by { apply(ih(n)); }")
         );
         for source in [source.to_string(), global_before_local] {
@@ -3612,13 +3612,13 @@ mod tests {
             .unwrap();
         }
         crate::surface::verify_c_sources(
-            "theorem unsigned_prefix(n: uint64) { ensures n == n by { have 0u64 <= n; let ih = induct(n); known(); } }", &[],
+            "theorem unsigned_prefix(n: uint64) { ensures n == n by { have 0u64 <= n; let ih = induct(n); close(); } }", &[],
         ).unwrap();
         for (invalid, diagnostic) in [
             (
                 source.replace(
                     "have n == n;",
-                    "have n == n by { if n > 0 { apply(ih(0)); known(); } else { known(); } }",
+                    "have n == n by { if n > 0 { apply(ih(0)); close(); } else { close(); } }",
                 ),
                 "ih",
             ),
@@ -3632,7 +3632,7 @@ mod tests {
             (
                 source.replace(
                     "have n == n;",
-                    "have n == n by { let ih = induct(n); known(); }",
+                    "have n == n by { let ih = induct(n); close(); }",
                 ),
                 "only one top-level",
             ),
@@ -3642,7 +3642,7 @@ mod tests {
             assert!(error.message().contains(diagnostic), "{}", error.report());
             assert!(!error.message().contains("budget"), "{}", error.report());
         }
-        let changed_goal = "theorem changed_goal(n: int32) { requires n >= 0; ensures n >= 0 implies n >= 0 by { intro(); let ih = induct(n); known(); } }";
+        let changed_goal = "theorem changed_goal(n: int32) { requires n >= 0; ensures n >= 0 implies n >= 0 by { intro(); let ih = induct(n); close(); } }";
         let error = crate::surface::verify_c_sources(changed_goal, &[])
             .expect_err("induction still targets the original theorem goal");
         assert!(
@@ -3704,8 +3704,8 @@ mod tests {
                 ensures xs == xs by {
                     let ih = induct(xs);
                     match xs {
-                        Chain::Nil => { known(); }
-                        Chain::Link(tail) => { apply(ih(tail)); known(); }
+                        Chain::Nil => { close(); }
+                        Chain::Link(tail) => { apply(ih(tail)); close(); }
                     }
                 }
             }
@@ -3772,7 +3772,7 @@ mod tests {
         );
         assert!(crate::surface::verify_c_sources(&false_source, &[]).is_err());
         let premature = source.replace(
-            "have before: n >= 0 by known();",
+            "have before: n >= 0 by close();",
             "have before: n >= 0 by { apply(ih(xs)); }",
         );
         assert!(crate::surface::verify_c_sources(&premature, &[]).is_err());
@@ -3799,7 +3799,7 @@ mod tests {
         crate::surface::without_implicit_solve(|| crate::surface::verify_c_sources(&expanded, &[]))
             .unwrap_or_else(|error| panic!("{}\n{expanded}", error.report()));
         let dangling =
-            continuation.replace("have xs == xs by known();", "have tail == tail by known();");
+            continuation.replace("have xs == xs by close();", "have tail == tail by close();");
         assert!(
             crate::surface::verify_c_sources(&dangling, &[]).is_err(),
             "match fields remain arm-local"
@@ -3844,7 +3844,7 @@ mod tests {
                 instantiate(forall (k: int32) {
                     0 <= k and k < limit implies k <= upper
                 }, x);
-                known();
+                close();
             }
         }
     "#;
@@ -3879,7 +3879,7 @@ mod tests {
         let intermediate = "forall (j: uint64) { to_integer(x) <= to_integer(j) }";
         let theorem = |goal: &str, arguments: &str| {
             format!(
-                "theorem inst(x: int32) {{ requires {quantified}; ensures {goal} by {{ instantiate({quantified}, {arguments}); known(); }} }}"
+                "theorem inst(x: int32) {{ requires {quantified}; ensures {goal} by {{ instantiate({quantified}, {arguments}); close(); }} }}"
             )
         };
         for (goal, arguments) in [
@@ -3967,7 +3967,7 @@ mod tests {
     fn pure_instantiate_preserves_an_unrelated_open_goal() {
         let open = INSTANTIATE_BOUND
             .replace("ensures x <= upper", "ensures x == upper")
-            .replace("                known();", "");
+            .replace("                close();", "");
         let error = verify_instantiation_theorem(&open)
             .expect_err("instantiation does not change the selected goal");
         assert!(
@@ -3996,9 +3996,9 @@ mod tests {
                     intro(); intro();
                     have x <= 20 by {
                         instantiate(forall (x: int32) { x <= 10 implies x <= 20 }, x);
-                        known();
+                        close();
                     }
-                    known();
+                    close();
                 }
             }
         "#;
@@ -4019,7 +4019,7 @@ mod tests {
                 requires forall (k: int32) { forall (k: int32) { k == k } };
                 ensures forall (x: int32) { x == x } by {
                     instantiate(forall (k: int32) { forall (k: int32) { k == k } }, 0);
-                    known();
+                    close();
                 }
             }
         "#;
@@ -4044,7 +4044,7 @@ mod tests {
         );
         let source = source.replace(
             "instantiate(forall",
-            "have 0 <= x by known(); instantiate(forall",
+            "have 0 <= x by close(); instantiate(forall",
         );
         let verified = verify_instantiation_theorem(&source);
         assert!(verified.unwrap().kernel_authority.is_some());
@@ -4093,10 +4093,8 @@ mod tests {
                 spec_definitions,
                 &theorems,
             );
-            let certificate = ProofCertificate::from_proof_tactics(
-                theorem.ensures()[0].proof().tactics().unwrap(),
-            )
-            .unwrap();
+            let tactics = theorem.ensures()[0].proof().tactics().unwrap();
+            let certificate = ProofCertificate::from_proof_tactics(&tactics[..1]).unwrap();
             let before = crate::persistent::persistent_node_allocations();
             let instantiated = root
                 .driver()
@@ -4181,12 +4179,12 @@ mod tests {
                 ensures x <= 0 by {
                     if flag == 0 {
                         instantiate(forall (k: int32) { k <= 0 }, x);
-                        known();
+                        close();
                     } else {
                         instantiate(forall (k: int32) { k <= 0 }, x);
-                        known();
+                        close();
                     }
-                    known();
+                    close();
                 }
             }
         "#;
@@ -4194,8 +4192,8 @@ mod tests {
             .replace("if flag == 0 {", "cases {\n flag == 0 => {")
             .replace("} else {", "}\n flag != 0 => {")
             .replace(
-                "                    }\n                    known();",
-                "                    }\n }\n                    known();",
+                "                    }\n                    close();",
+                "                    }\n }\n                    close();",
             );
         for source in [source, cases.as_str()] {
             let verified = verify_instantiation_theorem(source).unwrap();

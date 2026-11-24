@@ -97,7 +97,7 @@ struct tree_node* rotate_left(struct tree_node* root) {
             }
             have right_model != HeapTree::Empty by {
                 rewrite(right_model, heap_right(t.model));
-                known();
+                close();
             }
             match right_model {
                 HeapTree::Empty => { contradiction(right_model == HeapTree::Empty); },
@@ -105,21 +105,21 @@ struct tree_node* rotate_left(struct tree_node* root) {
                     let { left: l, right: r } = unfold(t);
                     let { left: m, right: z } = unfold(r);
                     step_until(function.exit);
-                    have separate(memory(root->left), memory(root->right)) by { known(); }
+                    have separate(memory(root->left), memory(root->right)) by { close(); }
                     have separate(statement(6).footprint, memory(root->left)) by {
                         normalize() using { separate(memory(root->left), memory(root->right)); };
                     }
                     have at(statement(6).exit, root->left) == at(statement(6).entry, root->left) by {
                         preserve(memory(root->left), statement(6));
                     }
-                    have separate(memory(root->left), memory(result->left)) by { known(); }
+                    have separate(memory(root->left), memory(result->left)) by { close(); }
                     have separate(statement(7).footprint, memory(root->left)) by {
                         normalize() using { separate(memory(root->left), memory(result->left)); };
                     }
                     have at(statement(7).exit, root->left) == at(statement(7).entry, root->left) by {
                         preserve(memory(root->left), statement(7));
                     }
-                    have separate(memory(root->left), memory(result->right)) by { known(); }
+                    have separate(memory(root->left), memory(result->right)) by { close(); }
                     have separate(statement(8).footprint, memory(root->left)) by {
                         normalize() using { separate(memory(root->left), memory(result->right)); };
                     }
@@ -130,17 +130,17 @@ struct tree_node* rotate_left(struct tree_node* root) {
                         rewrite(at(statement(8).exit, root->left), at(statement(8).entry, root->left));
                         rewrite(at(statement(7).exit, root->left), at(statement(7).entry, root->left));
                         rewrite(at(statement(6).exit, root->left), at(statement(6).entry, root->left));
-                        known();
+                        close();
                     }
-                    have at(statement(6).exit, root->right) == old(root->right->left) by { known(); }
-                    have separate(memory(root->right), memory(result->left)) by { known(); }
+                    have at(statement(6).exit, root->right) == old(root->right->left) by { close(); }
+                    have separate(memory(root->right), memory(result->left)) by { close(); }
                     have separate(statement(7).footprint, memory(root->right)) by {
                         normalize() using { separate(memory(root->right), memory(result->left)); };
                     }
                     have at(statement(7).exit, root->right) == at(statement(7).entry, root->right) by {
                         preserve(memory(root->right), statement(7));
                     }
-                    have separate(memory(root->right), memory(result->right)) by { known(); }
+                    have separate(memory(root->right), memory(result->right)) by { close(); }
                     have separate(statement(8).footprint, memory(root->right)) by {
                         normalize() using { separate(memory(root->right), memory(result->right)); };
                     }
@@ -150,7 +150,7 @@ struct tree_node* rotate_left(struct tree_node* root) {
                     have root->right == old(root->right->left) by {
                         rewrite(at(statement(8).exit, root->right), at(statement(8).entry, root->right));
                         rewrite(at(statement(7).exit, root->right), at(statement(7).entry, root->right));
-                        known();
+                        close();
                     }
                     let lower = fold(tree_at(root), {
                         model: HeapTree::Node(node, value, left_model, middle_model),
@@ -168,7 +168,7 @@ struct tree_node* rotate_left(struct tree_node* root) {
                             HeapTree::Node(pivot_node, pivot_value, middle_model, far_right_model))));
                         normalize();
                     }
-                    solve();
+                    close();
                 },
             }
         },

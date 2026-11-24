@@ -25,7 +25,7 @@ int32 peek(struct channel* channel) {
     owns subscriber(&channel->ready, ready_payload(channel));
 } by {
     step();
-    solve();
+    close();
 }
 ```
 

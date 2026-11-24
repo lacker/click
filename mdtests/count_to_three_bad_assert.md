@@ -19,7 +19,7 @@ int32 count_to_three_bad_assert() {
 } by {
     step_until(region(2).entry);
     have i == 1 by {
-        solve();
+        close();
     }
 }
 ```

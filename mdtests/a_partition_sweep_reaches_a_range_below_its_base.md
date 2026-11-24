@@ -81,7 +81,7 @@ int32 write_then_read(int32* a, int32* b, int32 s, int32 e, int32 i) {
 } by {
     step();
     step();
-    have a[0] == 1 by { known(); }
+    have a[0] == 1 by { close(); }
     have s <= e by { close() using { s <= i; i < e; }; }
     have separate(memory(a[0..2]), memory(b[s..e]));
     have contains(memory(a[0..2]), memory(a[0])) by { normalize(); }
@@ -103,7 +103,7 @@ int32 write_then_read(int32* a, int32* b, int32 s, int32 e, int32 i) {
     mark before;
     step();
     have separate(statement(2).footprint, memory(a[0])) by {
-        known();
+        close();
     }
     have a[0] == at(before, a[0]) by {
         preserve(memory(a[0]), statement(2));

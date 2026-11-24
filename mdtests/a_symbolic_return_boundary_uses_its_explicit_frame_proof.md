@@ -23,9 +23,9 @@ void forward(int32* p, int32 n, int32 m) {
     owns p[m..16];
     produces p[n..m];
 } by {
-    have 0 <= n by { solve(); }
-    have n <= m by { solve(); }
-    have m <= 16 by { solve(); }
+    have 0 <= n by { close(); }
+    have n <= m by { close(); }
+    have m <= 16 by { close(); }
     have separate(memory(p[0..n]), memory(p[n..m])) by {
         apply(separation::separate_adjacent_ranges(p, 0, n, m));
     }

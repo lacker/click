@@ -1,9 +1,9 @@
-# `known()` does not close a `viewable` goal from another state
+# `close()` does not close a `viewable` goal from another state
 
 `viewable(b[0..n])` before the store to `b[0]` names the memory before the
 store; the same spelling after it names the memory after it. They are
 different facts, and carrying one across the store is `transport`'s job, not
-`known()`'s. `known()` closes a goal only from the identical
+`close()`'s. `close()` closes a goal only from the identical
 available fact (`mdtests/known_closes_an_established_viewable_fact.md`).
 
 ```c filename=known_does_not_close_a_viewable_goal_at_another_state.c
@@ -13,7 +13,7 @@ int32 probe(int32 b[], int32 n) {
 }
 ```
 
-```click
+```click checked-only
 verifying "known_does_not_close_a_viewable_goal_at_another_state.c";
 
 int32 probe(int32 b[], int32 n) {
@@ -22,11 +22,13 @@ int32 probe(int32 b[], int32 n) {
     owns b[0..n];
     ensures result == 0;
 } by {
-    have viewable(b[0..n]);
+    have viewable(b[0..n]) by {
+        close();
+    }
     step();
-    have viewable(b[0..n]) by known();
+    have viewable(b[0..n]) by close();
     step();
-    solve();
+    close();
 }
 ```
 

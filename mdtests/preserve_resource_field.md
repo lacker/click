@@ -20,8 +20,8 @@ void keep(int *p) {
         preserve(m, statement(0));
     }
     step();
-    known(); known();
-    known(); known(); known();
+    close(); close();
+    close(); close(); close();
 }
 ```
 

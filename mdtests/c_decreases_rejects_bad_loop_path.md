@@ -31,7 +31,7 @@ int32 sometimes_stuck(int32 n, int32 choose) {
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

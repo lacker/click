@@ -53,15 +53,15 @@ int32 f(struct cell* root) {
             memory((&((root->base.left as (void *) as (struct cell *))->value))[0..1]), memory((&root->value)[0..1])));
     }
     have separate(statement(2).footprint, memory((&((root->base.left as (void *) as (struct cell *))->value))[0..1])) by {
-        known();
+        close();
     }
     have (root->base.left as (void *) as (struct cell *))->value == at(before_store, (root->base.left as (void *) as (struct cell *))->value) by {
         preserve(memory((&((root->base.left as (void *) as (struct cell *))->value))[0..1]), statement(2));
     }
-    have separate(memory((root->base.left as (void *) as (struct cell *))->value), memory(root->base.left)) by { solve(); }
+    have separate(memory((root->base.left as (void *) as (struct cell *))->value), memory(root->base.left)) by { close(); }
     let restored = fold(child_value(root->base.left), { number: old(child.number) });
-    step() by { known(); }
-    step(); solve();
+    step() by { close(); }
+    step(); close();
 }
 ```
 

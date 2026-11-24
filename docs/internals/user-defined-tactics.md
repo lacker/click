@@ -95,7 +95,7 @@ let { tree: tr } = refold_to_root(node, root, { c: c, t: t });
 The `by` block is an ordinary proof at a fixed execution point. It may use
 `match`, `unfold`, `fold`, `have`, theorem application, applications of
 tactics (itself included), `if`/`cases` on propositions, and smart tactics
-such as `solve`. It may not use `step`, `step_until`, `branch`, `loop`, or any
+such as `close()`. It may not use `step`, `step_until`, `branch`, `loop`, or any
 other tactic that advances C. The proof ends when every produced instance and
 every `ensures` is established; there is no exit statement to step to.
 
@@ -144,7 +144,7 @@ application.
   entry state, resource transfer, recursion hypotheses, termination, rule
   packaging at the completed contract root, and the audit's targeted runs. The
   surface proves it with the tactic's script followed by the one `return`
-  step and one `known` per claim and per contract-closing goal, so the
+  step and one direct closure per claim and per contract-closing goal, so the
   script itself must leave each produced instance held and each `ensures`
   available on every live path. This ending does not depend on the implicit
   closer, so a tactic's expansion, which leaves it out, is checked the same

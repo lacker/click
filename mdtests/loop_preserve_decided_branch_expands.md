@@ -50,12 +50,12 @@ int32 count_zero_run(int32* a, int32 n) {
         decreases n - i;
         invariant 0 <= i and i <= n;
         invariant c == 0;
-        initialize by solve();
+        initialize by close();
         maintain by {
             mark iteration;
             have a[i] == 1 by {
                 instantiate(forall (k: int32) { 0 <= k and k < n implies a[k] == 1 }, i);
-                known();
+                close();
             }
             have to_integer(i + 1) <= to_integer(n);
             branch {
@@ -84,7 +84,7 @@ int32 count_zero_run(int32* a, int32 n) {
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

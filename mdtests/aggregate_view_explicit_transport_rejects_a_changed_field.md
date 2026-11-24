@@ -12,7 +12,7 @@ void write_first(struct Descriptor *owner) {
     ensures owner->length == old(owner->length);
 } by {
     step();
-    have owner->length == old(owner->length) by { solve(); }
+    have owner->length == old(owner->length) by { close(); }
     step_until(function.exit);
 }
 ```

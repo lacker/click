@@ -47,7 +47,7 @@ int32 steady(int32 x) {
 }
 
 theorem proposed_helper_is_fallible() {
-    ensures Fallible(&helper) by { unfold(Fallible(&helper)); solve(); }
+    ensures Fallible(&helper) by { unfold(Fallible(&helper)); close(); }
 }
 
 int32 caller(int32 x) throws int32 {

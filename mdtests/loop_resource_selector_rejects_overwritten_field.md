@@ -27,7 +27,7 @@ void probe(struct holder* h, int32 n) {
         decreases n - i;
         invariant 0 <= i;
         invariant i <= n;
-        initialize by solve();
+        initialize by close();
         maintain by {
             unfold(cells(h->data, n));
             step(); step(); step();

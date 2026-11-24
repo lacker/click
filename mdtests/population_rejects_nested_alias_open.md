@@ -32,7 +32,7 @@ int32 object_refcount(struct object* obj, struct object* alias) {
     with(control(obj)) {
         with(control(alias)) { }
     }
-    solve();
+    close();
 }
 ```
 

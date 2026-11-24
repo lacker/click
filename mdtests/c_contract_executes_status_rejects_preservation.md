@@ -19,14 +19,14 @@ theorem unsound(callback: int32 (*)(int32*, int32))
     ensures NeverChanges(callback) by {
         unfold(Cell(cell)); step(Raw);
         if result == 0 {
-            fold(Cell(cell)); known(); solve();
+            fold(Cell(cell)); close(); close();
         } else {
-            fold(Cell(cell)); known(); solve();
+            fold(Cell(cell)); close(); close();
         }
     }
 }
 ```
 
 ```expect
-fail: solve
+fail: checked outcome `close`
 ```

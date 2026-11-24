@@ -33,7 +33,7 @@ void sweep(int32 visited[], int32 n) {
     have 0 <= 0;
     have unmarked(visited, 0, 0) == 0 by {
         unfold(unmarked(visited, 0, 0));
-        solve();
+        close();
     }
     loop {
         decreases n - i;
@@ -41,7 +41,7 @@ void sweep(int32 visited[], int32 n) {
         invariant i <= n;
         invariant unmarked(visited, 0, i) == 0;
         owns visited[0..n];
-        initialize by { solve(); }
+        initialize by { close(); }
         maintain by {
             mark iter;
             have i < 1073741823 by {
@@ -52,7 +52,7 @@ void sweep(int32 visited[], int32 n) {
             have unmarked(visited, 0, i) == 0;
             have unmarked(visited, 0, i + 1) == 0 by {
                 unfold(unmarked(visited, 0, i + 1));
-                solve();
+                close();
             }
             step();
         }

@@ -16,7 +16,7 @@ theorem transport(callback: void (*)(int32*)) {
     ensures Target(callback) by {
         unfold(Source(callback));
         unfold(Target(callback));
-        solve();
+        close();
     }
 }
 ```

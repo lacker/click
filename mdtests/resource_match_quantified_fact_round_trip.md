@@ -42,22 +42,22 @@ int32 write_zero(struct buffer* buffer) {
     match prefix.tag {
         PrefixTag::End(end) => {
             have 0 <= 0 by {
-                known();
+                close();
             }
             have 0 < end by {
                 rewrite(end, 1);
-                known();
+                close();
             }
             have buffer->data[0] == 0 by {
                 instantiate(forall (k: int32) {
                     0 <= k and k < end implies buffer->data[k] == 0
                 }, 0);
-                known();
+                close();
             }
             unfold(prefix);
             step();
             have buffer->data[0] == 0 by {
-                known();
+                close();
             }
             have forall (k: int32) {
                 0 <= k and k < end implies buffer->data[k] == 0
@@ -77,13 +77,13 @@ int32 write_zero(struct buffer* buffer) {
                     };
                 }
                 rewrite(k, 0);
-                known();
+                close();
             }
             let prefix = fold(zero_prefix(buffer), {
                 tag: PrefixTag::End(end)
             });
             step();
-            solve();
+            close();
         },
     }
 }

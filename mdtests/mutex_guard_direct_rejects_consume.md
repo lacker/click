@@ -37,11 +37,11 @@ int32 read_locked(struct counter *counter) {
     owns state: counter_state(counter);
     ensures result == state.value;
 } by {
-    have held(&counter->mu) by solve();
+    have held(&counter->mu) by close();
     unfold(state);
     step_until(function.exit);
     fold(state);
-    solve();
+    close();
 }
 
 int32 read_counter(struct counter *counter) {
@@ -57,7 +57,7 @@ int32 read_counter(struct counter *counter) {
     step();
     step();
     step();
-    solve();
+    close();
 }
 ```
 

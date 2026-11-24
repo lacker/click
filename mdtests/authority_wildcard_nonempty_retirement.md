@@ -14,14 +14,14 @@ verifying "wildcard_lifecycle.c";
 void lifecycle() { ensures 1 == 1; } by {
     step(); step(); step(); step(); step(); step();
     fold(authority(slot(&pool, _)));
-    have count(slot(&pool, _)) == 0 by solve();
+    have count(slot(&pool, _)) == 0 by close();
     fold(slot(&pool, &first));
     fold(slot(&pool, &second));
     unfold(authority(slot(&pool, _)));
     unfold(slot(&pool, &first));
-    have count(slot(&pool, _)) == 1 by solve();
+    have count(slot(&pool, _)) == 1 by close();
     unfold(slot(&pool, &second));
-    have count(slot(&pool, _)) == 0 by solve();
+    have count(slot(&pool, _)) == 0 by close();
     unfold(authority(slot(&pool, _)));
 }
 ```

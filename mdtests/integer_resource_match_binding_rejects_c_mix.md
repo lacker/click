@@ -31,7 +31,7 @@ void keep(int32 bound) {
     unfold(c);
     step_until(function.exit);
     fold(c);
-    solve();
+    close();
 }
 ```
 

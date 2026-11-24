@@ -916,7 +916,7 @@ fn equality_graph_queries_do_not_build_the_condition_fact_index() {
 
 /// One pure-theorem scenario: a two-step rewrite chain whose conclusion is
 /// also an exactly available requirement, so a real kernel proof object can
-/// close it by `known()` and issue the completion these constructors consume.
+/// close it by `close()` and issue the completion these constructors consume.
 ///
 /// The chain uses products, which no smart term constructor folds, so the
 /// order of the two cited equalities is observable.

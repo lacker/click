@@ -36,7 +36,7 @@ theorem adds_three_shifts_two(f: int32 (*)(int32)) executes f(int32 x) {
     requires Adds(f, { amount: 3 });
     ensures Shifts(f, { offset: 2 }) by {
         step(Adds);
-        solve();
+        close();
     }
 }
 ```

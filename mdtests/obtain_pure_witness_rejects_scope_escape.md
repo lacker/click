@@ -6,11 +6,11 @@ theorem scoped_witness(x: int32) {
     ensures exists (z: int32) { z == x } by {
         have exists (a: int32) { a == x } by {
             let k = obtain(exists (k: int32) { k == x });
-            have k == x by known();
+            have k == x by close();
             witness(k);
-            known();
+            close();
         }
-        have k == x by known();
+        have k == x by close();
         witness(x);
         normalize();
     }

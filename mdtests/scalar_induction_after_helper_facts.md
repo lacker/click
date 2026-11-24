@@ -25,7 +25,7 @@ theorem countdown_is_zero(n: int32) {
             apply(ih(n - 1));
             unfold(countdown(n));
             rewrite(countdown(n - 1), 0);
-            known();
+            close();
         }
     }
 }

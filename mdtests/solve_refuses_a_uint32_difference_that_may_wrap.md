@@ -7,7 +7,7 @@ leaves the goal open.
 ```click
 theorem difference_that_may_wrap(x: uint32) {
     requires x <= 4u32;
-    ensures to_integer((0u32 - x) + 3u32) < to_integer((0u32 - x) + 4u32) by solve();
+    ensures to_integer((0u32 - x) + 3u32) < to_integer((0u32 - x) + 4u32) by close();
 }
 ```
 

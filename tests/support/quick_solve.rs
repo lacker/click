@@ -26,33 +26,30 @@ pub fn check_quick_solve_with_limit(
             error.report()
         ));
     }
-    // Program closing profiles its generated termination proof as a solve
-    // even when the fixture has no written solve at that source.
-    let mut solves = samples.iter().filter(|sample| {
-        sample.tactic.claim != "program.termination"
-            && matches!(
-                (
-                    sample.tactic.tactic_name.as_str(),
-                    sample.tactic.class.as_str()
-                ),
-                ("solve" | "close", "smart")
-            )
+    // The direct check and its fallback can both have a work sample at one
+    // source site. Prefer the search sample when the tactic needed search.
+    let closers = samples.iter().filter(|sample| {
+        sample.tactic.tactic_name == "close" && sample.tactic.claim != "program.termination"
     });
-    let Some(solve) = solves.next() else {
-        return Err("Quick Solve Test must reach one explicit `solve()` or `close() using`".into());
+    let class = if closers.clone().any(|sample| sample.tactic.class == "smart") {
+        "smart"
+    } else {
+        "simple"
     };
-    if solves.next().is_some() {
-        return Err(
-            "Quick Solve Test ran more than one explicit `solve()` or `close() using`".into(),
-        );
+    let mut measured = closers.filter(|sample| sample.tactic.class == class);
+    let Some(closer) = measured.next() else {
+        return Err("Quick Solve Test must reach one explicit `close()`".into());
+    };
+    if measured.next().is_some() {
+        return Err("Quick Solve Test ran more than one measured `close()`".into());
     }
-    let work = solve.inclusive_work;
+    let work = closer.inclusive_work;
     if let Some(limit) = work_limit
         && work > limit
     {
         return Err(format!(
             "Quick Solve Test used {work} deterministic work units (limit {limit}) in `{}`",
-            solve.tactic.claim
+            closer.tactic.claim
         ));
     }
     Ok(())

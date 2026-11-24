@@ -56,18 +56,18 @@ int32 f(struct holder* h, struct holder* g) {
         invariant i == 1 implies g->ptr == saved;
         owns holder(h);
         owns holder(g);
-        initialize by solve();
+        initialize by close();
         maintain by {
             unfold(holder(h));
             unfold(holder(g));
-            have i == 0 by solve();
-            have h->ptr == saved by known();
+            have i == 0 by close();
+            have h->ptr == saved by close();
             step();
-            have t == saved by known();
+            have t == saved by close();
             mark before_first_store;
-            have separate(memory(h->ptr), memory(g->ptr)) by known();
+            have separate(memory(h->ptr), memory(g->ptr)) by close();
             step();
-            have h->ptr == at(before_first_store, g->ptr) by known();
+            have h->ptr == at(before_first_store, g->ptr) by close();
             mark before_second_store;
             step();
             have separate(loop(0).statement(2).footprint, memory(h->ptr)) by {
@@ -77,20 +77,20 @@ int32 f(struct holder* h, struct holder* g) {
                 preserve(memory(h->ptr), loop(0).statement(2));
             }
             fold(holder(h));
-            have g->ptr == saved by solve();
+            have g->ptr == saved by close();
             fold(holder(g));
             step();
-            have i == 1 by solve();
-            have g->ptr == saved by known();
-            solve();
+            have i == 1 by close();
+            have g->ptr == saved by close();
+            close();
         }
     }
     unfold(holder(g));
-    have i == 1 by solve();
-    have g->ptr == saved by known();
+    have i == 1 by close();
+    have g->ptr == saved by close();
     step();
     step();
-    solve();
+    close();
 }
 ```
 

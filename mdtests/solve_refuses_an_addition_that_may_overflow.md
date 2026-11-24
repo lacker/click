@@ -8,7 +8,7 @@ theorem may_overflow(total: int32) {
     requires 0 <= total;
     ensures defined(total + 1) by {
         have defined(total + 1);
-        known();
+        close();
     }
 }
 ```

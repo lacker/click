@@ -4627,7 +4627,7 @@ counts them onto `count`, so evaluating it over a format adds one to a known
 value at each character. `literal_format` holds when the bytes are ordinary
 characters and `%%` only, which the
 [`fprintf` contract](../language/c.md#formatted-output) requires. Each
-recurses on an `int32` measure; `solve` evaluates them over a string literal
+recurses on an `int32` measure; `close()` evaluates them over a string literal
 one level at a time. Verified in [`printf_and_fprintf_share_the_streams_write_history.md`](https://github.com/clicklang/click/blob/master/mdtests/printf_and_fprintf_share_the_streams_write_history.md) and [`fprintf_refuses_a_format_that_converts.md`](https://github.com/clicklang/click/blob/master/mdtests/fprintf_refuses_a_format_that_converts.md).
 
 ### Decimal formatting
@@ -8531,7 +8531,7 @@ The premise is the disequality of the index values at type `I`. For an
 `int32` index `m - 1` that is `((m - 1) as int32) != 0`, not the
 mathematical Integer fact `m - 1 != 0`, which is a
 different proposition. State the word fact with `have ((m - 1) as int32) != 0 by
-close();`, which `solve` proves from the Integer fact where the facts keep
+close();`, which `close()` proves from the Integer fact where the facts keep
 `m - 1` in range, and cite `defined(m - 1)` for the argument expression
 ([`separation_elements_index_word_from_an_integer_fact.md`](https://github.com/clicklang/click/blob/master/mdtests/separation_elements_index_word_from_an_integer_fact.md)).
 
@@ -8554,11 +8554,11 @@ offsets `p + i * sizeof(T)` and `p + j * sizeof(T)`, and the premise is the
 disequality of the index values at type `I`, such as
 `((m - 1) as int32) != 0` or `j != 0u64`. The law states only the address
 disequality; it grants no ownership and checks no pointer arithmetic.
-`solve` applies it to a goal `&q[j] != &q[0]` after proving the index
+`close()` applies it to a goal `&q[j] != &q[0]` after proving the index
 disequality. Expansion states the premise with `have` before `apply`
 ([tactics](../tactics/index.md#arithmetic-with-selected-premises)).
 
-**Verified use:** [`mdtests/solve_proves_element_addresses_distinct_from_their_indices.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_proves_element_addresses_distinct_from_their_indices.md) applies it explicitly and through `solve`, and [`mdtests/solve_proves_element_addresses_distinct_at_each_index_type.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_proves_element_addresses_distinct_at_each_index_type.md) at `uint64` and `int64` indices; [`mdtests/solve_does_not_prove_element_addresses_distinct_when_the_indices_may_be_equal.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_does_not_prove_element_addresses_distinct_when_the_indices_may_be_equal.md) refuses equal-possible indices.
+**Verified use:** [`mdtests/solve_proves_element_addresses_distinct_from_their_indices.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_proves_element_addresses_distinct_from_their_indices.md) applies it explicitly and through `close()`, and [`mdtests/solve_proves_element_addresses_distinct_at_each_index_type.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_proves_element_addresses_distinct_at_each_index_type.md) at `uint64` and `int64` indices; [`mdtests/solve_does_not_prove_element_addresses_distinct_when_the_indices_may_be_equal.md`](https://github.com/clicklang/click/blob/master/mdtests/solve_does_not_prove_element_addresses_distinct_when_the_indices_may_be_equal.md) refuses equal-possible indices.
 ### `separation::contains_subrange`
 
 ```click

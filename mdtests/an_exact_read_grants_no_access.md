@@ -15,7 +15,7 @@ verifying "an_exact_read_grants_no_access.c";
 int32 get(int32* p) {
     ensures result == p[0];
 } by {
-    have exact(p[0]) == exact(p[0]) by solve();
+    have exact(p[0]) == exact(p[0]) by close();
     step_until(function.exit);
 }
 ```

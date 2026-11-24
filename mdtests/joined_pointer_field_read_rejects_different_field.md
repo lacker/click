@@ -69,37 +69,37 @@ void inspect(struct node* parent) {
         owns tree_context: parent_at(root);
         invariant parent == parent_identity(tree_context.model);
         decreases 0;
-        initialize by solve();
+        initialize by close();
         maintain by {
             match tree_context.model {
                 Parent::At(pid, sm, fm) => {
-                    have parent == parent_identity(Parent::At(pid, sm, fm)) by { rewrite(Parent::At(pid, sm, fm), tree_context.model); known(); }
-                    have parent == pid by { unfold(parent_identity(Parent::At(pid, sm, fm))); solve(); }
+                    have parent == parent_identity(Parent::At(pid, sm, fm)) by { rewrite(Parent::At(pid, sm, fm), tree_context.model); close(); }
+                    have parent == pid by { unfold(parent_identity(Parent::At(pid, sm, fm))); close(); }
                     let { c: c, f: f } = unfold(tree_context);
             match c.model {
                 Pair::At(model, lm) => {
                     let { l: l } = unfold(c);
-                    have parent->left == model by { known(); }
+                    have parent->left == model by { close(); }
                     have defined(parent->right) by { rewrite(parent, pid); normalize(); }
                     mark before_sibling;
                     have defined(at(before_sibling, pid->right)) by { normalize(); }
                     step();
-                    have separate(loop(0).statement(0).footprint, memory(parent->right)) by { known(); }
+                    have separate(loop(0).statement(0).footprint, memory(parent->right)) by { close(); }
                     have defined(parent->right) by {
                         preserve(memory(parent->right), loop(0).statement(0));
                     }
                     have parent->right == at(before_sibling, parent->right) by {
                         preserve(memory(parent->right), loop(0).statement(0));
                     }
-                    have separate(loop(0).statement(0).footprint, memory(parent->left)) by { known(); }
+                    have separate(loop(0).statement(0).footprint, memory(parent->left)) by { close(); }
                     have parent->left == at(before_sibling, parent->left) by {
                         preserve(memory(parent->left), loop(0).statement(0));
                     }
-                    have separate(loop(0).statement(0).footprint, memory(parent->left->left)) by { known(); }
+                    have separate(loop(0).statement(0).footprint, memory(parent->left->left)) by { close(); }
                     have parent->left->left == at(before_sibling, parent->left->left) by {
                         preserve(memory(parent->left->left), loop(0).statement(0));
                     }
-                    have sibling == model by { known(); }
+                    have sibling == model by { close(); }
                     mark split;
                     match f.model ensuring {
                         owns f: focus_at(parent->right);
@@ -114,17 +114,17 @@ void inspect(struct node* parent) {
                             have f.model == at(split, f.model);
                         },
                     }
-                    have sibling->left == at(before_sibling, parent->left->left) by { known(); }
+                    have sibling->left == at(before_sibling, parent->left->left) by { close(); }
                     mark before_child;
                     step();
-                    have child == at(before_child, sibling->left) by { known(); }
+                    have child == at(before_child, sibling->left) by { close(); }
                     match lm {
                         Identity::At(leaf) => {
                             unfold(l);
                             have sibling == model;
-                            have at(before_sibling, parent->left->left) == leaf by { known(); }
-                            have at(before_child, sibling->left) == at(before_sibling, parent->left->left) by { known(); }
-                            have child == leaf by { known(); }
+                            have at(before_sibling, parent->left->left) == leaf by { close(); }
+                            have at(before_child, sibling->left) == at(before_sibling, parent->left->left) by { close(); }
+                            have child == leaf by { close(); }
                             have sibling->left == child;
                             have model->right == leaf by {
                                 normalize() using { sibling == model; sibling->left == child; child == leaf; };

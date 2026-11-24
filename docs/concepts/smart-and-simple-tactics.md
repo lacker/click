@@ -47,13 +47,13 @@ work expands into simple tactics:
   an omitted proof. It runs the C that is left, splitting at each C branch the
   facts do not decide into paths that each run to function exit, then closes
   every open goal on every path with the implicit closer: direct closure, then
-  `solve`'s search, and on a returned path that holds the body of a resource
+  bounded proof search, and on a returned path that holds the body of a resource
   the contract `produces`, a fold of that resource. It has no syntax of its
   own. The same closer proves a requirement that a bare `step()`, `fold`, or
   `apply(theorem(args))` left open, and is reported as `implicit closer`
   there. An expanded theorem application keeps any needed antecedent proof
   in a preceding `have` and checks the resulting facts directly.
-- At a loop back edge, the closure of the invariant bundle runs `solve()` on
+- At a loop back edge, the closure of the invariant bundle runs `close()` on
   each member and expands to one `have <member> by { ... }` per member not
   already a fact.
 - The searches behind elided arguments, below.
@@ -95,7 +95,7 @@ unrelated facts.
 The [tactic reference](../reference/tactics/index.md) gives every form's
 class, and `click docs NAME` prints it. A [proof trace](tracing.md#reading-trace-output)
 marks each step smart work produced with its origin: ``(from `implicit tail`)``
-for the implicit tail's execution and its closer, ``(from `solve`)`` for a written `solve`, and ``(from `implicit closer`)`` for
+for the implicit tail's execution and its closer, ``(from `close`)`` for search inside a written `close()`, and ``(from `implicit closer`)`` for
 the closer of a step's requirement. It prints a `chosen:` line with the written
 form of an argument a search chose. [`click profile`](../reference/cli/profile.md) reports a smart
 site, elided forms included, as `SMART`, and a written simple tactic as

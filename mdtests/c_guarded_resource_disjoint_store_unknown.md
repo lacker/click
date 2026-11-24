@@ -26,7 +26,7 @@ int32 f(struct cell* root) {
     ensures result == old(child.number);
     ensures child.number == old(child.number);
     ensures root->value == old(child.number);
-} by { unfold(child); step_until(function.exit); fold(child); solve(); }
+} by { unfold(child); step_until(function.exit); fold(child); close(); }
 ```
 ```expect
 fail: proved body guard case

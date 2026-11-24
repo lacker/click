@@ -24,7 +24,7 @@ int32 run(void* p) {
 } by {
     step();
     have count(ticket(p)) == 0;
-    step(); solve();
+    step(); close();
 }
 ```
 

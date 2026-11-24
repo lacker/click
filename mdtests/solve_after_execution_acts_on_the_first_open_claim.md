@@ -1,7 +1,7 @@
 # `solve` after execution acts on the first open claim
 
-After execution `solve()` closes the first open goal, as the other closers do;
-the implicit closer is the catch-all that closes every goal still open. Here `solve()`
+After execution `close()` closes the first open goal, as the other closers do;
+the implicit closer is the catch-all that closes every goal still open. Here `close()`
 closes `result == 1` and leaves `result == n` for `normalize()`. When `solve`
 closed every claim it could, `normalize()` was refused for having no goal.
 
@@ -20,8 +20,8 @@ int32 f(int32 n) {
     ensures result == n;
 } by {
     step_until(function.exit);
-    solve();
-    known();
+    close();
+    close();
 }
 ```
 

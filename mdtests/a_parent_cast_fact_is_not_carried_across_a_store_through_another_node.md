@@ -106,18 +106,18 @@ struct rb_node* peek(struct rb_node* g, struct rb_node* o) {
                 Up::Frame(xid, xc) => {
                     have node_parent(Node::Inner(gid, gp)) == gp by {
                         unfold(node_parent(Node::Inner(gid, gp)));
-                        known();
+                        close();
                     }
                     have up_identity(Up::Frame(xid, xc)) == xid by {
                         unfold(up_identity(Up::Frame(xid, xc)));
-                        known();
+                        close();
                     }
                     have gp == xid by {
                         rewrite(gp, node_parent(Node::Inner(gid, gp)));
                         rewrite(Node::Inner(gid, gp), n.model);
                         rewrite(xid, up_identity(Up::Frame(xid, xc)));
                         rewrite(Up::Frame(xid, xc), u.model);
-                        known();
+                        close();
                     }
                     unfold(n);
                     unfold(u);
@@ -126,7 +126,7 @@ struct rb_node* peek(struct rb_node* g, struct rb_node* o) {
                     step();
                     step();
                     step();
-                    solve();
+                    close();
                 },
             }
         },

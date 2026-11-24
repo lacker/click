@@ -54,9 +54,9 @@ int32 caller(int32 *next, int32 *visited, int32 n, int32 cur) {
         preserve(memory(next[cur]), statement(0));
     }
     let { result: r } = step(visit);
-    have r == 0 implies visited[at(entry, next[cur])] != 0 by { known(); }
-    branch { true => { step(); solve(); } false => {} }
-    step(); solve();
+    have r == 0 implies visited[at(entry, next[cur])] != 0 by { close(); }
+    branch { true => { step(); close(); } false => {} }
+    step(); close();
 }
 ```
 

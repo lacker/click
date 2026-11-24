@@ -26,7 +26,7 @@ theorem symbolic_integer(p: BoxInput, a: Integer, b: Integer) {
         BoxInput::Hold(x) => BoxOutput::Item(x),
     }) == BoxOutput::Item(N::Value(a)) by {
         rewrite(p, BoxInput::Hold(N::Value(a)));
-        solve();
+        close();
     }
 }
 
@@ -36,7 +36,7 @@ theorem symbolic_bool(p: BoolInput, a: Bool) {
         BoolInput::Hold(x) => BooleanOutput::Item(x),
     }) == BooleanOutput::Item(B::Value(a)) by {
         rewrite(p, BoolInput::Hold(B::Value(a)));
-        solve();
+        close();
     }
 }
 
@@ -46,7 +46,7 @@ theorem symbolic_word(p: WordInput, a: uint64) {
         WordInput::Hold(x) => WordOutput::Item(x),
     }) == WordOutput::Item(W::Value(a)) by {
         rewrite(p, WordInput::Hold(W::Value(a)));
-        solve();
+        close();
     }
 }
 
@@ -56,7 +56,7 @@ theorem mixed_payload(p: NestedInput, a: Integer) {
         NestedInput::Hold(pair) => PairOutput::Item(pair),
     }) == PairOutput::Item(P::Pair(N::Value(a), N::Value(7))) by {
         rewrite(p, NestedInput::Hold(P::Pair(N::Value(a), N::Value(7))));
-        solve();
+        close();
     }
 }
 
@@ -66,7 +66,7 @@ theorem select_symbolic(p: BoxInput, a: Integer, b: Integer) {
         BoxInput::Hold(box) => match box { N::Value(x) => NumberOutput::Item(x), },
     }) == NumberOutput::Item(a) by {
         rewrite(p, BoxInput::Hold(N::Value(a)));
-        solve();
+        close();
     }
 }
 
@@ -76,7 +76,7 @@ theorem construct_from_outer_binding(p: NumberInput, a: Integer) {
         NumberInput::Hold(x) => match BoxInput::Hold(N::Value(x)) { BoxInput::Hold(y) => BoxOutput::Item(y), },
     }) == BoxOutput::Item(N::Value(a)) by {
         rewrite(p, NumberInput::Hold(a));
-        solve();
+        close();
     }
 }
 
@@ -86,7 +86,7 @@ theorem shadow_outer_binding(p: NumberInput, a: Integer, b: Integer) {
         NumberInput::Hold(x) => match P::Pair(N::Value(x), N::Value(b)) { P::Pair(saved, x) => BoxOutput::Item(saved), },
     }) == BoxOutput::Item(N::Value(a)) by {
         rewrite(p, NumberInput::Hold(a));
-        solve();
+        close();
     }
 }
 
@@ -100,7 +100,7 @@ theorem relay_compound(p: BoxInput, a: Integer) {
         },
     }) == BoxOutput::Item(N::Value(a)) by {
         rewrite(p, BoxInput::Hold(N::Value(a)));
-        solve();
+        close();
     }
 }
 
@@ -113,7 +113,7 @@ theorem select_variant(p: ChoiceInput, a: Integer) {
         },
     }) == NumberPairOutput::Item(1, a) by {
         rewrite(p, ChoiceInput::Hold(Choice::Left(N::Value(a))));
-        solve();
+        close();
     }
 }
 
@@ -129,7 +129,7 @@ theorem select_two_children(p: PairInput, a: Integer, b: Integer) {
         },
     }) == NumberPairOutput::Item(b, a) by {
         rewrite(p, PairInput::Hold(a, b));
-        solve();
+        close();
     }
 }
 ```

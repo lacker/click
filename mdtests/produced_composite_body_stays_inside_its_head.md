@@ -63,7 +63,7 @@ int32 make_zero(struct box* box) {
 } by {
     step_until(function.exit);
     fold(zero_box(box));
-    solve();
+    close();
 }
 
 int32 read_zero(struct box* box) {

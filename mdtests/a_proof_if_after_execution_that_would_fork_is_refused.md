@@ -2,7 +2,7 @@
 
 After `step_until(function.exit)`, `n < 5` is not decided on the function's one outcome path,
 so each arm would be a separate path. What follows a proof `if` is checked
-once: the `solve()` after this one would instead run once per arm, and a run of
+once: the `close()` after this one would instead run once per arm, and a run of
 such `if`s would check the rest of the proof once per combination of arms.
 The `if` is refused, as an execution-frontier `if` whose arms do not rejoin
 is (`proof_if_arms_must_rejoin.md`).
@@ -24,11 +24,11 @@ int32 f(int32 n) {
 } by {
     step_until(function.exit);
     if n < 5 {
-        have n <= 10 by known();
+        have n <= 10 by close();
     } else {
-        have n <= 10 by known();
+        have n <= 10 by close();
     }
-    solve();
+    close();
 }
 ```
 

@@ -42,7 +42,7 @@ int32 apply_token(int32 (*callback)(int32), int32 key) {
 theorem proposed_claims_token_contract() {
     ensures BorrowToken(&claims_token) by {
         unfold(BorrowToken(&claims_token));
-        solve();
+        close();
     }
 }
 

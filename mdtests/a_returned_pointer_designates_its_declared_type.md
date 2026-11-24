@@ -22,7 +22,7 @@ long *as_long(void *v) {
     ensures address(result) == address(v);
 } by {
     step_until(function.exit);
-    known();
+    close();
 }
 
 long long read_back(void *raw) {

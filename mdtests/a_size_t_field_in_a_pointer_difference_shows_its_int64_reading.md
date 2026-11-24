@@ -33,10 +33,10 @@ uint64 consumed(parse_buffer * const b) {
     views b->content[0..b->length];
     ensures result == b->offset + 1;
 } by {
-    have b->offset < b->length by { solve(); }
+    have b->offset < b->length by { close(); }
     step();
     step();
-    have to_integer(program::end - b->content) == 7 by { solve(); }
+    have to_integer(program::end - b->content) == 7 by { close(); }
 }
 ```
 

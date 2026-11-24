@@ -10,7 +10,7 @@ theorem fold_endpoints_reject_a_different_body(lo: int32, a: int32, b: int32) {
     requires a == b;
     ensures (lo..a).fold(0, |acc, k| { acc + to_integer(k) }) ==
         (lo..b).fold(0, |acc, k| { acc + to_integer(k) + 1 }) by {
-        solve();
+        close();
     }
 }
 ```

@@ -57,7 +57,7 @@ void touch(int32* flags, int32* data, int32 k) {{
     owns data[0..k];
 }} by {{
     step();
-    solve();
+    close();
 }}
 
 int32 caller(int32* flags, int32* data, int32 k, struct box* b) {{
@@ -67,7 +67,7 @@ int32 caller(int32* flags, int32* data, int32 k, struct box* b) {{
     ensures result == 5;
 }} by {{
 {steps}
-    solve();
+    close();
 }}"""
     return mdtest(f"many calls {n}", c, click)
 
@@ -102,7 +102,7 @@ void touch(int32* flags, int32* data, int32 k) {{
     owns data[0..k];
 }} by {{
     step();
-    solve();
+    close();
 }}
 
 int32 caller(int32* flags, int32* data, int32 k, {params}) {{
@@ -112,7 +112,7 @@ int32 caller(int32* flags, int32* data, int32 k, {params}) {{
     ensures result == {expected};
 }} by {{
 {steps}
-    solve();
+    close();
 }}"""
     return mdtest(f"many objects {n}", c, click)
 
@@ -129,7 +129,7 @@ TOUCH_CLICK = """void touch(int32* flags, int32* data, int32 k) {
     owns data[0..k];
 } by {
     step();
-    solve();
+    close();
 }"""
 
 def aliases(n):
@@ -162,7 +162,7 @@ int32 caller(int32* flags, int32* data, int32 k, struct box* b, {params}) {{
     ensures result == {n};
 }} by {{
 {steps}
-    solve();
+    close();
 }}"""
     return mdtest(f"aliases {n}", c, click)
 
@@ -201,7 +201,7 @@ int32 caller(int32* data, int32 len, {params}) {{
 {steps}
     step();
     step();
-    solve();
+    close();
 }}"""
     return mdtest(f"order chain {n}", c, click)
 
@@ -237,7 +237,7 @@ int32 caller(int32* flags, int32* data, int32 k, {params}) {{
     ensures result == 9;
 }} by {{
 {steps}
-    solve();
+    close();
 }}"""
     return mdtest(f"deep chain {n}", c, click)
 
@@ -262,11 +262,11 @@ def branches(n):
         }} {{
             true => {{
                 step();
-                have 0 <= s by {{ solve(); }}
-                have s <= {i + 1} by {{ solve(); }}
+                have 0 <= s by {{ close(); }}
+                have s <= {i + 1} by {{ close(); }}
             }}
             false => {{
-                have s <= {i + 1} by {{ solve(); }}
+                have s <= {i + 1} by {{ close(); }}
             }}
         }}"""
         for i in range(n)
@@ -279,7 +279,7 @@ int32 caller({params}) {{
         step();
 {arms}
         step();
-        solve();
+        close();
     }}
 }}"""
     return mdtest(f"branches {n}", c, click)
@@ -302,7 +302,7 @@ int32 caller(int32 x0) {{
     ensures result == x0 + {n};
 }} by {{
 {steps}
-    solve();
+    close();
 }}"""
     return mdtest(f"straight line {n}", c, click)
 
@@ -332,7 +332,7 @@ int32 caller(int32* p) {{
     step();
 {proof}
     step();
-    solve();
+    close();
 }}"""
     return mdtest(f"loops {n}", c, click)
 
@@ -353,7 +353,7 @@ int32 caller(int32* data) {{
     ensures result == 0;
 }} by {{
 {steps}
-    solve();
+    close();
 }}"""
     return mdtest(f"constant-index array {n}", c, click)
 
@@ -375,7 +375,7 @@ int32 caller(int32* data, struct box* b) {{
     owns data[0..4];
 }} by {{
     step();
-    solve();
+    close();
 }}""" for i in range(n))
     steps = "\n".join("    step();" for _ in range(n + 2))
     click = f"""verifying "hunt.c";
@@ -388,7 +388,7 @@ int32 caller(int32* data, struct box* b) {{
     ensures result == 5;
 }} by {{
 {steps}
-    solve();
+    close();
 }}"""
     return mdtest(f"many callees {n}", c, click)
 
@@ -421,7 +421,7 @@ int32 caller(int32* flags, int32* data, int32 k, struct box* b, {params}) {{
     step();
     step();
     step();
-    solve();
+    close();
 }}"""
     return mdtest(f"unrelated facts {n}", c, click)
 
@@ -483,7 +483,7 @@ int32 caller() {{
 {make_proof}
 {steps}
     step();
-    solve();
+    close();
 }}"""
     return mdtest(f"heap objects {n}", c, click)
 

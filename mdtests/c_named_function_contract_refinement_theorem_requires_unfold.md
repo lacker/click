@@ -24,7 +24,7 @@ int32 increment(int32 value) {
 
 theorem increment_implements_increment() {
     ensures Increment(&increment) by {
-        solve();
+        close();
     }
 }
 ```

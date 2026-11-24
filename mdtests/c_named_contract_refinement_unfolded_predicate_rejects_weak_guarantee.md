@@ -31,7 +31,7 @@ theorem nonnegative_is_positive() {
     ensures ProducesPositive(&choose_nonnegative) by {
         unfold(ProducesPositive(&choose_nonnegative));
         unfold(IsPositive(cell));
-        solve();
+        close();
     }
 }
 ```

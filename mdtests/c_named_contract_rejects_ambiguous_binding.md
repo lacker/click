@@ -55,7 +55,7 @@ prove it explicitly:
 theorem preserve_pair_is_preserve_pair() executes preserve_pair(int32* p, int32* q) {
     ensures PreservePair(&preserve_pair) as { first: r1, second: r2 } by {
         step(preserve_pair, { a: r1, b: r2 });
-        solve();
+        close();
     }
 }
 ```

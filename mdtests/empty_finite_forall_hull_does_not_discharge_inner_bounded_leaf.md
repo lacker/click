@@ -11,7 +11,7 @@ theorem q(x: int32) {
         forall (j: int32) {
             (5 <= k and k < 3 implies k == 1) and (0 <= j and j < 2 implies x == 7)
         }
-    } by { solve(); }
+    } by { close(); }
 }
 ```
 

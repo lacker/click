@@ -40,7 +40,7 @@ void caller(struct node *root, struct node *p, struct node *q) {
     unfold(right_link(p, q));
     have p->left == old(root->left->left) by {
         rewrite(old(root->left), p);
-        known();
+        close();
     }
 }
 ```

@@ -54,7 +54,7 @@ void keep_masked_left_shift(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have (((a[0] & 3) << 1) & 7) == 4 by solve();
+    have (((a[0] & 3) << 1) & 7) == 4 by close();
 }
 
 void keep_left_shift_count(int32 a[], int32 n) {
@@ -67,7 +67,7 @@ void keep_left_shift_count(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have (1u32 << (a[0] & 1)) == 2u32 by solve();
+    have (1u32 << (a[0] & 1)) == 2u32 by close();
 }
 
 void keep_right_shift_count(int32 a[], int32 n) {
@@ -80,7 +80,7 @@ void keep_right_shift_count(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have (8 >> (a[0] & 1)) == 4 by solve();
+    have (8 >> (a[0] & 1)) == 4 by close();
 }
 
 void keep_narrowed_read(int32 a[], int32 n) {
@@ -93,7 +93,7 @@ void keep_narrowed_read(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have (a[0] as uint8) == 3 by solve();
+    have (a[0] as uint8) == 3 by close();
 }
 
 void keep_unsigned_shift(int32 a[], int32 n) {
@@ -106,7 +106,7 @@ void keep_unsigned_shift(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have ((a[0] as uint32) >> 2) == 3u32 by solve();
+    have ((a[0] as uint32) >> 2) == 3u32 by close();
 }
 
 void keep_quotient(int32 a[], int32 n) {
@@ -119,7 +119,7 @@ void keep_quotient(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have a[0] / 2 == 1 by solve();
+    have a[0] / 2 == 1 by close();
 }
 
 void keep_remainder(int32 a[], int32 n) {
@@ -132,7 +132,7 @@ void keep_remainder(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have a[0] % 2 == 1 by solve();
+    have a[0] % 2 == 1 by close();
 }
 
 void keep_read_in_conditional_arm(int32 a[], int32 n) {
@@ -145,7 +145,7 @@ void keep_read_in_conditional_arm(int32 a[], int32 n) {
     ensures g[0] == 1;
 } by {
     step();
-    have (if n == 1 { a[0] } else { 0 }) == 3 by solve();
+    have (if n == 1 { a[0] } else { 0 }) == 3 by close();
 }
 ```
 

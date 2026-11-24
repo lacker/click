@@ -26,21 +26,21 @@ function rest(xs: List<int32>) -> List<int32> {
 theorem singleton_is_one_cons(x: int32) {
     ensures singleton(x) == List::Cons(x, List<int32>::Nil) by {
         unfold(singleton(x));
-        known();
+        close();
     }
 }
 
 theorem append_nothing(xs: List<int32>) {
     ensures list::append(List::Nil, xs) == xs by {
         unfold(list::append(List::Nil, xs));
-        known();
+        close();
     }
 }
 
 theorem singleton_contains(x: int32) {
     ensures list::contains(List::Cons(x, List::Nil), x) by {
         unfold(list::contains(List::Cons(x, List::Nil), x));
-        solve();
+        close();
     }
 }
 ```

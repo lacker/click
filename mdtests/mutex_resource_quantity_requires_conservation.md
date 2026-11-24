@@ -70,7 +70,7 @@ void* increment_counter(void* argument) {
     let restored = fold(counter_state(counter), { value: counter->value, credits: n + 1 });
     step(pthread_mutex_unlock, { access: access, guard: guard, state: restored });
     step();
-    solve();
+    close();
 }
 ```
 

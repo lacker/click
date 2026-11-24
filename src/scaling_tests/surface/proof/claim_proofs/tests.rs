@@ -9,7 +9,7 @@ fn explicit_closers_lower_each_return_goal_once_without_unfoldings() {
         .unwrap();
     for size in [2, 4, 8, 16] {
         let claims = "ensures result == x;\n".repeat(size);
-        let closers = "known();\n".repeat(size);
+        let closers = "close();\n".repeat(size);
         let source = format!(
             "verifying \"echo.c\"; int32 echo(int32 x) {{ {claims} }} by {{ step(); {closers} }}"
         );
@@ -50,7 +50,7 @@ fn check_return_claim_preparation_scaling(
         let ensures = "ensures result == x;\n".repeat(claims);
         // One closer per goal, in contract order: each held resource
         // first, then each proposition claim with the closer under test.
-        let closers = format!("{}{}", "known();".repeat(resources), closer.repeat(claims));
+        let closers = format!("{}{}", "close();".repeat(resources), closer.repeat(claims));
         let source = format!(
             "resource marker(n: int32) {{ fact n == n; }}
          verifying \"echo.c\";
@@ -96,7 +96,7 @@ fn check_return_claim_preparation_scaling(
 
 #[test]
 fn return_known_views_scale_with_resources_and_claims() {
-    check_return_claim_preparation_scaling("known();", [1, 2, 4, 8].map(|size| (size, size)));
+    check_return_claim_preparation_scaling("close();", [1, 2, 4, 8].map(|size| (size, size)));
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn exact_return_closers_share_preparation_beside_unrelated_resources() {
     // Keep all 24 combinations, both closers, the empty-resource case,
     // and all claim counts. A tighter resource allowance above also
     // rejects an added quadratic scan at the smaller largest input.
-    for closer in ["known();", "normalize();"] {
+    for closer in ["close();", "normalize();"] {
         check_return_claim_preparation_scaling(
             closer,
             [0, 4, 16, 32]

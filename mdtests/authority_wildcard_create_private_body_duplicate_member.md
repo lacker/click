@@ -31,24 +31,24 @@ void issue(int32* pool, int32* p) {
 } by {
     step();
     fold(slot(pool, p));
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }
 int32 lifecycle() { ensures result == 0 or result == 9; } by {
     step(); step(); step(); step();
-    branch { true => { step_until(function.exit); solve(); } false => {} }
+    branch { true => { step_until(function.exit); close(); } false => {} }
     step(); step();
     fold(authority(slot(&pool, _)));
     fold(slot(&pool, p + 1));
     step();
     fold(slot(&pool, p));
-    have count(slot(&pool, _)) == 2 by solve();
+    have count(slot(&pool, _)) == 2 by close();
     with(slot(&pool, p)) {
         with(slot(&pool, p + 1)) { step(); step(); }
     }
     unfold(slot(&pool, p));
     unfold(slot(&pool, p + 1));
     unfold(authority(slot(&pool, _)));
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }
 ```
 

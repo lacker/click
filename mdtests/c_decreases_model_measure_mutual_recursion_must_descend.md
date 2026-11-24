@@ -91,19 +91,19 @@ int32 walk_even(struct node* p) {
             let x = fold(list_at(p), { model: Links::Nil });
             step();
             step();
-            solve();
+            close();
         },
         Links::Cons(rest_model) => {
             let { rest: r } = unfold(x);
             apply(links_len_is_nonnegative(rest_model));
             have 0 <= links_len(r.model) by {
                 rewrite(r.model, rest_model);
-                known();
+                close();
             }
             have links_len(old(x.model)) == links_len(rest_model) + 1 by {
                 rewrite(old(x.model), Links::Cons(rest_model));
                 unfold(links_len(Links::Cons(rest_model)));
-                known();
+                close();
             }
             have links_len(r.model) < links_len(old(x.model)) by {
                 rewrite(r.model, rest_model);
@@ -114,7 +114,7 @@ int32 walk_even(struct node* p) {
             let x = fold(list_at(p), { model: Links::Cons(rest_model), rest: r });
             step();
             step();
-            solve();
+            close();
         },
     }
 }
@@ -133,7 +133,7 @@ int32 walk_odd(struct node* p) {
             let x = fold(list_at(p), { model: Links::Nil });
             step();
             step();
-            solve();
+            close();
         },
         Links::Cons(rest_model) => {
             let { rest: r } = unfold(x);
@@ -143,7 +143,7 @@ int32 walk_odd(struct node* p) {
             step();
             step();
             step();
-            solve();
+            close();
         },
     }
 }

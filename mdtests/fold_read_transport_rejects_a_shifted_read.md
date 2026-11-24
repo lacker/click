@@ -24,11 +24,11 @@ void set_end(int32 *v, int32 i, int32 n) {
     ensures ahead(v, 0, i) == old(ahead(v, 0, i));
 } by {
     mark entry;
-    have ahead(at(entry, v), 0, i) == ahead(at(entry, v), 0, i) by known();
+    have ahead(at(entry, v), 0, i) == ahead(at(entry, v), 0, i) by close();
     step();
     have ahead(at(entry, v), 0, i) == ahead(v, 0, i) by {
-        solve();
-        known();
+        close();
+        close();
     }
 }
 ```

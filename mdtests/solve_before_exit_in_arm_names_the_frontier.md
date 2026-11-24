@@ -43,7 +43,7 @@ void bump(struct cell* node) {
             step();
             step();
             let c = fold(cell(node), { model: Maybe::Some(2) });
-            solve();
+            close();
         },
     }
 }

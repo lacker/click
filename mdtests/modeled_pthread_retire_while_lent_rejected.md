@@ -36,7 +36,7 @@ int32 run() {
 } by {
     step();
     step();
-    branch { true => { step(); solve(); } false => {} }
+    branch { true => { step(); close(); } false => {} }
     fold(authority(reference(obj)));
     step();
     step();
@@ -45,7 +45,7 @@ int32 run() {
             unfold(authority(reference(obj)));
             step();
             step();
-            solve();
+            close();
         }
         false => {}
     }
@@ -53,7 +53,7 @@ int32 run() {
     step();
     step();
     step();
-    solve();
+    close();
 }
 ```
 

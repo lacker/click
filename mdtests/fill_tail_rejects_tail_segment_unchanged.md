@@ -31,7 +31,7 @@ int32 fill_tail_rejects_tail_segment_unchanged(int32 p[], int32 n) {
         invariant i >= 1 and i <= n;
     }
     step();
-    solve();
+    close();
 }
 ```
 

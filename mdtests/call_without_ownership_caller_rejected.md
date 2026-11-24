@@ -33,7 +33,7 @@ int32 caller() {
 } by {
     step();
     step();
-    solve();
+    close();
 }
 ```
 

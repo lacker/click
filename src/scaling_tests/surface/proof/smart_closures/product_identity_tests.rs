@@ -22,8 +22,8 @@ fn product_identity_planning_ignores_unrelated_facts() {
 {unrelated}    requires to_integer(a) * to_integer(b) <= 65535;
     let r: uint16 = a * b;
     ensures to_integer(r) == to_integer(a) * to_integer(b) by {{
-        have to_integer(r) == to_integer(a) * to_integer(b) by solve();
-        known();
+        have to_integer(r) == to_integer(a) * to_integer(b) by close();
+        close();
     }}
 }}
 "
@@ -36,7 +36,7 @@ fn product_identity_planning_ignores_unrelated_facts() {
     result.unwrap();
     let samples = work
         .iter()
-        .filter(|sample| sample.tactic.tactic_name == "solve")
+        .filter(|sample| sample.tactic.tactic_name == "close" && sample.tactic.class == "smart")
         .map(|sample| sample.work)
         .collect::<Vec<_>>();
     assert_eq!(samples.len(), sizes.len(), "{samples:?}");

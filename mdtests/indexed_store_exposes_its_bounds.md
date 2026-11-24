@@ -14,7 +14,7 @@ void set(int32* data, int32 len, int32 i) {
     owns data[0..len];
     requires 0 <= i and i < len;
 } by {
-    step() by { known(); }
+    step() by { close(); }
     step();
 }
 ```

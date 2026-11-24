@@ -2,7 +2,7 @@
 
 After execution the open goals are the proposition claims, in contract order,
 and a closer acts on the first of them. Here the first claim is `n == 0`,
-which no available fact states, so `known()` is refused for that goal. It
+which no available fact states, so `close()` is refused for that goal. It
 does not look further down the list for a claim it could close, as it used to:
 `result == n` waits for its turn.
 
@@ -20,11 +20,11 @@ int32 f(int32 n) {
     ensures result == n;
 } by {
     step_until(function.exit);
-    known();
+    close();
     normalize();
 }
 ```
 
 ```expect
-fail: `known` found no available fact or held instance for the current goal `n == 0`
+fail: `ensures n == 0` failed for `f.ensures_0` path 0
 ```

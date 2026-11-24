@@ -6,10 +6,10 @@
 //! is never negative. Those facts reach that arithmetic as the steps a proof would
 //! write by hand: each connected machine order fact is carried to `Integer`
 //! by `known` (a comparison of observations is the native comparison),
-//! and each unsigned value's observation gets its type range by `known()`.
+//! and each unsigned value's observation gets its type range by `close()`.
 //! Planning uses the original and carried facts, retaining only the bridges
 //! the resulting proof needs. Expansion writes ordinary Integer law
-//! applications, explicit range proofs, and `known()` observation identities;
+//! applications, explicit range proofs, and `close()` observation identities;
 //! legacy certificate routes remain for unmigrated forms. Planning is untrusted.
 
 use super::wide_arithmetic::{
@@ -672,7 +672,7 @@ mod tests {
 theorem shift_bound(v: uint64) {{
     requires {premise};
     ensures {goal} by {{
-        solve();
+        close();
     }}
 }}
 "#
@@ -680,9 +680,9 @@ theorem shift_bound(v: uint64) {{
             crate::surface::verify_click_theorems(&source).unwrap();
             let line = source
                 .lines()
-                .position(|line| line.contains("solve()"))
+                .position(|line| line.contains("close()"))
                 .unwrap();
-            let column = source.lines().nth(line).unwrap().find("solve()").unwrap();
+            let column = source.lines().nth(line).unwrap().find("close()").unwrap();
             let expanded =
                 crate::surface::expand_c_tactic_source_at(&source, &[], line + 1, column + 1)
                     .unwrap();
@@ -757,7 +757,7 @@ theorem identity(x: {ty}) {{
         let expanded =
             crate::surface::expand_c_tactic_source_at(&source, &[], line + 1, column + 1).unwrap();
         assert!(!expanded.contains("normalize("), "{expanded}");
-        assert!(expanded.contains("known();"), "{expanded}");
+        assert!(expanded.contains("close();"), "{expanded}");
         without_implicit_solve(|| crate::surface::verify_click_theorems(&expanded)).unwrap();
         let omitted = source.replace(&format!("using {{ {bound}; }}"), "using {}");
         assert!(
@@ -798,22 +798,22 @@ theorem product_identity(a: uint16, b: uint16) {
     requires to_integer(a) * to_integer(b) <= 65535;
     let r: uint16 = a * b;
     ensures to_integer(r) == to_integer(a) * to_integer(b) by {
-        have to_integer(r) == to_integer(a) * to_integer(b) by solve();
-        known();
+        have to_integer(r) == to_integer(a) * to_integer(b) by close();
+        close();
     }
 }
 "#;
         crate::surface::verify_click_theorems(source).unwrap();
         let line = source
             .lines()
-            .position(|line| line.contains("by solve()"))
+            .position(|line| line.contains("by close()"))
             .unwrap();
-        let column = source.lines().nth(line).unwrap().find("solve()").unwrap();
+        let column = source.lines().nth(line).unwrap().find("close()").unwrap();
         let expanded =
             crate::surface::expand_c_tactic_source_at(source, &[], line + 1, column + 1).unwrap();
         assert!(expanded.contains("::product_lower_bound("), "{expanded}");
         assert!(!expanded.contains("normalize("), "{expanded}");
-        assert!(expanded.contains("known();"), "{expanded}");
+        assert!(expanded.contains("close();"), "{expanded}");
         without_implicit_solve(|| crate::surface::verify_click_theorems(&expanded)).unwrap();
         // Without the upper bound the product may wrap; nothing gives it.
         let unbounded =
@@ -834,8 +834,8 @@ theorem strict(a: {ty}, b: {ty}) {{
     requires a <= b;
     requires a != b;
     ensures a < b by {{
-        have a < b by solve();
-        known();
+        have a < b by close();
+        close();
     }}
 }}
 "#
@@ -843,9 +843,9 @@ theorem strict(a: {ty}, b: {ty}) {{
             crate::surface::verify_click_theorems(&source).unwrap();
             let line = source
                 .lines()
-                .position(|line| line.contains("by solve()"))
+                .position(|line| line.contains("by close()"))
                 .unwrap();
-            let column = source.lines().nth(line).unwrap().find("solve()").unwrap();
+            let column = source.lines().nth(line).unwrap().find("close()").unwrap();
             let expanded =
                 crate::surface::expand_c_tactic_source_at(&source, &[], line + 1, column + 1)
                     .unwrap();
@@ -871,17 +871,17 @@ theorem strict(a: {ty}, b: {ty}) {{
 theorem successor_identity(x: int32) {
     requires x < 2147483647;
     ensures to_integer(x + 1) == to_integer(x) + 1 by {
-        have to_integer(x + 1) == to_integer(x) + 1 by solve();
-        known();
+        have to_integer(x + 1) == to_integer(x) + 1 by close();
+        close();
     }
 }
 "#;
         crate::surface::verify_click_theorems(source).unwrap();
         let line = source
             .lines()
-            .position(|line| line.contains("by solve()"))
+            .position(|line| line.contains("by close()"))
             .unwrap();
-        let column = source.lines().nth(line).unwrap().find("solve()").unwrap();
+        let column = source.lines().nth(line).unwrap().find("close()").unwrap();
         let expanded =
             crate::surface::expand_c_tactic_source_at(source, &[], line + 1, column + 1).unwrap();
         // The source's outer have and one generated identity proof.
@@ -906,17 +906,17 @@ function color_bit(color: Color) -> int32 {
 theorem low_bit_is_the_color_bit(bits: uint64, color: Color) {
     requires (bits & 1u64) == color_bit(color) as uint64;
     ensures (bits & 1u64) == color_bit(color) as uint64 by {
-        have (bits & 1u64) == color_bit(color) as uint64 by solve();
-        known();
+        have (bits & 1u64) == color_bit(color) as uint64 by close();
+        close();
     }
 }
 "#;
         crate::surface::verify_click_theorems(source).unwrap();
         let line = source
             .lines()
-            .position(|line| line.contains("by solve()"))
+            .position(|line| line.contains("by close()"))
             .unwrap();
-        let column = source.lines().nth(line).unwrap().find("solve()").unwrap();
+        let column = source.lines().nth(line).unwrap().find("close()").unwrap();
         let expanded =
             crate::surface::expand_c_tactic_source_at(source, &[], line + 1, column + 1).unwrap();
         assert!(!expanded.contains("equal_from_bounds"), "{expanded}");
@@ -948,8 +948,8 @@ theorem black_color_is_black(color: Color) {
         .unwrap();
     }
 
-    /// The connected-equality rewrite search is `solve`'s, so `solve()` alone
-    /// proves what used to need `solve()`.
+    /// The connected-equality rewrite search is `solve`'s, so `close()` alone
+    /// proves what used to need `close()`.
     #[test]
     fn solve_runs_the_connected_equality_rewrite_search() {
         crate::surface::verify_click_theorems(
@@ -963,7 +963,7 @@ theorem black_color_is_black(color: Color) {
         let ih = induct(color);
         match color {
             Color::Red => {
-                have not(color_black(Color::Red) == 1) by solve();
+                have not(color_black(Color::Red) == 1) by close();
                 contradiction(color_black(Color::Red) == 1);
             }
             Color::Black => { normalize(); }
@@ -1016,7 +1016,7 @@ theorem black_color_is_black(color: Color) {
                         rewrite(used, 0);
                         normalize();
                     }}
-                    known();
+                    close();
                 }}
             }}
         "#

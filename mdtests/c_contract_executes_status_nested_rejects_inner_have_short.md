@@ -52,10 +52,10 @@ theorem lift(callback: int32 (*)(int32*, int32))
             } else {
                 have cell[0] != 1;
             }
-            fold(Cell(cell)); solve();
+            fold(Cell(cell)); close();
         } else {
             have cell[0] == old(cell[0]) by { apply(result == 0 implies cell[0] == old(cell[0])); }
-            fold(Cell(cell)); solve();
+            fold(Cell(cell)); close();
         }
     }
 }
@@ -72,7 +72,7 @@ int32 check_update(int32 (*callback)(int32*, int32), int32* cell, int32 value) {
     step(Buffered);
     unfold(Cell(cell));
     if program::status != 0 {
-        have cell[0] == value by solve();
+        have cell[0] == value by close();
         step_until(function.exit); fold(Cell(cell));
     } else {
         have cell[0] == program::before;

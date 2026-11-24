@@ -14,10 +14,10 @@ uint32 probe() {
 } by {
     step_until(call(fill, 0).entry);
     step();
-    have ((&obj) as (uint8*))[0] == 120u8 by { known(); }
-    have ((&obj) as (uint8*))[1] == 86u8 by { known(); }
-    have ((&obj) as (uint8*))[2] == 52u8 by { known(); }
-    have ((&obj) as (uint8*))[3] == 18u8 by { known(); }
+    have ((&obj) as (uint8*))[0] == 120u8 by { close(); }
+    have ((&obj) as (uint8*))[1] == 86u8 by { close(); }
+    have ((&obj) as (uint8*))[2] == 52u8 by { close(); }
+    have ((&obj) as (uint8*))[3] == 18u8 by { close(); }
     step_until(function.exit);
-    solve();
+    close();
 }

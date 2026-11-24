@@ -15,7 +15,7 @@ uint32 shifted(uint32 x, int32 s) {
     ensures result == result;
 } by {
     step();
-    solve();
+    close();
 }
 ```
 

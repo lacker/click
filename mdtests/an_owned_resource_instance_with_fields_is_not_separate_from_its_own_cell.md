@@ -18,10 +18,10 @@ void caller(struct node* child, int32* slot) {
     owns b: box(child);
     owns *slot;
 } by {
-    have separate(b, memory(child->next)) by { known(); }
+    have separate(b, memory(child->next)) by { close(); }
 }
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: could not establish `separate(b, memory(child->next))`
 ```

@@ -26,7 +26,7 @@ int32 range_probe(uint8 bytes[], int32 len) {
     step() by {
         intro();
         intro();
-        have k < len by { known(); }
+        have k < len by { close(); }
         have to_integer(k + 1) <= to_integer(len) by {
             apply(click::integer::int32_increment_upper_bound(k, len));
         }
@@ -42,10 +42,10 @@ int32 range_probe(uint8 bytes[], int32 len) {
         }
         apply(click::separation::contains_subrange(bytes, 0, len + 1, k, k + 1));
         apply(click::separation::viewable_restrict(memory(bytes[0..len + 1]), memory(bytes[k..k + 1])));
-        known();
+        close();
     }
     step_until(function.exit);
-    solve();
+    close();
 }
 ```
 

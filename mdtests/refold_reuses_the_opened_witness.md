@@ -30,7 +30,7 @@ void explicit_refold(int32* p) {
     owns r: envelope(p);
 } by {
     let { child: c, base: q } = unfold(r);
-    have q == p by known();
+    have q == p by close();
     step();
     have *p == 7;
     let r = fold(envelope(p), { child: c });
@@ -40,7 +40,7 @@ void scoped_refold(int32* p) {
     owns r: tagged(p);
 } by {
     let { base: q } = unfold(r);
-    have q == p by known();
+    have q == p by close();
     fold(r);
     with(r) { step(); }
 }

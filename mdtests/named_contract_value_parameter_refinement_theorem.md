@@ -28,7 +28,7 @@ int32 add3(int32 x) {
 theorem add3_adds_three() {
     ensures Adds(&add3, { amount: 3 }) by {
         unfold(Adds(&add3, { amount: 3 }));
-        solve();
+        close();
     }
 }
 ```

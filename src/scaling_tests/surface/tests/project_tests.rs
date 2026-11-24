@@ -18,7 +18,7 @@ fn step_result_binding_work_scales_with_assigned_values() {
             proof.push_str(&format!("let {{ result: value_{index} }} = step();"));
         }
         source.push_str("return x;}");
-        proof.push_str("have value_0==0 by {solve();} step(); solve();}");
+        proof.push_str("have value_0==0 by {close();} step(); close();}");
         let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
             verify_c_sources(&proof, &[("assign.c", source.as_str())])
         });

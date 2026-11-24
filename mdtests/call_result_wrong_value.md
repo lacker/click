@@ -39,7 +39,7 @@ int classify(int x) {
                 unfold(classified(x));
                 normalize() using { x == 0; };
             }
-            solve();
+            close();
         }
         false => {}
     }
@@ -48,7 +48,7 @@ int classify(int x) {
         unfold(classified(x));
         normalize() using { not(x == 0); };
     }
-    solve();
+    close();
 }
 
 int has_class(int x) {
@@ -60,9 +60,9 @@ int has_class(int x) {
         rewrite(r, classified(x));
         normalize();
     }
-    branch { true => { step(); solve(); } false => {} }
+    branch { true => { step(); close(); } false => {} }
     step();
-    solve();
+    close();
 }
 ```
 

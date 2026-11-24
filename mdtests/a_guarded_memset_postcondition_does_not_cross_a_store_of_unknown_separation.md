@@ -28,7 +28,7 @@ void fill(uint8* dst, uint64 i) {
     step();
     mark filled;
     step();
-    have (0u64..4u64).all(|k| { defined(dst[k]) and dst[k] == 7 }) by { solve(); }
+    have (0u64..4u64).all(|k| { defined(dst[k]) and dst[k] == 7 }) by { close(); }
 }
 ```
 

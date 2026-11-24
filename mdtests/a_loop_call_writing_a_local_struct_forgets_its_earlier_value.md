@@ -38,7 +38,7 @@ int32 run(const int32 *p) {
 } by {
     step_until(loop(0).entry);
     have c.n == 0;
-    have separate(memory((&c as (uint8*))[0..4]), memory(p[0..1])) by { solve(); }
+    have separate(memory((&c as (uint8*))[0..4]), memory(p[0..1])) by { close(); }
     loop {
         decreases 3 - i;
         invariant 0 <= i and i <= 3;

@@ -441,8 +441,7 @@ fn expand_selection(
 }
 
 fn generate_expansion<R>(operation: impl FnOnce() -> Result<R, String>) -> Result<R, String> {
-    let (result, events) =
-        click::instrumentation::collect(|| click::surface::with_expansion_close_output(operation));
+    let (result, events) = click::instrumentation::collect(operation);
     if click::instrumentation::deadline_exceeded() {
         return Err(expansion_limit_error(
             "generating the selected tactic certificate",
@@ -761,10 +760,10 @@ mod tests {
         let (line_index, line) = click_source
             .lines()
             .enumerate()
-            .find(|(_, line)| *line == "    solve();")
+            .find(|(_, line)| *line == "    close();")
             .expect("fixture should contain an exit solve");
         let markdown_line = mdtest.click_start_line + line_index;
-        let column = line.find("solve()").unwrap() + 1;
+        let column = line.find("close()").unwrap() + 1;
         let selection = format!("{}:{markdown_line}:{column}", path.display());
         let arguments = parse_arguments([selection]).expect("fixture selection should parse");
         // Use the artifact loader so the C inputs survive both expansion and
@@ -995,7 +994,7 @@ int32 good(int32 x) {
     ensures result == x;
 }
 int32 bad(int32 x) {
-    ensures result == x + 1 by solve();
+    ensures result == x + 1 by close();
 }
 "#;
         let click_path = directory.join("project.click");
@@ -1022,7 +1021,7 @@ int32 bad(int32 x) {
         assert_ne!(expanded, click_source);
         assert!(
             expanded
-                .ends_with("int32 bad(int32 x) {\n    ensures result == x + 1 by solve();\n}\n")
+                .ends_with("int32 bad(int32 x) {\n    ensures result == x + 1 by close();\n}\n")
         );
         fs::remove_dir_all(directory).unwrap();
     }
@@ -1180,8 +1179,8 @@ int32 bad(int32 x) {
         };
         let direct = line_of("result == 18 => {") + 1;
         let have = line_of("have result < 0 by {");
-        assert_eq!(original_lines[direct - 1].trim(), "solve();");
-        assert_eq!(original_lines[have].trim(), "solve();");
+        assert_eq!(original_lines[direct - 1].trim(), "close();");
+        assert_eq!(original_lines[have].trim(), "close();");
         assert_eq!(original_lines[have + 1].trim(), "}");
         // (selected line, first and last rewritten line): selecting the
         // `solve` in the smart `have` selects that whole `have`.
@@ -1205,13 +1204,13 @@ int32 bad(int32 x) {
         }
     }
 
-    /// Loop phases: the smart `initialize by solve()` of a frontier-local
+    /// Loop phases: the smart `initialize by close()` of a frontier-local
     /// loop is selected by line.
     #[test]
     #[ignore = "nightly: 0.6s in the parallel gate"]
     fn lines_in_loop_phases_select_their_smart_tactics() {
         let path = mdtest_path("c_decreases_count_up.md");
-        let (line, text) = (27, "initialize by solve();");
+        let (line, text) = (27, "initialize by close();");
         assert_eq!(markdown_line(&path, line).trim(), text);
         let expanded = run_location(&path, &line.to_string())
             .unwrap_or_else(|error| panic!("line {line}: {error}"));
@@ -1282,18 +1281,18 @@ int32 bad(int32 x) {
             \x20   ensures result == x;\n\
             } by {\n\
             \x20   have x <= x by {\n\
-            \x20       have x == x by { solve(); }\n\
-            \x20       solve();\n\
+            \x20       have x == x by { close(); }\n\
+            \x20       close();\n\
             \x20   }\n\
-            \x20   have x >= x by { have x == x by solve(); solve(); }\n\
+            \x20   have x >= x by { have x == x by close(); close(); }\n\
             \x20   step_until(function.exit);\n\
-            \x20   solve();\n\
+            \x20   close();\n\
             }\n";
         fs::write(&click_path, click_source).unwrap();
 
         // Selection controls the rewritten span, not the closer's strategy.
         let assert_selected_solve_changed = |expanded: &str, offset: usize| {
-            let suffix = &click_source[offset + "solve();".len()..];
+            let suffix = &click_source[offset + "close();".len()..];
             assert!(expanded.starts_with(&click_source[..offset]), "{expanded}");
             assert!(expanded.ends_with(suffix), "{expanded}");
             let replacement = &expanded[offset..expanded.len() - suffix.len()];
@@ -1301,7 +1300,7 @@ int32 bad(int32 x) {
             assert_ne!(expanded, click_source);
         };
         let expanded = run_location(&click_path, "7").unwrap();
-        let selected = click_source.find("        solve();\n").unwrap() + 8;
+        let selected = click_source.find("        close();\n").unwrap() + 8;
         assert_selected_solve_changed(&expanded, selected);
         let ambiguous = run_location(&click_path, "9").expect_err("line 9 is ambiguous");
         let path = click_path.display();
@@ -1312,7 +1311,7 @@ int32 bad(int32 x) {
             "{ambiguous}"
         );
         let expanded = run_location(&click_path, "9:46").unwrap();
-        let selected = click_source.rfind("solve(); }").unwrap();
+        let selected = click_source.rfind("close(); }").unwrap();
         assert_selected_solve_changed(&expanded, selected);
         let between =
             run_location(&click_path, "8:5").expect_err("a closing brace selects nothing");
@@ -1368,7 +1367,7 @@ int32 identity(int32 x) {
         fs::create_dir(&directory).unwrap();
         let click_path = directory.join("project.click");
         let click_source = r#"theorem successor(x: int32) {
-    ensures x == x by { solve(); }
+    ensures x == x by { close(); }
 }
 "#;
         fs::write(&click_path, click_source).unwrap();
@@ -1430,10 +1429,10 @@ int32 f(int32 a, int32 b) {
     loop {
         decreases a + 1;
         invariant a <= 0;
-        initialize by solve();
+        initialize by close();
     }
     step();
-    solve();
+    close();
 }
 "#;
         let click_path = directory.join("project.click");
@@ -1449,7 +1448,7 @@ int32 f(int32 a, int32 b) {
             })
         };
 
-        let written = "initialize by solve();";
+        let written = "initialize by close();";
         let start = click_source.find(written).unwrap();
         let end = start + written.len();
         let by_label = expand("f.loop(0).initialize".to_string())
@@ -1494,7 +1493,7 @@ int32 f(int32 a, int32 b) {
         let click_path = directory.join("project.click");
         let click_source = r#"theorem add_one(x: Integer) {
     requires x == x;
-    ensures x + 1 > x by { solve(); }
+    ensures x + 1 > x by { close(); }
 }
 
 theorem use_add_one(x: Integer) {
@@ -1522,13 +1521,13 @@ theorem use_add_one(x: Integer) {
 
     #[test]
     fn invalid_generated_proof_replay_asks_for_a_bug_report() {
-        let original = "theorem reflexive(x: Integer) { ensures x == x by known(); }";
+        let original = "theorem reflexive(x: Integer) { ensures x == x by close(); }";
         let inputs = VerificationInput::Bundle(Vec::new());
         let claim = "reflexive.ensures_0";
         verify_expansion(None, original, original, &inputs, claim, false).unwrap();
 
         for generated in [
-            "theorem reflexive(x: Integer) { ensures x == x by { have x == x + 1 by known(); } }",
+            "theorem reflexive(x: Integer) { ensures x == x by { have x == x + 1 by close(); } }",
             "theorem reflexive(x: Integer) { ensures x == x by { ??? } }",
         ] {
             let error =
@@ -1545,7 +1544,7 @@ theorem use_add_one(x: Integer) {
         let source = r#"
 theorem written(x: int32) {
     requires x == 0;
-    ensures x == 0 by known();
+    ensures x == 0 by close();
 }
 theorem direct(x: int32) {
     requires x == 0;
@@ -1566,10 +1565,10 @@ theorem fallback(x: int32) {
                 .map_err(|error| error.report())
         })
         .unwrap();
-        assert!(expanded.contains("ensures x == 0 by known();"));
+        assert!(expanded.contains("ensures x == 0 by close();"));
         let fallback = expanded.split("theorem fallback").nth(1).unwrap();
         assert!(fallback.contains("intro();") && fallback.contains("close();"));
-        assert!(!fallback.contains("known();"));
+        assert!(!fallback.contains("known();") && !fallback.contains("solve();"));
         verify_expansion(None, source, &expanded, &inputs, claim, true).unwrap();
         // If a step goes missing, ordinary verification can still recover
         // at the new spelling. The whole-claim replay must refuse it.
@@ -1582,13 +1581,13 @@ theorem fallback(x: int32) {
     fn whole_claim_replay_refuses_search_even_in_nested_proofs() {
         let source = r#"
 theorem neighbor(x: int32) {
-    ensures x == 0 implies x == 0 by solve();
+    ensures x == 0 implies x == 0 by close();
 }
 theorem selected(x: int32) {
     ensures x == 0 implies x == 0 by {
         intro();
-        have x == 0 by { known(); }
-        known();
+        have x == 0 by { close(); }
+        close();
     }
 }
 "#;
@@ -1596,12 +1595,12 @@ theorem selected(x: int32) {
         let claim = "selected.ensures_0";
         verify_expansion(None, source, source, &inputs, claim, true).unwrap();
         for body in [
-            "solve();",
-            "intro(); have x == 0 by { solve(); } known();",
+            "close();",
+            "intro(); have x == 0 by { close(); } close();",
             "intro();",
         ] {
             let incomplete = source.replace(
-                "intro();\n        have x == 0 by { known(); }\n        known();",
+                "intro();\n        have x == 0 by { close(); }\n        close();",
                 body,
             );
             assert_ne!(source, incomplete);

@@ -157,7 +157,7 @@ int f() {
     branch {
         true => {
             step();
-            solve();
+            close();
         }
         false => {}
     }
@@ -167,18 +167,7 @@ int f() {
         true => {
             step();
             step();
-            solve();
-        }
-        false => {}
-    }
-    step();
-    step();
-    branch {
-        true => {
-            step();
-            step();
-            step();
-            solve();
+            close();
         }
         false => {}
     }
@@ -189,8 +178,7 @@ int f() {
             step();
             step();
             step();
-            step();
-            solve();
+            close();
         }
         false => {}
     }
@@ -202,8 +190,7 @@ int f() {
             step();
             step();
             step();
-            step();
-            solve();
+            close();
         }
         false => {}
     }
@@ -216,8 +203,7 @@ int f() {
             step();
             step();
             step();
-            step();
-            solve();
+            close();
         }
         false => {}
     }
@@ -231,8 +217,7 @@ int f() {
             step();
             step();
             step();
-            step();
-            solve();
+            close();
         }
         false => {}
     }
@@ -247,8 +232,7 @@ int f() {
             step();
             step();
             step();
-            step();
-            solve();
+            close();
         }
         false => {}
     }
@@ -264,8 +248,7 @@ int f() {
             step();
             step();
             step();
-            step();
-            solve();
+            close();
         }
         false => {}
     }
@@ -282,8 +265,7 @@ int f() {
             step();
             step();
             step();
-            step();
-            solve();
+            close();
         }
         false => {}
     }
@@ -301,8 +283,7 @@ int f() {
             step();
             step();
             step();
-            step();
-            solve();
+            close();
         }
         false => {}
     }
@@ -321,8 +302,27 @@ int f() {
             step();
             step();
             step();
+            close();
+        }
+        false => {}
+    }
+    step();
+    step();
+    branch {
+        true => {
             step();
-            solve();
+            step();
+            step();
+            step();
+            step();
+            step();
+            step();
+            step();
+            step();
+            step();
+            step();
+            step();
+            close();
         }
         false => {}
     }
@@ -339,7 +339,7 @@ int f() {
     step();
     step();
     step();
-    solve();
+    close();
 }
 ```
 

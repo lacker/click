@@ -45,7 +45,7 @@ void apply_step(void (*step)(int32*), int32* cells) {
 theorem proposed_broadly_mutable_contract() {
     ensures Progress(&broadly_mutable) by {
         unfold(Progress(&broadly_mutable));
-        solve();
+        close();
     }
 }
 

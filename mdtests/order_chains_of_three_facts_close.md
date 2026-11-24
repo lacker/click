@@ -1,6 +1,6 @@
 # Order chains of three facts close
 
-A chain of order facts composes one link at a time. `solve()` can select
+A chain of order facts composes one link at a time. `close()` can select
 the links itself, and `close() using` works from the listed premises.
 Expansion of the signed chain cites Integer lemmas for the selected links.
 
@@ -9,14 +9,14 @@ theorem signed_by_solve(x: int32, a: int32, b: int32) {
     requires x < a;
     requires a <= b;
     requires b <= 4;
-    ensures x < 4 by solve();
+    ensures x < 4 by close();
 }
 
 theorem unsigned_by_solve(x: uint32, a: uint32, b: uint32) {
     requires x < a;
     requires a <= b;
     requires b <= 4u32;
-    ensures x < 4u32 by solve();
+    ensures x < 4u32 by close();
 }
 
 theorem signed_by_arithmetic(x: int32, a: int32, b: int32) {

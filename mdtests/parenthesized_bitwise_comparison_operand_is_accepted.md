@@ -8,7 +8,7 @@ and Click group it the same way.
 theorem low_bit(x: uint32) {
     requires x == 2u32;
     ensures (x & 1u32) == 0u32 and x << 1u32 == 4u32 by {
-        solve();
+        close();
     }
 }
 ```

@@ -27,7 +27,7 @@ void restored(struct object* obj) {
         step();
         step();
     }
-    solve();
+    close();
 }
 ```
 

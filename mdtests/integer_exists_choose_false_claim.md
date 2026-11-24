@@ -6,11 +6,11 @@ theorem integer_exists_choose_false_claim() {
     ensures exists (k: Integer) { k != k } by {
         let candidate = obtain(exists (candidate: Integer) { candidate == candidate });
         witness(candidate);
-        known();
+        close();
     }
 }
 ```
 
 ```expect
-fail: known
+fail: could not establish `candidate != candidate`
 ```

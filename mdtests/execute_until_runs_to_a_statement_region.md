@@ -28,9 +28,9 @@ int32 probe(int32 x) {
     ensures result == x + 3;
 } by {
     step_until(statement(1).entry);
-    have y == x + 1 by solve();
+    have y == x + 1 by close();
     step_until(statement(1).call(f, 1).entry);
-    have y == x + 1 by solve();
+    have y == x + 1 by close();
 }
 ```
 

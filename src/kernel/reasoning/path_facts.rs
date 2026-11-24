@@ -1678,7 +1678,7 @@ pub(in crate::kernel) fn call_input_fact_is_already_known(
 }
 
 /// Discharge a required obligation using indexed facts, frozen atomic
-/// checkers, and the same goal-local AND/OR rule as `known()`. This does
+/// checkers, and the same goal-local AND/OR rule as `close()`. This does
 /// not unfold definitions, eliminate implications, or instantiate binders.
 pub(in crate::kernel) fn required_obligation_is_exactly_discharged(
     assumptions: &PureFactContext,

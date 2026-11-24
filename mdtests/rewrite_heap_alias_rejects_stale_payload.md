@@ -38,11 +38,11 @@ int32 run(int32 value) {
     ensures result == -1 or result == value;
 } by {
     step(); step();
-    branch { true => { step(); solve(); } false => {} }
+    branch { true => { step(); close(); } false => {} }
     step(); step();
-    branch { true => { step(); step(); solve(); } false => {} }
+    branch { true => { step(); step(); close(); } false => {} }
     step(); step(); step();
-    have h->target->payload == value by { rewrite(h->target, p); solve(); }
+    have h->target->payload == value by { rewrite(h->target, p); close(); }
 }
 ```
 

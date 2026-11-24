@@ -23,7 +23,7 @@ void keep(struct node* p) {
 } by {
     unfold(held);
     step();
-    have is_a<struct node>(p) by known();
+    have is_a<struct node>(p) by close();
     let held = fold(token(p), { model: old(held.model) });
 }
 ```

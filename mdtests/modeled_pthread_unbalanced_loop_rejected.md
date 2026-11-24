@@ -35,7 +35,7 @@ int32 run(struct holder *holder, int32 n) {
         invariant 0 <= i and i <= n;
     }
     step();
-    solve();
+    close();
 }
 ```
 

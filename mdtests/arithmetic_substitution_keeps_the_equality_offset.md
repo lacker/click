@@ -21,7 +21,7 @@ int32 next(int32 x, int32 y) {
 } by {
     have y <= x by { close() using { to_integer(y) == to_integer(x + 1); 0 <= x; }; }
     step();
-    solve();
+    close();
 }
 ```
 

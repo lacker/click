@@ -1,7 +1,7 @@
 # Indexed definedness returned through a by-value parameter
 
 The caller uses the pointer field of the callee’s copy to name the initialized
-byte. `known()` checks that the two paths use the same read.
+byte. `close()` checks that the two paths use the same read.
 
 ```c filename=copied_parameter_pointer_definedness_round_trips.c
 struct Buffer { unsigned char* data; unsigned long size; };
@@ -25,7 +25,7 @@ void caller(uint8* data, uint64 k) {
 } by {
     step_until(call(0).entry);
     step();
-    have defined(load<uint8>(call(0).parameter(b).data + k)) by { known(); }
+    have defined(load<uint8>(call(0).parameter(b).data + k)) by { close(); }
     step_until(function.exit);
 }
 ```

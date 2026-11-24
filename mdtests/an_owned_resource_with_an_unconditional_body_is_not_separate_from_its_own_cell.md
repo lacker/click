@@ -17,10 +17,10 @@ void caller(struct node* child, int32* slot) {
     owns plain(child);
     owns *slot;
 } by {
-    have separate(plain(child), memory(child->next)) by { known(); }
+    have separate(plain(child), memory(child->next)) by { close(); }
 }
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: could not establish `separate(plain(child), memory(child->next))`
 ```

@@ -58,9 +58,9 @@ int32 count_down(struct node* p, int32 n) {
             have Wrap::Wrap(entry_model) == Wrap::Wrap(old(c.model)) by {
                 rewrite(Wrap::Wrap(entry_model), w.model);
                 rewrite(w.model, Wrap::Wrap(old(c.model)));
-                solve();
+                close();
             }
-            have entry_model == old(c.model) by solve();
+            have entry_model == old(c.model) by close();
             loop {
                 decreases n;
                 owns w: wrap_at(p);
@@ -68,7 +68,7 @@ int32 count_down(struct node* p, int32 n) {
                 invariant w.model == Wrap::Wrap(entry_model);
             }
             step_until(function.exit);
-            solve();
+            close();
         },
     }
 }

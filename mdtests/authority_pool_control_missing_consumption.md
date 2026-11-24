@@ -36,7 +36,7 @@ void checkout(struct pool* pool, struct payload* p) {
     ensures pool->capacity == old(pool->capacity);
 } by {
     with(control(pool)) {
-        have 1 <= to_integer(count(slot(pool))) by { known(); }
+        have 1 <= to_integer(count(slot(pool))) by { close(); }
         have defined(pool->checked_out);
         have to_integer(pool->checked_out) + 1 <= 2147483647 by {
             close() using { to_integer(pool->checked_out) < 2147483647; };
@@ -44,13 +44,13 @@ void checkout(struct pool* pool, struct payload* p) {
         have to_integer(pool->checked_out) + 1 >= -2147483648 by {
             close() using { 0 <= to_integer(pool->checked_out); };
         }
-        have defined(pool->checked_out + 1) by { known(); }
+        have defined(pool->checked_out + 1) by { close(); }
         step();
         fold(item(pool, p));
-        have to_integer(pool->capacity) == to_integer(old(pool->capacity)) by { known(); }
+        have to_integer(pool->capacity) == to_integer(old(pool->capacity)) by { close(); }
         have to_integer(old(pool->capacity)) ==
             to_integer(old(pool->checked_out)) + to_integer(old(count(slot(pool)))) by {
-            known();
+            close();
         }
         have to_integer(pool->checked_out) == to_integer(old(pool->checked_out)) + 1 by {
             close() using {

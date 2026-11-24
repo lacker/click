@@ -35,7 +35,7 @@ void retain(struct object* left, struct object* right) {
             fold(reference(right));
         }
     }
-    solve();
+    close();
 }
 ```
 

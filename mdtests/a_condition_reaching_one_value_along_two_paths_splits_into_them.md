@@ -49,18 +49,18 @@ int32 both_positive_stepped(int32 x, int32 y) {
             step();
             step();
             step();
-            solve();
+            close();
         } else {
             step();
             step();
             step();
-            solve();
+            close();
         }
     } else {
         step();
         step();
         step();
-        solve();
+        close();
     }
 }
 ```

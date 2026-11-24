@@ -26,7 +26,7 @@ int32 retained_antecedent(int32 n) {
         have n / k == n;
         normalize();
     }
-    solve();
+    close();
 }
 ```
 

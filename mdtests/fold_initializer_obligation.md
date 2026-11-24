@@ -17,7 +17,7 @@ void make(int32 n) {
     requires n < 2147483647;
     produces c: counter();
 } by {
-    let c = fold(counter(), { next: n + 1 }) by { solve(); }
+    let c = fold(counter(), { next: n + 1 }) by { close(); }
 }
 ```
 

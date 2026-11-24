@@ -94,7 +94,7 @@ int32 inspect(struct node* p, struct node* q) {
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

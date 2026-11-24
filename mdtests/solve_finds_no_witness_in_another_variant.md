@@ -7,7 +7,7 @@ witness is read only off a constructor of the variant the goal names.
 ```click quick-solve
 theorem no_witness(r: Result<int32, uint8>) {
     requires r == Result<int32, uint8>::Err(5u8);
-    ensures exists (v: int32) { r == Result<int32, uint8>::Ok(v) } by { solve(); }
+    ensures exists (v: int32) { r == Result<int32, uint8>::Ok(v) } by { close(); }
 }
 ```
 

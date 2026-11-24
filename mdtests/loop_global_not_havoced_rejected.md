@@ -36,7 +36,7 @@ int32 loop_global_not_havoced_rejected(int32 n) {
         invariant i >= 0 and i <= n;
     }
     step();
-    solve();
+    close();
 }
 ```
 

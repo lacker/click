@@ -22,10 +22,10 @@ void caller(struct node* child, int32* slot) {
 } by {
     unfold(b);
     let d = fold(box(child), { tag: 0 });
-    have separate(d, memory(child->next)) by { known(); }
+    have separate(d, memory(child->next)) by { close(); }
 }
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: could not establish `separate(d, memory(child->next))`
 ```

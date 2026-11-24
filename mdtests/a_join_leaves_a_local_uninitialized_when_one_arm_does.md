@@ -34,7 +34,7 @@ int32 maybe(int32 x) {
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

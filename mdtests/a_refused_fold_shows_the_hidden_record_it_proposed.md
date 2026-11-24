@@ -37,7 +37,7 @@ void clear(struct pair* p) {
     let { first: c } = unfold(x);
     step_until(function.exit);
     let x = fold(pair(p), { first: c });
-    solve();
+    close();
 }
 ```
 

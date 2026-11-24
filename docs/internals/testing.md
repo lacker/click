@@ -1221,10 +1221,10 @@ typed solve closure as a closing probe, and much of that closure's cost was
 uncharged premise surface synthesis. The probe now asks the direct logical
 closer, and the synthesis is lazy and charged, so the heaviest arena `have`
 (`click profile`, after this calibration) is 488,691 units with every unit
-counted, and the heaviest smart tactic is the failing mdtest `solve`
-(1,040,194, then written `solve`). The smart tactics near it are named
-in `TacticWorkLimits::default` (an mdtest `solve` and the arena proofs' heavy
-`have`s); they are slow steps to reduce, not headroom. The same run's `run`
+counted, and the heaviest smart tactic is a failed mdtest closure search
+(1,040,194 units under the former `solve` spelling). The slow tactics listed
+near it in `TacticWorkLimits::default` include a failed closure search and the
+arena proofs' heaviest `have`s. The same run's `run`
 rows calibrate the whole-run budget: the largest whole verification is
 `examples/arena/arena_cells.click` at 6,536,557 units, so
 `DEFAULT_VERIFY_WORK_LIMIT`'s 50,000,000 leaves 7.6x. Recalibration must run
@@ -1456,12 +1456,12 @@ line (`arena` 1,382, `rbtree-insert` 1,456, `owned-vector` 2,434;
 `evals/speed-survey.sh` remains the whole-corpus survey: every
 example, wall time, so its number moves with the corpus.
 
-### The `solve` eval
+### The goal-closure eval
 
 `evals/solve.py` measures, for a sample of the hand-written `have`
 statements in the examples, how many the omitted proof `have P;` proves where
 they stand and how many can be deleted with the proof still verifying, against a committed
-baseline. A change to the implicit closer, `solve` or what they rely on quotes its result,
+baseline. A change to the implicit closer, `close()`, or what they rely on quotes its result,
 sites gained and lost, in the pull request. `evals/README.md`
 describes the corpus, the sampling and the baseline.
 
@@ -1610,15 +1610,14 @@ fail: expected diagnostic substring
 
 ### Writing quick solve tests
 
-A Quick Solve Test isolates one small inference that `solve()` or
-`close() using` should find or promptly refuse. Add `quick-solve` to the opening
+A Quick Solve Test isolates one small inference that `close()` should check, find, or promptly refuse. Add `quick-solve` to the opening
 `click` fence and use a normal `expect` block. Write the essential premises and
 one explicit closer that the verifier reaches exactly once. Keep any C setup
 to the operation needed to establish the premises. Name the file for the rule
 it exercises so related tests and near misses are easy to find.
 
 Write the closer as a step in a tactic script. Click profiles the short form
-`have P by solve()` under `have`, so it does not supply a solve sample.
+`have P by close()` under `have`, so it does not supply a solve sample.
 
 The mdtest gate checks the ordinary proof verdict and a shared limit of
 50,000 deterministic work units for the written closer, including tactics
@@ -1637,6 +1636,10 @@ MDTEST_QUICK_SOLVE=1 cargo test --lib --features fast-gate gate_tests::mdtests::
 `CLICK_TACTIC_WORK_REPORT` to a directory to inspect the per-tactic samples.
 The report's last column includes nested work. For calibration,
 `CLICK_DISABLE_TACTIC_BUDGETS=1` disables the cost verdict.
+
+A fixture that exercises direct checking can mark its opening Click fence
+`click checked-only`. The mdtest gate then verifies the fixture under the
+same no-search policy as `click verify --checked-only`.
 
 ### Termination is part of an mdtest's verdict
 
@@ -1868,7 +1871,7 @@ that class to prescribe the next action:
   no successful proof; normally decompose the proof, or write the argument a
   search miss of an elided form names. An interrupted search is a tooling bug
   only when it ignores or badly overshoots its enforced bound. A smart site is
-  a written `solve` or `step_until`, the implicit tail or closer, or a
+  a written `close()` or `step_until`, the implicit tail or closer, or a
   simple tactic written with an elided argument (see
   [`click profile`](../reference/cli/profile.md#report-interpretation)).
 - `SIMPLE` steps are deterministic checked operations. Do not expand them;

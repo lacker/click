@@ -40,7 +40,7 @@ int32 peek(struct cell* node, int32 x) {
     }
     step();
     step();
-    solve();
+    close();
 }
 ```
 

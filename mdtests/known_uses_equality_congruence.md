@@ -14,26 +14,26 @@ theorem rewritten_pointer_argument(p: int32*, q: int32*) {
     requires p == q;
     ensures tag(p) == 1 by {
         rewrite(p, q);
-        known();
+        close();
     }
 }
 
 theorem transported(x: int32, y: int32) {
     requires opaque(x) == 1;
     requires x == y;
-    ensures opaque(y) == 1 by known();
+    ensures opaque(y) == 1 by close();
 }
 
 theorem nested_application(x: int32, y: int32, z: int32) {
     requires nested(opaque(x)) == z;
     requires x == y;
-    ensures nested(opaque(y)) == z by known();
+    ensures nested(opaque(y)) == z by close();
 }
 
 theorem comparison(x: int32, y: int32, z: int32) {
     requires opaque(x) < z;
     requires x == y;
-    ensures opaque(y) < z by known();
+    ensures opaque(y) < z by close();
 }
 ```
 

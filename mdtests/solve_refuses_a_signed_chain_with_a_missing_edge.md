@@ -6,7 +6,7 @@ Nothing relates `a` to `b`, so `x < a` and `b <= 4` do not give `x < 4`.
 theorem broken(x: int32, a: int32, b: int32) {
     requires x < a;
     requires b <= 4;
-    ensures x < 4 by solve();
+    ensures x < 4 by close();
 }
 ```
 

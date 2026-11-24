@@ -53,7 +53,7 @@ int32 scan(int32 n) {
     loop {
         invariant i >= 0;
 
-        initialize by solve();
+        initialize by close();
         maintain by {
             if i == 3 {
                 step();
@@ -64,7 +64,7 @@ int32 scan(int32 n) {
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

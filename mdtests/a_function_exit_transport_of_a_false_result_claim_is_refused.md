@@ -17,9 +17,9 @@ int32 is_less(uint32 a, uint32 b) {
 } by {
     step_until(function.exit);
     have result == 1 by {
-        solve();
+        close();
     }
-    known();
+    close();
 }
 ```
 

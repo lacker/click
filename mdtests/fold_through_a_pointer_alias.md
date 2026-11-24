@@ -51,12 +51,12 @@ void keep(struct node* h) {
             let { child: c } = unfold(g);
             unfold(c);
             let c = fold(cell_at(id), { model: Cell::At(id) }) {
-                requires id != 0 by solve();
+                requires id != 0 by close();
                 requires id == id by normalize();
             }
             let g = fold(holder_at(h), { model: Cell::At(id), child: c });
             step_until(function.exit);
-            solve();
+            close();
         },
     }
 }

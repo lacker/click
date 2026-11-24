@@ -56,7 +56,7 @@ void mark(int32 *next, int32 *visited, int32 n, int32 j) {
         have next[k] == at(entry, next[k]) by {
             preserve(memory(next[k]), statement(0));
         }
-        known();
+        close();
     }
 }
 ```

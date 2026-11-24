@@ -26,14 +26,14 @@ int32 drift(int32 n) {
         decreases n - 6;
         invariant n >= 0;
         invariant n <= 100;
-        initialize by solve();
+        initialize by close();
         maintain by {
             have 0 <= to_integer(n - 1);
             step();
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

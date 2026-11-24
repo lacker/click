@@ -1,7 +1,7 @@
 # Grouped post-execution tactics respect source order
 
-`solve()` closes only claims provable at its position. A fact established by a
-later `have` does not retroactively affect that earlier `solve()` tactic.
+`close()` closes only claims provable at its position. A fact established by a
+later `have` does not retroactively affect that earlier `close()` tactic.
 
 ```c filename=grouped_post_order.c
 int32 identity(int32 x) {
@@ -16,10 +16,10 @@ int32 identity(int32 x) {
     ensures exists (k: int32) { k + 1 == result + 1 };
 } by {
     step_until(function.exit);
-    solve();
+    close();
     have exists (k: int32) { k + 1 == result + 1 } by {
         witness(result);
-        solve();
+        close();
     }
 }
 ```

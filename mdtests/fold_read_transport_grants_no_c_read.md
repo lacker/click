@@ -29,22 +29,22 @@ theorem same_zeros(p: int32[], q: int32[], lo: int32, n: int32, hi: int32) {
         if hi <= lo {
             unfold(zeros(p, lo, hi));
             unfold(zeros(q, lo, hi));
-            known();
+            close();
         } else {
             have lo < hi;
-            have 0 <= to_integer(hi - 1) by { solve(); }
-            have to_integer(hi - 1) < to_integer(hi) by { solve(); }
-            have to_integer(hi - 1) <= to_integer(n) by { solve(); }
+            have 0 <= to_integer(hi - 1) by { close(); }
+            have to_integer(hi - 1) < to_integer(hi) by { close(); }
+            have to_integer(hi - 1) <= to_integer(n) by { close(); }
             apply(ih(hi - 1));
-            have to_integer(hi - 1) < to_integer(n) by { solve(); }
-            have to_integer(lo) <= to_integer(hi - 1) by { solve(); }
+            have to_integer(hi - 1) < to_integer(n) by { close(); }
+            have to_integer(lo) <= to_integer(hi - 1) by { close(); }
             have lo <= (hi - 1) and (hi - 1) < n;
             instantiate(forall (k: int32) { lo <= k and k < n implies p[k] == q[k] }, hi - 1);
-            have to_integer(hi - 1) < 2147483647 by { solve(); }
+            have to_integer(hi - 1) < 2147483647 by { close(); }
             unfold(zeros(p, lo, hi));
             unfold(zeros(q, lo, hi));
             rewrite(p[hi - 1], q[hi - 1]);
-            known();
+            close();
         }
     }
 }
@@ -72,7 +72,7 @@ int32 set_then_read(int32 *v, int32 i) {
     have zeros(v, 0, i) == at(entry, zeros(v, 0, i)) by {
         apply(same_zeros(v, at(entry, v), 0, i, i));
     }
-    have zeros(v, 0, i) == 0 by { known(); }
+    have zeros(v, 0, i) == 0 by { close(); }
     step();
 }
 ```

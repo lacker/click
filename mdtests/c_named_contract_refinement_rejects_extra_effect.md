@@ -21,7 +21,7 @@ theorem wide_effect_is_first_cell_effect(
     ensures FirstCellEffect(callback) by {
         unfold(WideEffect(callback));
         unfold(FirstCellEffect(callback));
-        solve();
+        close();
     }
 }
 ```

@@ -24,22 +24,22 @@ function count(t: Tree) -> int32 decreases t {
 
 theorem nested_constructors(v: int32, w: int32, r: Tree, s: Tree) {
     ensures count(Tree::Node(v, Tree::Node(w, Tree::Leaf, s), r)) == 2 by {
-        have count(Tree::Leaf) == 0 by solve();
-        have count(Tree::Node(w, Tree::Leaf, s)) == 1 by solve();
-        solve();
+        have count(Tree::Leaf) == 0 by close();
+        have count(Tree::Node(w, Tree::Leaf, s)) == 1 by close();
+        close();
     };
 }
 
 theorem constructors_through_equations(t: Tree, u: Tree, v: int32, w: int32, r: Tree, s: Tree) {
     requires u == Tree::Node(w, Tree::Leaf, s);
     requires t == Tree::Node(v, u, r);
-    ensures count(t) == 2 by solve();
+    ensures count(t) == 2 by close();
 }
 
 theorem an_unknown_tail_stays_folded(t: Tree, v: int32, l: Tree, r: Tree) {
     requires t == Tree::Node(v, l, r);
     requires count(l) == 3;
-    ensures count(t) == 4 by solve();
+    ensures count(t) == 4 by close();
 }
 ```
 

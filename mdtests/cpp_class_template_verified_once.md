@@ -66,31 +66,31 @@ int round_trip(Cell<int>& small, Cell<unsigned int>& large, int x, unsigned int 
     ensures result == x;
 } by {
     step();
-    have small.value == x by { known(); }
+    have small.value == x by { close(); }
     mark before_large;
     step();
     have contains(memory(small.value), memory((&small.value)[0..1])) by { normalize(); }
-    have contains(memory(large), region(1).footprint) by { known(); }
-    have separate(memory(large), memory(small.value)) by { known(); }
+    have contains(memory(large), region(1).footprint) by { close(); }
+    have separate(memory(large), memory(small.value)) by { close(); }
     apply(click::separation::separate_restrict(memory(large), memory(small.value), region(1).footprint, memory((&small.value)[0..1])));
     have small.value == at(before_large, small.value) by {
         preserve(memory((&small.value)[0..1]), region(1));
     }
     have small.value == x by {
         rewrite(small.value, at(before_large, small.value));
-        known();
+        close();
     }
     step();
     step();
     step();
     step();
-    have small.value == x by { known(); }
+    have small.value == x by { close(); }
     let { result: got } = step();
-    have got == small.value by { known(); }
-    have got == x by { rewrite(got, small.value); known(); }
+    have got == small.value by { close(); }
+    have got == x by { rewrite(got, small.value); close(); }
     step();
-    have result == got by { known(); }
-    have result == x by { rewrite(result, got); known(); }
+    have result == got by { close(); }
+    have result == x by { rewrite(result, got); close(); }
 }
 ```
 

@@ -1082,7 +1082,7 @@ fn adler_uint64_specification_agrees_with_the_int32_one_and_does_not_narrow() {
     let past_int32 = "theorem adler_byte_past_four_gib(bytes: uint8[]) {
  ensures adler_byte_sum_u64(bytes, 4294967297u64) == adler_byte_sum_u64(bytes, 4294967296u64) + to_integer(bytes[4294967296u64]) by {
   apply(adler_sum_append_u64(bytes, 4294967297u64));
-  solve();
+  close();
  }
 }";
     click::surface::verify_click_theorems(&format!("{source}\n{past_int32}"))
@@ -1090,10 +1090,10 @@ fn adler_uint64_specification_agrees_with_the_int32_one_and_does_not_narrow() {
     let wrapped = "theorem adler_four_gib_wraps(bytes: uint8[], length: uint64) {
  requires length == 4294967296u64;
  ensures adler_byte_sum_u64(bytes, length) == 0 by {
-  have length == 0u64 by solve();
+  have length == 0u64 by close();
   rewrite(length, 0u64);
   apply(adler_sum_empty_u64(bytes, 0));
-  solve();
+  close();
  }
 }";
     assert!(

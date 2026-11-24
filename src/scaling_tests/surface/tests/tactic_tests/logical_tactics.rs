@@ -23,7 +23,7 @@ fn pure_witness_integer_aliases_keep_shared_term_scaling() {
                 };
                 source.push_str(&format!("let a{index}: Integer = {value};\n"));
             }
-            source.push_str(&format!("ensures exists (q: Integer) {{ q == a{depth} }} by {{ witness(a{depth}); solve(); }} }}"));
+            source.push_str(&format!("ensures exists (q: Integer) {{ q == a{depth} }} by {{ witness(a{depth}); close(); }} }}"));
             let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
                 verify_c_sources(&source, &[])
             });
@@ -73,12 +73,12 @@ fn extracting_two_call_equalities_ignores_earlier_call_history() {
                 step();
                 have 0 <= to and to < n implies v[to] == at(start, v[to]) by {{
                     intro();
-                    have v[to] == at(middle, v[to]) by known();
-                    have at(middle, v[to]) == at(start, v[to]) by known();
-                    known();
+                    have v[to] == at(middle, v[to]) by close();
+                    have at(middle, v[to]) == at(start, v[to]) by close();
+                    close();
                 }}
                 step();
-                known();
+                close();
             }}
         "#,
             "step();".repeat(preceding)

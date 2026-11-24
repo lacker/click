@@ -48,7 +48,7 @@ pub(in crate::kernel) fn named_contract_refinement_theorem_skeleton(
             "theorem {theorem}() {{\n    \
              ensures {contract}(&{function}) by {{\n        \
              unfold({contract}(&{function}));\n        \
-             solve();\n    \
+             close();\n    \
              }}\n\
              }}",
             contract = contract.name(),
@@ -100,7 +100,7 @@ pub(in crate::kernel) fn named_contract_refinement_theorem_skeleton(
         "theorem {theorem}() executes {function}({parameters}) {{\n    \
          ensures {contract}(&{function}) as {{ {target} }} by {{\n        \
          {binding}step({function}, {{ {input_map} }});\n        \
-         solve();\n    \
+         close();\n    \
          }}\n\
          }}",
         contract = contract.name(),

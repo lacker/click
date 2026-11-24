@@ -30,7 +30,7 @@ void start(struct channel* channel) {
 } by {
     step(atomic_init, { payload: ready_payload(channel) });
     step();
-    solve();
+    close();
 }
 ```
 

@@ -27,13 +27,13 @@ theorem preserves(b: Box, n: Integer) {
     ensures identity(b) == Box::Box(n) by {
         unfold(identity(b));
         rewrite(b, Box::Box(n));
-        known();
+        close();
     }
 }
 theorem concrete(n: Integer) {
     ensures identity(Box::Box(n)) == Box::Box(n) by {
         unfold(identity(Box::Box(n)));
-        known();
+        close();
     }
 }
 theorem nested_fields(b: Box, other: Box, n: Integer, m: Integer) {
@@ -43,7 +43,7 @@ theorem nested_fields(b: Box, other: Box, n: Integer, m: Integer) {
         unfold(nested(b, other));
         rewrite(b, Box::Box(n));
         rewrite(other, Box::Box(m));
-        solve();
+        close();
     }
 }
 theorem shadows(b: Box, other: Box, n: Integer, m: Integer, ambient: Integer) {
@@ -53,7 +53,7 @@ theorem shadows(b: Box, other: Box, n: Integer, m: Integer, ambient: Integer) {
         unfold(shadow(b, other, ambient));
         rewrite(b, Box::Box(n));
         rewrite(other, Box::Box(m));
-        solve();
+        close();
     }
 }
 theorem swaps(p: Pair, a: Integer, b: Integer) {
@@ -61,7 +61,7 @@ theorem swaps(p: Pair, a: Integer, b: Integer) {
     ensures swap(p) == Pair::Pair(b, a) by {
         unfold(swap(p));
         rewrite(p, Pair::Pair(a, b));
-        solve();
+        close();
     }
 }
 theorem captures(b: Box, payload: Integer, ambient: Integer) {
@@ -69,7 +69,7 @@ theorem captures(b: Box, payload: Integer, ambient: Integer) {
     ensures capture(b, ambient) == Pair::Pair(payload, ambient) by {
         unfold(capture(b, ambient));
         rewrite(b, Box::Box(payload));
-        solve();
+        close();
     }
 }
 ```

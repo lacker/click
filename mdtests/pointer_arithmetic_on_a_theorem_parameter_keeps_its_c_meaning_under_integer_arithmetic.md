@@ -17,7 +17,7 @@ theorem pointer_add_zero_equals(
     requires offset == 0;
 
     ensures base + offset == target by {
-        solve();
+        close();
     }
 }
 ```

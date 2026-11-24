@@ -42,7 +42,7 @@ int32 chase(struct box* box) {
         invariant 0 <= i and i <= box->len and box->len <= 1000;
     }
     step();
-    solve();
+    close();
 }
 ```
 

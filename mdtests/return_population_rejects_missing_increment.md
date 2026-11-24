@@ -25,7 +25,7 @@ struct object* retain(struct object* obj) {
     ensures result == obj;
 } by {
     with(control(obj)) { fold(reference(obj)); }
-    solve();
+    close();
 }
 ```
 

@@ -32,7 +32,7 @@ void advance(parse_buffer * const b) {
 } by {
     step();
     step();
-    have b->offset == at(statement(0).exit, b->offset) + 5u64 by { solve(); }
+    have b->offset == at(statement(0).exit, b->offset) + 5u64 by { close(); }
 }
 ```
 

@@ -30,7 +30,7 @@ void loop_body_store_into_viewed_memory_rejected(int32 r[], int32 n) {
         invariant i >= 0 and i <= n;
     }
     step();
-    solve();
+    close();
 }
 ```
 

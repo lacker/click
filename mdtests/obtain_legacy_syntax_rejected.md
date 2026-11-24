@@ -5,7 +5,7 @@ theorem legacy_obtain() {
     requires exists (x: int32) { x == 0 };
     ensures true by {
         obtain (x: int32) { x == 0 }
-        known();
+        close();
     }
 }
 ```

@@ -28,7 +28,7 @@ fn proof_step_supports_explicit_fact_transport() {
                     old(p[0]) == 7;
                 }
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -94,7 +94,7 @@ fn explicit_fact_transport_can_certify_a_derived_source() {
                     old(p[0]) <= old(p[1]);
                 };
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -183,7 +183,7 @@ fn smart_step_starts_each_source_tactic_with_an_empty_step_delta() {
                 unfold(ordered(p));
                 step();
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -253,7 +253,7 @@ fn clone_field_stores_with_observed_source_resource_verify() {
             step();
             step();
             step();
-            solve();
+            close();
         }
     "#;
 
@@ -541,7 +541,7 @@ fn no_premise_smart_step_searches_directly_on_proof() {
                 ensures result == 0;
             } by {
                 step();
-                known();
+                close();
             }
         "#;
 
@@ -586,7 +586,7 @@ fn scalar_root_facts_do_not_force_smart_step_planning() {
                 ensures result == 0;
             } by {
                 step();
-                known();
+                close();
             }
         "#;
 
@@ -632,7 +632,7 @@ fn fact_free_linear_smart_steps_search_directly_on_proof() {
             } by {
                 step();
                 step();
-                known();
+                close();
             }
         "#;
 
@@ -688,7 +688,7 @@ fn local_assignment_smart_step_selects_only_local_surface_dependencies() {
             } by {
                 step();
                 step();
-                known();
+                close();
             }
         "#;
 
@@ -748,7 +748,7 @@ fn execute_rest_return_certificate_omits_unused_ambient_facts() {
                 ensures result == x;
             } by {
                 step_until(function.exit);
-                solve();
+                close();
             }
         "#;
 
@@ -757,9 +757,10 @@ fn execute_rest_return_certificate_omits_unused_ambient_facts() {
     let expanded = verified[0]
         .expanded_proof_tactics()
         .expect("the return proof should have a surface expansion");
-    assert_eq!(expanded[0], ProofTactic::Step);
-    assert!(matches!(expanded[1], ProofTactic::Have(_)));
-    assert_eq!(expanded[2], ProofTactic::Known);
+    let [ProofTactic::Step, ProofTactic::Known, remaining @ ..] = expanded.as_slice() else {
+        panic!("expected a return step and direct closures: {expanded:?}");
+    };
+    assert!(remaining.iter().all(|tactic| *tactic == ProofTactic::Known));
 
     let execute_offset = click_source
         .find("step_until(function.exit)")
@@ -792,7 +793,7 @@ fn linear_execute_retains_its_checked_execution_proof() {
                 ensures result == 0;
             } by {
                 step_until(function.exit);
-                known();
+                close();
             }
         "#;
 
@@ -828,7 +829,7 @@ fn linear_execute_until_retains_its_checked_execution_proof() {
             } by {
                 step_until(region(2).entry);
                 step_until(function.exit);
-                known();
+                close();
             }
         "#;
 
@@ -878,11 +879,11 @@ fn execute_step_omits_materialization_only_transport() {
             } by {
                 unfold(first_is_seven(p));
                 have p[0] == 7 by {
-                    known();
+                    close();
                 }
                 step();
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -957,7 +958,7 @@ fn execute_step_omits_materialized_mixed_state_transport() {
                 unfold(first_less_than_second(p));
                 step();
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -1026,7 +1027,7 @@ fn execute_step_omits_materialization_transport_across_statements() {
                 step();
                 step();
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -1097,7 +1098,7 @@ fn execute_step_expands_call_assign_fact_from_internal_state() {
             } by {
                 step();
                 step();
-                solve();
+                close();
             }
 
             int32 call_set_seven(int32 p[1]) {
@@ -1107,7 +1108,7 @@ fn execute_step_expands_call_assign_fact_from_internal_state() {
             } by {
                 step();
                 step();
-                solve();
+                close();
             }
         "#;
 
@@ -1327,7 +1328,7 @@ fn bare_step_proves_an_open_obligation_by_implicit_solve() {
 
             int32 compare_self(uint8 bytes[]) {
                 views bytes[0..2];
-                ensures 1 == 1 by { step(); step(); solve(); }
+                ensures 1 == 1 by { step(); step(); close(); }
             }
         "#;
     let (verified, planning_transitions) = collect_planning_statement_transitions(|| {
@@ -1374,20 +1375,20 @@ void change(struct node *g, struct node *source, struct node *t) {
     match c.model ensuring { owns c: child(t); fact c.model == old(c.model); fact g->right == p; } {
         Model::Empty => {
             unfold(c); step(); step();
-            have g->right == p by { solve(); }
+            have g->right == p by { close(); }
             let c = fold(child(t), { model: Model::Empty });
-            have c.model == old(c.model) by { solve(); }
+            have c.model == old(c.model) by { close(); }
         },
         Model::Nonempty => {
             unfold(c); step(); step(); step();
-            have g->right == p by { solve(); }
+            have g->right == p by { close(); }
             let c = fold(child(t), { model: Model::Nonempty });
-            have c.model == old(c.model) by { solve(); }
+            have c.model == old(c.model) by { close(); }
         },
     }
     mark before_tag;
-    have at(before_tag, g->right == p) by { known(); }
-    have separate(memory(g->right), memory(p->tag)) by { known(); }
+    have at(before_tag, g->right == p) by { close(); }
+    have separate(memory(g->right), memory(p->tag)) by { close(); }
     step();
     have separate(statement(2).footprint, memory(g->right)) by {
         normalize() using { separate(memory(g->right), memory(p->tag)); };
@@ -1397,9 +1398,9 @@ void change(struct node *g, struct node *source, struct node *t) {
     }
     have g->right == p by {
         rewrite(g->right, at(before_tag, g->right));
-        known();
+        close();
     }
-    step(); solve();
+    step(); close();
 }
 "#;
     verify_c_sources(click_source, &[("join.c", c_source)])
@@ -1468,8 +1469,8 @@ fn prepared_call_cannot_use_its_postcondition_to_prove_its_precondition() {
     let c = "int32 caller(int32 a) { return callee(a); }";
     for step in [
         "step();",
-        "step() by known();",
-        "step() { requires positive(a) == 1 by known(); }",
+        "step() by close();",
+        "step() { requires positive(a) == 1 by close(); }",
     ] {
         let source = format!(
             r#"
@@ -1483,7 +1484,7 @@ extern int32 callee(int32 x) {{
 int32 caller(int32 a) {{
     requires a < 0;
     ensures result == a;
-}} by {{ {step} step(); solve(); }}
+}} by {{ {step} step(); close(); }}
 "#
         );
         verify_c_sources(&source, &[("call.c", c)])
@@ -1513,7 +1514,7 @@ int32 caller(int32 a, int32 b) {
             unfold(positive(a)); normalize() using { a > 0; };
         }
     }
-    step(); solve();
+    step(); close();
 }
 "#;
     let c = "int32 caller(int32 a, int32 b) { return callee(a, b); }";

@@ -40,14 +40,14 @@ void touch(int32* flags, int32* data, int32 n) {
     unfold(cells(flags, data, n));
     unfold(cells(flags, data, n)[0]);
     step();
-    have separate(memory(data[0]), memory(flags[0])) by { known(); }
+    have separate(memory(data[0]), memory(flags[0])) by { close(); }
     have separate(statement(0).footprint, memory(flags[0])) by {
-        known();
+        close();
     }
     have flags[0] == old(flags[0]) by {
         preserve(memory(flags[0]), statement(0));
     }
-    have flags[0] == 0 by { known(); }
+    have flags[0] == 0 by { close(); }
     fold(cells(flags, data, n)[0]);
     fold(cells(flags, data, n));
 }
@@ -62,14 +62,14 @@ int32 keep(int32* flags, int32* data, int32 n, int32* b) {
     ensures result == old(*b);
 } by {
     step() {
-        requires separate(memory(flags[0..n]), memory(*b)) by known();
-        requires separate(memory(data[0..n]), memory(*b)) by known();
+        requires separate(memory(flags[0..n]), memory(*b)) by close();
+        requires separate(memory(data[0..n]), memory(*b)) by close();
     }
     step() {
-        requires separate(memory(flags[0..n]), memory(*b)) by known();
-        requires separate(memory(data[0..n]), memory(*b)) by known();
+        requires separate(memory(flags[0..n]), memory(*b)) by close();
+        requires separate(memory(data[0..n]), memory(*b)) by close();
     }
-    have *b == old(*b) by { known(); }
+    have *b == old(*b) by { close(); }
 }
 int32 root(int32* flags, int32* b) {
     owns cells(flags, b, 1);

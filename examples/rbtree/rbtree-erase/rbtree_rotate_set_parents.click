@@ -49,15 +49,15 @@ void __rb_change_child(struct rb_node* old, struct rb_node* new,
             let { sibling: sibling, up: outer } = unfold(before);
             mark before_link_write;
             have separate(memory(parent->rb_left), memory(identity->__rb_parent_color)) by {
-                rewrite(parent, identity); known();
+                rewrite(parent, identity); close();
             }
             step_until(function.exit);
-            have separate(statement(0).statement(0).statement(0).footprint, memory(identity->__rb_parent_color)) by known();
+            have separate(statement(0).statement(0).statement(0).footprint, memory(identity->__rb_parent_color)) by close();
             have identity->__rb_parent_color == at(before_link_write, identity->__rb_parent_color) by {
                 preserve(memory(identity->__rb_parent_color), statement(0).statement(0).statement(0));
             }
             have ((identity->__rb_parent_color & ~3) as (struct rb_node *)) == grandparent by {
-                rewrite(identity->__rb_parent_color, at(before_link_write, identity->__rb_parent_color)); known();
+                rewrite(identity->__rb_parent_color, at(before_link_write, identity->__rb_parent_color)); close();
             }
             let after = fold(ctx_at(new, root), {
                 model: Context::Left(identity, grandparent, color, sibling_model, outer_model),
@@ -94,20 +94,20 @@ void __rb_change_child(struct rb_node* old, struct rb_node* new,
                     let sibling = fold(rb_at(0), { model: RbTree::Empty });
                     mark before_link_write;
                     have separate(memory(parent->rb_right), memory(identity->__rb_parent_color)) by {
-                        rewrite(parent, identity); known();
+                        rewrite(parent, identity); close();
                     }
                     step_until(function.exit);
-                    have separate(statement(0).statement(0).statement(1).footprint, memory(identity->__rb_parent_color)) by known();
+                    have separate(statement(0).statement(0).statement(1).footprint, memory(identity->__rb_parent_color)) by close();
                     have identity->__rb_parent_color == at(before_link_write, identity->__rb_parent_color) by {
                         preserve(memory(identity->__rb_parent_color), statement(0).statement(0).statement(1));
                     }
                     have ((identity->__rb_parent_color & ~3) as (struct rb_node *)) == grandparent by {
-                        rewrite(identity->__rb_parent_color, at(before_link_write, identity->__rb_parent_color)); known();
+                        rewrite(identity->__rb_parent_color, at(before_link_write, identity->__rb_parent_color)); close();
                     }
                     have separate(memory(parent->rb_right), memory(identity->rb_left)) by {
-                        rewrite(parent, identity); known();
+                        rewrite(parent, identity); close();
                     }
-                    have separate(statement(0).statement(0).statement(1).footprint, memory(identity->rb_left)) by known();
+                    have separate(statement(0).statement(0).statement(1).footprint, memory(identity->rb_left)) by close();
                     have identity->rb_left == at(before_link_write, identity->rb_left) by {
                         preserve(memory(identity->rb_left), statement(0).statement(0).statement(1));
                     }
@@ -120,29 +120,29 @@ void __rb_change_child(struct rb_node* old, struct rb_node* new,
                 },
                 RbTree::Node(sid, sp, sc, sl, sr) => {
                     let { left: left, right: right } = unfold(sibling);
-                    have separate(memory(identity->rb_left->__rb_parent_color), memory(old->__rb_parent_color)) by known();
-                    have identity->rb_left != old by known();
-                    have parent->rb_left != old by { rewrite(parent, identity); known(); }
+                    have separate(memory(identity->rb_left->__rb_parent_color), memory(old->__rb_parent_color)) by close();
+                    have identity->rb_left != old by close();
+                    have parent->rb_left != old by { rewrite(parent, identity); close(); }
                     let sibling = fold(rb_at(identity->rb_left), {
                         model: RbTree::Node(sid, sp, sc, sl, sr),
                         left: left, right: right
                     });
                     mark before_link_write;
                     have separate(memory(parent->rb_right), memory(identity->__rb_parent_color)) by {
-                        rewrite(parent, identity); known();
+                        rewrite(parent, identity); close();
                     }
                     step_until(function.exit);
-                    have separate(statement(0).statement(0).statement(1).footprint, memory(identity->__rb_parent_color)) by known();
+                    have separate(statement(0).statement(0).statement(1).footprint, memory(identity->__rb_parent_color)) by close();
                     have identity->__rb_parent_color == at(before_link_write, identity->__rb_parent_color) by {
                         preserve(memory(identity->__rb_parent_color), statement(0).statement(0).statement(1));
                     }
                     have ((identity->__rb_parent_color & ~3) as (struct rb_node *)) == grandparent by {
-                        rewrite(identity->__rb_parent_color, at(before_link_write, identity->__rb_parent_color)); known();
+                        rewrite(identity->__rb_parent_color, at(before_link_write, identity->__rb_parent_color)); close();
                     }
                     have separate(memory(parent->rb_right), memory(identity->rb_left)) by {
-                        rewrite(parent, identity); known();
+                        rewrite(parent, identity); close();
                     }
-                    have separate(statement(0).statement(0).statement(1).footprint, memory(identity->rb_left)) by known();
+                    have separate(statement(0).statement(0).statement(1).footprint, memory(identity->rb_left)) by close();
                     have identity->rb_left == at(before_link_write, identity->rb_left) by {
                         preserve(memory(identity->rb_left), statement(0).statement(0).statement(1));
                     }

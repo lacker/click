@@ -25,12 +25,12 @@ int32 live() throws int32 {
     outcomes {
         returned(value) => {
             step();
-            have value == 5 by known();
-            solve();
+            have value == 5 by close();
+            close();
         }
         threw(error) => {
-            have error == 7 by known();
-            solve();
+            have error == 7 by close();
+            close();
         }
     }
 }
@@ -42,12 +42,12 @@ int32 deferred() throws int32 {
     step();
     outcomes {
         returned(value) => {
-            have value == 5 by known();
-            solve();
+            have value == 5 by close();
+            close();
         }
         threw(error) => {
-            have error == 7 by known();
-            solve();
+            have error == 7 by close();
+            close();
         }
     }
 }

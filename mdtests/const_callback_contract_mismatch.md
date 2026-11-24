@@ -5,7 +5,7 @@ contract const int *ReadOnly(int *p) { ensures result == p; }
 contract int *Mutable(int *p) { ensures result == p; }
 theorem bad(callback: int* (*)(int*)) executes callback(int* p) {
     requires ReadOnly(callback);
-    ensures Mutable(callback) by { step(ReadOnly); solve(); }
+    ensures Mutable(callback) by { step(ReadOnly); close(); }
 }
 ```
 

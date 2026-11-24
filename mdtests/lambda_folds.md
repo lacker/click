@@ -18,7 +18,7 @@ theorem lambda_and_inline_folds_match(lo: int32, hi: int32, offset: Integer) {
     ensures lambda_total(lo, hi, offset) == inline_total(lo, hi, offset) by {
         unfold(lambda_total(lo, hi, offset));
         unfold(inline_total(lo, hi, offset));
-        solve();
+        close();
     }
 }
 
@@ -44,19 +44,19 @@ function lambda_capture_shadow(lo: int32, hi: int32, __click_fold_0: Integer) ->
 theorem lambda_fold_carriers(lo: Integer, hi: Integer, a: uint64, b: uint64, c: int32, d: int32) {
     ensures lambda_integer_total(lo, hi) == (lo..hi).fold(0, |acc, k| { acc + k }) by {
         unfold(lambda_integer_total(lo, hi));
-        solve();
+        close();
     }
     ensures lambda_unsigned_total(a, b) == (a..b).fold(0, |acc, k| { acc + to_integer(k) }) by {
         unfold(lambda_unsigned_total(a, b));
-        solve();
+        close();
     }
     ensures lambda_machine_total(c, d) == (c..d).fold(0, |acc, k| { acc }) by {
         unfold(lambda_machine_total(c, d));
-        solve();
+        close();
     }
     ensures lambda_capture_shadow(c, d, 5) == (c..d).fold(to_integer(0), |acc, k| { acc + 5 }) by {
         unfold(lambda_capture_shadow(c, d, 5));
-        solve();
+        close();
     }
 }
 
@@ -65,7 +65,7 @@ theorem lambda_fold_append(lo: int32, hi: int32, offset: Integer) {
     requires hi < 2147483647;
     ensures lambda_total(lo, hi + 1, offset) == lambda_total(lo, hi, offset) + to_integer(hi) + offset by {
         unfold(lambda_total(lo, hi + 1, offset));
-        solve();
+        close();
     }
 }
 

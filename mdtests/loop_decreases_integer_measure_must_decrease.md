@@ -32,7 +32,7 @@ int32 drain(int32 n, int32 m) {
         decreases level(n);
         invariant 0 <= n;
         invariant 0 <= m;
-        initialize by { solve(); }
+        initialize by { close(); }
         maintain by {
             have 0 <= to_integer(m - 1);
             have 0 <= level(n) by {
@@ -42,7 +42,7 @@ int32 drain(int32 n, int32 m) {
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

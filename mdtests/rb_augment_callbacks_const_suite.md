@@ -143,11 +143,11 @@ void erase_dummy(struct node* node, struct node* parent) {
     fold(callback_suite(&dummy_callbacks));
 }
 
-theorem dummy_propagate_contract() { ensures Propagate(&dummy_propagate) by { unfold(Propagate(&dummy_propagate)); solve(); } }
+theorem dummy_propagate_contract() { ensures Propagate(&dummy_propagate) by { unfold(Propagate(&dummy_propagate)); close(); } }
 
-theorem dummy_copy_contract() { ensures Copy(&dummy_copy) by { unfold(Copy(&dummy_copy)); solve(); } }
+theorem dummy_copy_contract() { ensures Copy(&dummy_copy) by { unfold(Copy(&dummy_copy)); close(); } }
 
-theorem dummy_rotate_contract() { ensures Rotate(&dummy_rotate) by { unfold(Rotate(&dummy_rotate)); solve(); } }
+theorem dummy_rotate_contract() { ensures Rotate(&dummy_rotate) by { unfold(Rotate(&dummy_rotate)); close(); } }
 ```
 
 ```expect

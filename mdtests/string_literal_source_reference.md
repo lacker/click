@@ -20,8 +20,8 @@ int32 first() {
     ensures result == 104;
 } by {
     step_until(function.exit);
-    have "literal_reference.c"::text.string_literal(0)[0] == 104 by { known(); }
-    known();
+    have "literal_reference.c"::text.string_literal(0)[0] == 104 by { close(); }
+    close();
 }
 ```
 

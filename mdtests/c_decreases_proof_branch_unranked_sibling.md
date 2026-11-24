@@ -24,15 +24,15 @@ int32 f(int32 n) {
             invariant n <= 0;
         }
         step_until(function.exit);
-        solve();
+        close();
     } else {
-        have n > 0 by solve();
+        have n > 0 by close();
         have n >= 0 by { close() using { n > 0; }; }
         loop {
             invariant n >= 0;
         }
         step_until(function.exit);
-        solve();
+        close();
     }
 }
 ```

@@ -50,7 +50,7 @@ int32 apply_store(
 theorem proposed_store_with_scratch_contract() {
     ensures Store(&store_with_scratch) by {
         unfold(Store(&store_with_scratch));
-        solve();
+        close();
     }
 }
 

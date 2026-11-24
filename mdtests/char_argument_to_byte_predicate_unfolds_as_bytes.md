@@ -42,7 +42,7 @@ void copy_u(uint8* dst, const uint8* src) {
             have src[k] == at(statement(0).entry, src[k]) by {
                 preserve(memory(src[k]), statement(0));
             }
-            known();
+            close();
         }
         step();
         unfold(bytes::equal(dst, 0u64, old(src), 0u64, 4u64));
@@ -53,9 +53,9 @@ void copy_u(uint8* dst, const uint8* src) {
             instantiate(forall (k1: uint64) { true and k1 < 4u64 implies dst[0u64 + k1] == old(src[0u64 + k1]) }, k);
             instantiate(forall (k1: uint64) { k1 < 4u64 implies src[k1] == old(src[k1]) }, k);
             rewrite(src[k], old(src[k]));
-            known();
+            close();
         }
-        known();
+        close();
     }
 }
 void copy_c(char* dst, const char* src) {
@@ -85,7 +85,7 @@ void copy_c(char* dst, const char* src) {
             have *(&src[k] as (uint8 *)) == at(statement(0).entry, *(&src[k] as (uint8 *))) by {
                 preserve(memory(src[k]), statement(0));
             }
-            known();
+            close();
         }
         step();
         unfold(bytes::equal(dst, 0u64, old(src), 0u64, 4u64));
@@ -96,9 +96,9 @@ void copy_c(char* dst, const char* src) {
             instantiate(forall (k1: uint64) { true and k1 < 4u64 implies *(&dst[0u64 + k1] as (uint8 *)) == old(*(&src[0u64 + k1] as (uint8 *))) }, k);
             instantiate(forall (k: uint64) { k < 4u64 implies *(&src[k] as (uint8 *)) == old(*(&src[k] as (uint8 *))) }, k);
             rewrite(*(&src[k] as (uint8 *)), old(*(&src[k] as (uint8 *))));
-                known();
+                close();
         }
-        known();
+        close();
     }
 }
 ```

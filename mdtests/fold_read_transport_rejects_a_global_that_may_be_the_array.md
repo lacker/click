@@ -28,11 +28,11 @@ void mark_global(int32 v[], int32 n) {
     ensures zeros(v, 0, n) == old(zeros(v, 0, n));
 } by {
     mark entry;
-    have zeros(at(entry, v), 0, n) == zeros(at(entry, v), 0, n) by known();
+    have zeros(at(entry, v), 0, n) == zeros(at(entry, v), 0, n) by close();
     step();
     have zeros(at(entry, v), 0, n) == zeros(v, 0, n) by {
-        solve();
-        known();
+        close();
+        close();
     }
 }
 ```

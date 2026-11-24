@@ -29,7 +29,7 @@ void caller(struct node* child, int32* slot) {
 } by {
     let { c: c } = step(touch, { b: b });
     mark later;
-    have separate(at(later, b), memory(*slot)) by { known(); }
+    have separate(at(later, b), memory(*slot)) by { close(); }
 }
 ```
 

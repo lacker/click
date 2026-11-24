@@ -61,28 +61,28 @@ int32 peek(struct slot* s, struct slot* other) {
     step();
     step();
     step_until(function.exit);
-    have s->pool == old(s->pool) by { solve(); }
-    have at(statement(1).entry, s->pool->data) == old(s->pool->data) by { solve(); }
-    have separate(memory(*other), memory(s->pool->data)) by { known(); }
-    have separate(memory(other->at), memory(s->pool->data)) by { solve(); }
+    have s->pool == old(s->pool) by { close(); }
+    have at(statement(1).entry, s->pool->data) == old(s->pool->data) by { close(); }
+    have separate(memory(*other), memory(s->pool->data)) by { close(); }
+    have separate(memory(other->at), memory(s->pool->data)) by { close(); }
     have separate(statement(1).footprint, memory(s->pool->data)) by {
         close() using { separate(memory(other->at), memory(s->pool->data)); };
     }
     have at(statement(1).exit, s->pool->data) == at(statement(1).entry, s->pool->data) by {
         preserve(memory(s->pool->data), statement(1));
     }
-    have separate(memory(other->pool), memory(s->pool->data)) by { solve(); }
+    have separate(memory(other->pool), memory(s->pool->data)) by { close(); }
     have separate(statement(2).footprint, memory(s->pool->data)) by {
         close() using { separate(memory(other->pool), memory(s->pool->data)); };
     }
     have at(statement(2).exit, s->pool->data) == at(statement(2).entry, s->pool->data) by {
         preserve(memory(s->pool->data), statement(2));
     }
-    have s->pool->data == at(statement(2).exit, s->pool->data) by { solve(); }
-    have s->pool->data == old(s->pool->data) by { solve(); }
+    have s->pool->data == at(statement(2).exit, s->pool->data) by { close(); }
+    have s->pool->data == old(s->pool->data) by { close(); }
     let r = fold(pool_slot(s), { at: a, end: e });
     let st = fold(pool_state(s->pool), { live: n });
-    solve();
+    close();
 }
 ```
 

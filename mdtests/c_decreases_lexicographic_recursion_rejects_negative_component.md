@@ -31,12 +31,12 @@ int32 walk(int32 m, int32 n) {
             have to_integer(m - 1) < to_integer(m);
             step();
             step();
-            solve();
+            close();
         }
         false => {}
     }
     step();
-    solve();
+    close();
 }
 ```
 

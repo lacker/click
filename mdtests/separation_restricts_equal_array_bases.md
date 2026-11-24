@@ -10,7 +10,7 @@ theorem selected(A: Resource, p: int32*, q: int32*, i: int32, cap: int32) {
     ensures separate(A, memory(q[i])) by {
         have separate(A, memory(q[0..cap])) by {
             rewrite(q, p);
-            known();
+            close();
         }
         have i <= 2147483646 by { close() using { i < cap; }; }
         have defined(i + 1) by { close() using { 0 <= i; i <= 2147483646; }; }

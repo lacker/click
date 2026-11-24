@@ -70,7 +70,7 @@ line of a diagnostic, and the `LINE` of its `tactic@LINE` or
 `tactic@LINE:COLUMN` heading, which carries a column exactly when its line
 starts more than one tactic.
 
-Expansion writes what a site's search found. A smart tactic (`solve`,
+Expansion writes what a site's search found. A smart tactic (`close()`,
 `close() using`, `step_until`, or the implicit tail that ends every script and
 is all of an omitted proof) is replaced by the simple steps it checked: for the
 tail, the steps, splits, and closers that run the remaining C and close each
@@ -88,14 +88,12 @@ The implicit closer that proves a `step()` or `fold` requirement is written
 into that step, as
 `step() by { ... }` or as its `requires` entries.
 
-A smart tactic that owns its body is one site. The `solve` written in a smart
-`have` (`have P by { solve(); }`) or anywhere inside a smart `all`
-selects that enclosing tactic, and expansion
-rewrites the whole site. A `have` whose body mixes several tactics is not a
-site itself; each smart tactic written in its body is, and expanding one
-rewrites exactly that tactic's source, leaving its neighbors as written. The
-same holds for a smart tactic in a proof `if` or `cases` arm written inside a
-`have` body, and inside the body of a `have` in a loop's `initialize` phase.
+A `close()` inside a written `have` body can be selected at its own
+location. Expansion rewrites the selected tactic and preserves its neighbors.
+A closer that succeeds on the direct check can expand to itself. The same
+selection works inside an `if` or `cases` arm in a `have` body, and in a
+`have` in a loop's `initialize` phase. A smart `all` whose site owns its
+body expands as a whole.
 
 The claim form expands every smart tactic in one named claim and is
 useful when aggregate smart work matters even though no individual site is

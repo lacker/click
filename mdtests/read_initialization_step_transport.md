@@ -24,7 +24,7 @@ void change(int32* p, int32* q) {
         preserve(memory(*p), statement(0));
     }
     step();
-    have defined(*p) by { known(); }
+    have defined(*p) by { close(); }
 }
 ```
 

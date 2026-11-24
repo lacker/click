@@ -1992,7 +1992,7 @@ mod tests {
     #[cfg(not(feature = "fast-gate"))]
     #[ignore = "nightly: wide default expansion and replay"]
     fn integer_composition_wide_constant_keeps_integer_context_after_expansion() {
-        let source = "theorem composition(z: Integer) { requires 0 <= z; requires z <= 4000; ensures z <= 18446744073709551615 by { solve(); } }";
+        let source = "theorem composition(z: Integer) { requires 0 <= z; requires z <= 4000; ensures z <= 18446744073709551615 by { close(); } }";
         let expanded =
             expand_c_claim_source_by_label(source, &[], "composition.ensures_0").unwrap();
         without_implicit_solve(|| verify_c_sources(&expanded, &[])).unwrap();
@@ -2012,7 +2012,7 @@ mod tests {
     #[cfg(not(feature = "fast-gate"))]
     #[ignore = "nightly: ordinary expansion and replay take 0.6–0.8s in parallel"]
     fn integer_composition_unrestricted_solve_uses_the_same_ordinary_emitter() {
-        let source = "theorem composition(x: Integer, y: Integer) { requires x <= 3; requires y <= 4; ensures 2 * x + 3 * y <= 18 by { solve(); } }";
+        let source = "theorem composition(x: Integer, y: Integer) { requires x <= 3; requires y <= 4; ensures 2 * x + 3 * y <= 18 by { close(); } }";
         let expanded =
             expand_c_claim_source_by_label(source, &[], "composition.ensures_0").unwrap();
         assert!(!expanded.contains("normalize("), "{expanded}");
@@ -2042,7 +2042,7 @@ mod tests {
         // cites that fact instead of deriving the bound again. Its other
         // spellings, `defined((hi - 1) as int32)` and `old(...)`, are the
         // same fact here and are not proved again.
-        let source = "theorem domain(lo: int32, hi: int32) { requires 0 <= lo; requires lo < hi; requires hi <= 1073741823; ensures 0 <= to_integer(hi - 1) by { solve(); } }";
+        let source = "theorem domain(lo: int32, hi: int32) { requires 0 <= lo; requires lo < hi; requires hi <= 1073741823; ensures 0 <= to_integer(hi - 1) by { close(); } }";
         let expanded = expand_c_claim_source_by_label(source, &[], "domain.ensures_0")
             .unwrap_or_else(|error| panic!("{}", error.report()));
         let (_, domain) = expanded
@@ -2069,7 +2069,11 @@ mod tests {
     fn explicit_integer_scaling_normalization_keeps_known_and_multi_step_expansion_opaque() {
         let source = "theorem identity(x: Integer, y: Integer) { ensures 3 * (x - y) == x + x + x - 3 * y by { normalize(); } }";
         without_implicit_solve(|| verify_c_sources(source, &[])).unwrap();
-        assert!(verify_c_sources(&source.replace("normalize();", "known();"), &[]).is_err());
+        let close = source.replace("normalize();", "close();");
+        crate::surface::without_proof_search_for_claim("identity.ensures_0", || {
+            verify_c_sources(&close, &[]).map_err(|error| error.report())
+        })
+        .expect_err("the identity needs normalization when search is disabled");
         for source in [
             "theorem nonlinear(x: Integer, y: Integer, z: Integer, w: Integer) { ensures (x + y) * (z + w) == x * z + x * w + y * z + y * w by { normalize(); } }",
             "theorem wrong(x: Integer) { ensures 2 * x == x + x + 1 by { normalize(); } }",

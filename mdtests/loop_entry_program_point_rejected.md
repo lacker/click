@@ -29,10 +29,10 @@ int32 c(int32 n) {
     have result - 1 <= at(L.entry, x);
     have result - 1 <= 0 by {
         rewrite(at(L.entry, x), 0);
-        known();
+        close();
     }
     have result <= 1 by { close() using { result - 1 <= 0; }; }
-    solve();
+    close();
 }
 ```
 

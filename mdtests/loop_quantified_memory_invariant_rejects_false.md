@@ -31,7 +31,7 @@ int32 loop_quantified_memory_invariant_rejects_false(int32 p[], int32 n) {
         };
     }
     step();
-    solve();
+    close();
 }
 ```
 

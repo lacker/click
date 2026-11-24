@@ -44,12 +44,12 @@ int32 read_back(int32 u) {
             have r == 3;
             step();
             step();
-            solve();
+            close();
         } else {
             step();
             step();
             step();
-            solve();
+            close();
         }
     }
 }

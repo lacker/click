@@ -24,10 +24,10 @@ int32* probe(int32* p) {
     produces allocation(result, 8);
     produces result[0..1];
 } by {
-    have separate(memory(p[0..1]), memory(p[1..2])) by { known(); }
+    have separate(memory(p[0..1]), memory(p[1..2])) by { close(); }
     step();
     have separate(statement(0).call(0).footprint, memory(p[1..2])) by {
-        known();
+        close();
     }
     have viewable(p[1..2]) by {
         preserve(memory(p[1..2]), statement(0).call(0));

@@ -24,7 +24,7 @@ theorem head_below_one_is_below_two(a: int32[], seed: int32) {
     requires a[0] < 1;
 
     ensures a[0] < 2 by {
-        solve();
+        close();
     }
 }
 
@@ -34,7 +34,7 @@ int32 raise_head(int32 box[1]) {
     ensures unreported_requirement: old(box[0]) < 2 by {
         step_until(function.exit);
         apply(head_below_one_is_below_two(old(box), 7));
-        known();
+        close();
     }
 }
 ```

@@ -45,23 +45,23 @@ int32 even(int32 n) {
             have 0 <= level(n - 1) by {
                 unfold(level(n - 1));
                 have 0 <= n - 1;
-                solve();
+                close();
             }
             have level(n - 1) < level(n) by {
                 unfold(level(n - 1));
                 unfold(level(n));
                 have n - 1 < n;
-                solve();
+                close();
             }
             step();
             step();
             step();
-            solve();
+            close();
         }
         false => {}
     }
     step();
-    solve();
+    close();
 }
 
 int32 odd(int32 n) {
@@ -75,23 +75,23 @@ int32 odd(int32 n) {
             have 0 <= level(n - 1) by {
                 unfold(level(n - 1));
                 have 0 <= n - 1;
-                solve();
+                close();
             }
             have level(n - 1) < level(n) by {
                 unfold(level(n - 1));
                 unfold(level(n));
                 have n - 1 < n;
-                solve();
+                close();
             }
             step();
             step();
             step();
-            solve();
+            close();
         }
         false => {}
     }
     step();
-    solve();
+    close();
 }
 ```
 

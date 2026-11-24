@@ -5,9 +5,9 @@ theorem unrelated_name(x: int32) {
     requires exists (k: int32) { k == x };
     ensures exists (z: int32) { z == x } by {
         let k = obtain(exists (k: int32) { k == x });
-        have missing == x by known();
+        have missing == x by close();
         witness(k);
-        known();
+        close();
     }
 }
 ```

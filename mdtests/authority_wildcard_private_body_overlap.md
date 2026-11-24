@@ -14,13 +14,13 @@ authorized resource slot(pool: int32*, p: int32*, tag: int32) { owns p[0..1]; }
 verifying "wildcard_private_overlap.c";
 void lifecycle() { ensures 1 == 1; } by {
     step(); step(); step(); step();
-    branch { true => { step_until(function.exit); solve(); } false => {} }
+    branch { true => { step_until(function.exit); close(); } false => {} }
     fold(authority(slot(&pool, _, _)));
     fold(slot(&pool, p, 1));
     fold(slot(&pool, p, 2));
     unfold(slot(&pool, p, 1));
     unfold(authority(slot(&pool, _, _)));
-    step_until(function.exit); solve();
+    step_until(function.exit); close();
 }
 ```
 

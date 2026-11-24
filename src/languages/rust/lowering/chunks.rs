@@ -420,7 +420,7 @@ mod tests {
 
         for (length, result) in [(3u64, 0), (4, 4)] {
             let sidecar = format!(
-                "verifying \"chunks.rs\"; fn next_len(bytes: &[u8]) -> usize {{ requires bytes.len() == {length}u64; ensures result == {result}u64; }} by {{ step_until(function.exit); solve(); }}"
+                "verifying \"chunks.rs\"; fn next_len(bytes: &[u8]) -> usize {{ requires bytes.len() == {length}u64; ensures result == {result}u64; }} by {{ step_until(function.exit); close(); }}"
             );
             let claim = "next_len.contract";
             let expanded =

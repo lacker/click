@@ -26,11 +26,11 @@ int32 loop_entry_invariant_not_established(int32 n) {
     step();
     loop {
         invariant i >= 1;
-        initialize by solve();
-        maintain by solve();
+        initialize by close();
+        maintain by close();
     }
     step();
-    solve();
+    close();
 }
 ```
 

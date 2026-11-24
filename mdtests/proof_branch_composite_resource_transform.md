@@ -82,7 +82,7 @@ int32 select_ready(int32 key, int32 choose_left) {
         }
         observe(ready_bundle(key));
         step();
-        solve();
+        close();
     }
 }
 ```

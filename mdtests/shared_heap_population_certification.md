@@ -192,7 +192,7 @@ void child_release(struct child* obj) {
         unfold(child_ref(obj));
         unfold(authority(child_ref(obj)));
         step_until(function.exit);
-        solve();
+        close();
     } else {
         unfold(child_ref(obj));
         have 1 < obj->refs by {
@@ -203,7 +203,7 @@ void child_release(struct child* obj) {
         step();
         fold(child_control(obj));
         step_until(function.exit);
-        solve();
+        close();
     }
 }
 
@@ -221,7 +221,7 @@ void parent_attach(struct parent* p, struct child* kid) {
 } by {
     step_until(function.exit);
     let link = fold(parent(p), { link: ParentLink::Linked(kid) });
-    solve();
+    close();
 }
 
 int32 parent_read_payload(struct parent* p) {
@@ -244,7 +244,7 @@ int32 parent_read_payload(struct parent* p) {
             have old(p->kid) == linked_child;
             with(child_control(p->kid)) { step_until(function.exit); }
             let link = fold(parent(p), { link: ParentLink::Linked(linked_child) });
-            solve();
+            close();
         },
     }
 }
@@ -274,15 +274,15 @@ void parent_detach(struct parent* p) {
             if linked_child->refs > 1 {
                 have to_integer(old(count(child_ref(p->kid)))) > 1;
                 step_until(function.exit);
-                solve();
+                close();
             } else {
                 have to_integer(old(count(child_ref(p->kid)))) == to_integer(linked_child->refs);
                 have to_integer(old(count(child_ref(p->kid)))) <= 1 by {
                     rewrite(to_integer(old(count(child_ref(p->kid)))), to_integer(linked_child->refs));
-                    solve();
+                    close();
                 }
                 step_until(function.exit);
-                solve();
+                close();
             }
         },
     }

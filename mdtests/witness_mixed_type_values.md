@@ -6,7 +6,7 @@ theorem positional(n: int32, m: Integer, p: int32*) {
         first == p and second == m and third == n
     } by {
         witness(p, m, n);
-        solve();
+        close();
     }
 }
 ```

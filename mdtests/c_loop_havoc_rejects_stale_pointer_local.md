@@ -37,7 +37,7 @@ int32 stale_ptr(int32 arr[], int32 n, int32 cap) {
         invariant i >= 0 and i <= n;
     }
     step();
-    solve();
+    close();
 }
 ```
 

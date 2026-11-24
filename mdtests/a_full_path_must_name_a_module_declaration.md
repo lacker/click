@@ -5,7 +5,7 @@ does not have, so the path is refused rather than read as something else.
 
 ```click
 theorem reverse_nil() {
-    ensures click::list::reverse(List<int32>::Nil) == List<int32>::Nil by solve();
+    ensures click::list::reverse(List<int32>::Nil) == List<int32>::Nil by close();
 }
 ```
 

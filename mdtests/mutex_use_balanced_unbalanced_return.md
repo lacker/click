@@ -16,7 +16,7 @@ void helper(struct holder *holder) {
 } by {
     step();
     step();
-    solve();
+    close();
 }
 ```
 

@@ -10,7 +10,7 @@ spec enum Pair { Pair(int32, int32) }
 theorem crossed_fields(x: Pair, a: int32, b: int32, c: int32, d: int32) {
     requires x == Pair::Pair(a, b);
     requires x == Pair::Pair(c, d);
-    ensures a == d by solve();
+    ensures a == d by close();
 }
 ```
 

@@ -184,7 +184,7 @@ kernel inference or fact-dependent lowering was added.
 
 The C, resource definitions and function contract are unchanged. The proof
 states three `separate(memory(...), memory(root->rb_node))` facts, each proved
-by `known()`, before the store. These expose the existing ownership frame
+by `close()`, before the store. These expose the existing ownership frame
 for the metadata, left-child and right-child cells. Omitting them still
 exhausts the implicit closer's budget; this repair does not claim complete
 implicit frame discovery.
@@ -502,7 +502,7 @@ are in `tests/cpp_import.rs`; Markdown witnesses are in `mdtests/`.
   while allowing a separately authorized pointee write; read-only pointee
   authority is refused. The original descriptor-copy C++ and contract are
   unchanged; its proof now states the unchanged size/data fields and the new
-  backing value with three `known()` steps before the return arithmetic. This
+  backing value with three `close()` steps before the return arithmetic. This
   does not claim complete implicit discovery of those facts.
 - **V2 — copy identity and source admission:**
   `record_copy_keeps_self_pointer_value_without_rebasing_it` refuses rebasing

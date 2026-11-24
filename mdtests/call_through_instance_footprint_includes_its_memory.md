@@ -40,10 +40,10 @@ void set_one(int32* occupied, int32 capacity, int32 start) {
     ensures occupied[start] == 1;
 } by {
     let { tag: t } = unfold(w);
-    have 0 <= start by solve();
-    have start < capacity by solve();
+    have 0 <= start by close();
+    have start < capacity by close();
     step();
-    have occupied[start] == 1 by solve();
+    have occupied[start] == 1 by close();
     let w = fold(window(occupied, capacity, start), { tag: t });
 }
 
@@ -52,18 +52,18 @@ void caller(int32* occupied, int32 capacity, int32 start) {
     ensures start < 0;
 } by {
     let { tag: t } = unfold(w);
-    have 0 <= start by solve();
-    have start < capacity by solve();
+    have 0 <= start by close();
+    have start < capacity by close();
     step();
-    have occupied[start] == 0 by solve();
+    have occupied[start] == 0 by close();
     let w = fold(window(occupied, capacity, start), { tag: t });
     mark pre;
     step(set_one, { w: w });
     let { tag: t2 } = unfold(w);
     have occupied[start] == at(pre, occupied[start]) by {
-        solve();
+        close();
     }
-    have occupied[start] == 1 by solve();
+    have occupied[start] == 1 by close();
     have start < 0 by {
         contradiction(occupied[start] == 1);
     }

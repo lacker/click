@@ -36,7 +36,7 @@ void call(struct node* p, struct node* q, int32* anchor) {
     ensures p->left == 0;
 } by {
     unfold(x); unfold(y);
-    have separate(memory(p->left), memory(q->left)) by known();
+    have separate(memory(p->left), memory(q->left)) by close();
     step(); step();
     mark before;
     let { b: c } = step(retarget, { a: c });

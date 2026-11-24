@@ -979,7 +979,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
     /// a universal goal no such fact concludes costs one lookup and no
     /// unrelated fact is visited. The proof is the explicit sequence
     /// `intro()` for the binder and each guard, `instantiate(F, k)` at the
-    /// introduced binder, and `known()`; each step is checked as written
+    /// introduced binder, and `close()`; each step is checked as written
     /// and expansion prints it.
     pub(in crate::surface::proof) fn try_quantified_conjunct_projection_closure(
         search_input: &Proof<'a>,
@@ -1244,7 +1244,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         crate::kernel::search::record_discovery("try_solve_closure");
         if crate::surface::proof::implicit_solve_scope::checked_only() {
             return Err(search_input.step_error(
-                "checked-only verification forbids solve(); write its proof steps explicitly",
+                "checked-only verification forbids close(); write its proof steps explicitly",
             ));
         }
         // solve reaches the same failing frame question through several of
@@ -4239,7 +4239,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         crate::kernel::search::record_discovery("try_solve_closure_with_surfaces");
         if crate::surface::proof::implicit_solve_scope::checked_only() {
             return Err(search_input.step_error(
-                "checked-only verification forbids solve(); write its proof steps explicitly",
+                "checked-only verification forbids close(); write its proof steps explicitly",
             ));
         }
         let mut scope = attempt::search_scope("solve closure with surfaces");
@@ -5034,7 +5034,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         // solve-derivation: the kernel's pointer rule consumes a matching
         // alignment/relation fact directly. Use the selected pairs when
         // `close() using` supplied them; otherwise recover only typed Special
-        // candidates from the recorded Surface map for generic `solve()`.
+        // candidates from the recorded Surface map for generic `close()`.
         if let Some(surface_goal) = search_input.surface_goal()
             && let Some(goal) = search_input.goal()
         {
@@ -6048,7 +6048,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
     /// at a time. Each level is a `have` that the call equals the arm of its
     /// definition that constant guards select, `output_from(lit, 0u64, 13) ==
     /// List::Cons(lit[0u64], output_from(lit, 0u64 + 1u64, 13 - 1))`, proved
-    /// by `unfold` and `known()`; the next level is the arm's recursive call
+    /// by `unfold` and `close()`; the next level is the arm's recursive call
     /// with its constants evaluated. Each `have` has the size of one level,
     /// so the evaluation is linear in its depth, unlike unfolding in the goal,
     /// which lowers the growing goal at each step. After the last level the
@@ -6199,7 +6199,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                     break;
                 };
                 if !nested.is_complete() {
-                    // `known()` decides a level a constructor states; a
+                    // `close()` decides a level a constructor states; a
                     // `Bool` level's guards are decided by `solve`, which does
                     // not evaluate again (the scope above).
                     if let Some(known) =

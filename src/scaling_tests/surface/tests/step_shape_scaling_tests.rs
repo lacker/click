@@ -431,10 +431,10 @@ fn branches(n: usize) -> (String, String) {
             fact s <= {bound};
         }} {{ true => {{
             step();
-            have 0 <= s by {{ solve(); }}
-            have s <= {bound} by {{ solve(); }}
+            have 0 <= s by {{ close(); }}
+            have s <= {bound} by {{ close(); }}
         }} false => {{
-            have s <= {bound} by {{ solve(); }}
+            have s <= {bound} by {{ close(); }}
         }} }}"
         )
     });
@@ -447,7 +447,7 @@ int32 caller({params}) {{
         step();
 {arms}
         step();
-        solve();
+        close();
     }}
 }}"
     );
@@ -511,7 +511,7 @@ int32 caller(int32* p) {{
     step();
 {proof}
     step();
-    solve();
+    close();
 }}"
     );
     (c, click)
@@ -1526,8 +1526,8 @@ void caller({parameters}) {{
     requires n >= 0;
     requires m >= 0;
 }} by {{
-    loop {{ decreases n; invariant n >= 0; initialize by known(); maintain by {{ step(); }} }}
-    loop {{ decreases m; invariant m >= 0; initialize by known(); maintain by {{ step(); }} }}
+    loop {{ decreases n; invariant n >= 0; initialize by close(); maintain by {{ step(); }} }}
+    loop {{ decreases m; invariant m >= 0; initialize by close(); maintain by {{ step(); }} }}
     step();
     step();
 }}"
@@ -1804,9 +1804,9 @@ int32 caller({params}) {{
     ensures result == a0 by {{
         step();
         step();
-        have s == a0 by {{ solve(); }}
+        have s == a0 by {{ close(); }}
         step();
-        solve();
+        close();
     }}
 }}"
     );
@@ -1913,7 +1913,7 @@ fn named_unfold_beside_views_scales_with_the_opened_delta() {
             verifying "hunt.c";
             void check({parameters} int32* q) {{ views q[0..1]; {owned} }} by {{
                 {opens}
-                have separate(memory(p0[0..1]), memory(q[0..1])) by {{ solve(); }}
+                have separate(memory(p0[0..1]), memory(q[0..1])) by {{ close(); }}
                 step_until(function.exit);
             }}
         "#
@@ -1952,7 +1952,7 @@ fn named_unfold_and_refold_witness_ignore_unrelated_facts() {
                 owns r: owner(p);
             }} by {{
                 let {{ base: q }} = unfold(r);
-                have q == p by known();
+                have q == p by close();
                 fold(r);
             }}
         "#
@@ -2209,7 +2209,7 @@ fn one_write_with_a_borrow_does_not_walk_unrelated_aliases() {
             let proof = if viewed {
                 proof.replace(
                     "by { step(); }",
-                    "by { have separate(memory(*p), memory(*q)) by { known(); } step(); }",
+                    "by { have separate(memory(*p), memory(*q)) by { close(); } step(); }",
                 )
             } else {
                 proof

@@ -11,7 +11,7 @@ verifying "objects.c";
 import click::separation;
 
 theorem identity<T>(p: T*) {
-    ensures p == p by { known(); }
+    ensures p == p by { close(); }
 }
 theorem nested<T>(p: T*, lo: int32, hi: int32, a: int32, b: int32) {
     requires lo <= a;
@@ -43,8 +43,8 @@ void inspect(struct item *p, struct other *q, struct item **pp) {
         apply(nested(p as (int32 *), 0, 4, 1, 3));
     }
     step_until(function.exit);
-    known();
-    known(); known(); known();
+    close();
+    close(); close(); close();
 }
 ```
 

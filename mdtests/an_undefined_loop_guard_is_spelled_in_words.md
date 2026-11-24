@@ -32,7 +32,7 @@ int32 f(int32 a, int32 b) {
         invariant a <= 0;
     }
     step();
-    solve();
+    close();
 }
 ```
 

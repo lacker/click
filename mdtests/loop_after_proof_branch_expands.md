@@ -6,7 +6,7 @@ states the loop. A loop is one tactic of the rest of the proof, and the
 tactics of its `initialize` and `maintain` proofs are numbered directly
 after it.
 
-Expanding the `initialize by solve()` site used to fail although verification
+Expanding the `initialize by close()` site used to fail although verification
 accepted the proof: the structural checked driver asked whether the rest of
 the proof after the `branch` held the selected tactic, compared only each
 linear tactic's own index, missed the tactic nested in the loop, and
@@ -42,7 +42,7 @@ int32 count_after_guard(int32 n) {
     branch {
         true => {
             step();
-            solve();
+            close();
         }
         false => {}
     }
@@ -51,13 +51,13 @@ int32 count_after_guard(int32 n) {
         decreases n - i;
         invariant i >= 0;
         invariant i <= n;
-        initialize by solve();
+        initialize by close();
         maintain by {
             step();
         }
     }
     step();
-    solve();
+    close();
 }
 ```
 

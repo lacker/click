@@ -8,7 +8,7 @@ function shifted(x: Integer) -> Integer { x + 7 }
 
 theorem shifted_bound(x: Integer) {
     requires 0 <= x;
-    ensures 7 <= shifted(x) by { unfold(shifted(x)); solve(); }
+    ensures 7 <= shifted(x) by { unfold(shifted(x)); close(); }
 }
 
 theorem use_bound(value: Integer) {

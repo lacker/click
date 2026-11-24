@@ -25,7 +25,7 @@ void by_name(int32* p) {
     produces out: cell();
 } by {
     let { child: out, base: q } = unfold(r);
-    have q == p by known();
+    have q == p by close();
 }
 
 void by_call(int32* p) {
@@ -33,7 +33,7 @@ void by_call(int32* p) {
     produces out: cell();
 } by {
     let { base: q, child: out } = unfold(envelope(p));
-    have q == p by known();
+    have q == p by close();
 }
 ```
 

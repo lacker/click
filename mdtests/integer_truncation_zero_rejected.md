@@ -2,7 +2,7 @@
 
 ```click
 theorem bad(a: Integer) {
-    ensures 0 * truncating_quotient(a, 0) == 0 by solve();
+    ensures 0 * truncating_quotient(a, 0) == 0 by close();
 }
 ```
 

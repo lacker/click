@@ -646,7 +646,7 @@ fn charon_adler2_helpers_mul_audit_step_until_certificate() {
 #[test]
 #[ignore = "nightly: whole-fixture proof-tool agreement and expansion coverage"]
 fn charon_adler2_helpers_mul_audit_solve_certificate() {
-    audit_mul_site("solve()");
+    audit_mul_site("close()");
 }
 #[cfg(not(feature = "fast-gate"))]
 #[test]
@@ -1779,8 +1779,8 @@ fn charon_adler2_small_batch_compute_rejects_false_induction_and_final_bounds() 
         (
             // The chunk iterator's initial length comes from the library
             // contract; the false count claims one chunk more.
-            "have loop(2).iter.len() == (bytes.len() - bytes.len() % 4u64) / 4u64 by {\n      apply(chunks_exact::len_chunks_exact(Slice<u8>::Slice(bytes, bytes.len() - bytes.len() % 4u64), 4u64));\n      solve();\n     }",
-            "have loop(2).iter.len() == (bytes.len() - bytes.len() % 4u64) / 4u64 + 1u64 by known();",
+            "have loop(2).iter.len() == (bytes.len() - bytes.len() % 4u64) / 4u64 by {\n      apply(chunks_exact::len_chunks_exact(Slice<u8>::Slice(bytes, bytes.len() - bytes.len() % 4u64), 4u64));\n      close();\n     }",
+            "have loop(2).iter.len() == (bytes.len() - bytes.len() % 4u64) / 4u64 + 1u64 by close();",
         ),
         ("ensures self.a < 65521;", "ensures self.a < 1;"),
         ("ensures self.b < 65521;", "ensures self.b < 1;"),
@@ -1796,11 +1796,11 @@ fn charon_adler2_small_batch_compute_rejects_false_tail_state_and_ranking() {
     for (before, after) in [
         (
             "have __rust_mir_138_base == remainder by normalize();",
-            "have __rust_mir_138_base == remainder + 1 by known();",
+            "have __rust_mir_138_base == remainder + 1 by close();",
         ),
         (
             "have __rust_mir_138_remaining < at(tail_head, __rust_mir_138_remaining) by close() using { to_integer(__rust_mir_138_remaining) == to_integer(at(tail_head, __rust_mir_138_remaining) - 1u64); 1u64 <= at(tail_head, __rust_mir_138_remaining); };",
-            "have at(tail_head, __rust_mir_138_remaining) < __rust_mir_138_remaining by known();",
+            "have at(tail_head, __rust_mir_138_remaining) < __rust_mir_138_remaining by close();",
         ),
     ] {
         reject_compute(SMALL_BATCH_COMPUTE, before, after);
@@ -2225,7 +2225,7 @@ const STORED_GUARD_LEMMAS: &str = r#"theorem adler_outer_nonempty_remaining(rema
    have not (0 < remaining) by close() using { remaining == 0; };
    contradiction(0 < remaining);
   } else {
-   solve();
+   close();
   }
  }
 }
@@ -2272,9 +2272,9 @@ theorem adler_outer_remaining_step_divisible(remaining: int32) {
   have to_integer((remaining - 22208) % 22208) == 0 by {
    rewrite(to_integer((remaining - 22208) % 22208), truncating_remainder(to_integer(remaining - 22208), to_integer(22208)));
    rewrite(to_integer(remaining - 22208), (truncating_quotient(to_integer(remaining), 22208) - 1) * 22208);
-   known();
+   close();
   }
-  known();
+  close();
  }
 }
 
@@ -2293,7 +2293,7 @@ theorem adler_outer_exhausted_remaining(remaining: int32, size: uint64) {
     if 0 < remaining {
      apply(adler_outer_nonempty_remaining(remaining));
      have size as uint32 as int32 == 22208 by { rewrite(size, 22208u64); normalize(); }
-     have size as uint32 as int32 <= remaining by { rewrite(size as uint32 as int32, 22208); known(); }
+     have size as uint32 as int32 <= remaining by { rewrite(size as uint32 as int32, 22208); close(); }
      contradiction(size as uint32 as int32 <= remaining);
     } else {
      have remaining <= 0;
@@ -2324,14 +2324,14 @@ const STORED_GUARD_PROOF: &str = r#"int adler_stored_guard(int remaining, uint64
    apply(adler_outer_remaining_step_divisible(at(head, remaining)));
    step();
    have remaining == at(head, remaining) - 22208;
-   have 0 <= remaining by { rewrite(remaining, at(head, remaining) - 22208); known(); }
-   have remaining % 22208 == 0 by { rewrite(remaining, at(head, remaining) - 22208); known(); }
-   have remaining < at(head, remaining) by { rewrite(remaining, at(head, remaining) - 22208); known(); }
+   have 0 <= remaining by { rewrite(remaining, at(head, remaining) - 22208); close(); }
+   have remaining % 22208 == 0 by { rewrite(remaining, at(head, remaining) - 22208); close(); }
+   have remaining < at(head, remaining) by { rewrite(remaining, at(head, remaining) - 22208); close(); }
   }
  }
- have not (0 < remaining) or not (size as uint32 as int32 <= remaining) by known();
+ have not (0 < remaining) or not (size as uint32 as int32 <= remaining) by close();
  apply(adler_outer_exhausted_remaining(remaining, size));
- step_until(function.exit); solve();
+ step_until(function.exit); close();
 }
 "#;
 
