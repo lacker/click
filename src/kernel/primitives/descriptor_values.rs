@@ -330,6 +330,9 @@ impl From<OldConditionTerm> for StoredConditionTerm {
                     *variable,
                 )));
             }
+            OldConditionTerm::BoolApplication(application) => {
+                KernelTermImport::for_exact_field_inputs().boolean_call(application)
+            }
             // Variables and reads have fixed-size roots. Importing either keeps
             // the native comparison's original type, read version, and address.
             OldConditionTerm::AlgebraicEqual(left, right)

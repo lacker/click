@@ -4,6 +4,18 @@ use super::*;
 
 impl KernelTermImport {
     pub(crate) fn boolean_call(&mut self, application: &SharedPureApplication) -> KernelTerm {
+        if self.exact_field_inputs {
+            // A stored Boolean call must reproduce each producer's argument
+            // descriptor, including the distinction between a boxed and shared word.
+            let arguments = (0..application.arguments().len())
+                .map(|index| KernelTerm::written_call_argument(application, index))
+                .collect();
+            return KernelTerm::checked_call(
+                KernelType::Bool,
+                application.name().into(),
+                arguments,
+            );
+        }
         self.boolean_call_with_retained(application, &[])
     }
 
@@ -115,6 +127,20 @@ mod tests {
             assert!(std::ptr::eq(
                 root.old_boolean_call().unwrap(),
                 root.old_boolean_call().unwrap()
+            ));
+        }
+        let stored = applications.each_ref().map(|application| {
+            StoredConditionTerm::from(OldConditionTerm::BoolApplication(application.clone()))
+        });
+        assert_eq!(stored[0], stored[1]);
+        for (condition, application) in stored.iter().zip(&applications) {
+            let root = condition.root().expect("stored Boolean call");
+            let KernelTermNode::Call { arguments, .. } = root.node() else {
+                panic!("expected call")
+            };
+            assert!(std::ptr::eq(
+                arguments[0].written_argument().unwrap(),
+                &application.arguments()[0]
             ));
         }
         let observed = roots.map(|guard| {
