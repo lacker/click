@@ -386,17 +386,20 @@ A binder the clause declares hides a C name of the same spelling. Debug
 builds check that the driver's Surface is what lowering's own elaboration
 gives (`lower_elaborated_proof_clause`).
 
-A Rust function's front end binds a local by its spelling alone unless the
-source binds that name more than once. For each such local it records the
-declared type (`ImportedFunction::spelled_local_types`), and `Declarations`
-reads that type for a name no binding resolves. That is enough for a Rust
-clause at each of the positions above. Repeated names are not resolved per
-statement yet.
+The Rust and C++ front ends bind a local by its spelling alone, except
+Rust's repeated names, which get one binding each. For each such local the
+front end records the declared type (`ImportedFunction::spelled_local_types`):
+- Rust records a slice's wide pointer type or a scalar's type.
+- C++ records the type a parameter of the local's type would have. It
+  records nothing for a reference or a struct value, and nothing for a
+  spelling that two scopes declare at different types.
 
-Lowering still elaborates these clauses itself:
-- C++ proof clauses, since that front end records no declarations yet.
-- A contract refinement's clauses, which name a contract definition's
-  parameters rather than a C position.
+`Declarations` reads that type for a name no binding resolves. That is
+enough for these front ends' clauses at each of the positions above.
+
+Lowering still elaborates one kind of clause itself: a contract
+refinement's, which name a contract definition's parameters rather than a
+position in a function body.
 
 `Declarations` reads names' C types from kernel states (the entry state, the
 entry values, and the state that declares the clause's locals) for names that

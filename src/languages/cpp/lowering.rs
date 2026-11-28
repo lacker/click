@@ -352,6 +352,24 @@ fn lower_parameter(
     )
 }
 
+/// The declared type of a C++ local the lowering binds by its spelling, as
+/// a parameter of its type is typed: none for a reference, which its carrier
+/// binds, or for a struct value, which has no scalar value.
+pub(super) fn spelled_local_type(
+    local: &CppPlace,
+    layouts: &BTreeMap<String, crate::languages::interface::RecordLayout>,
+) -> Option<ProgramType> {
+    if matches!(
+        local.value_type,
+        CppType::LvalueReference { .. } | CppType::Record { .. }
+    ) {
+        return None;
+    }
+    lower_parameter_value(local, layouts, local.name.as_str().into())
+        .ok()
+        .map(|parameter| parameter.program_type())
+}
+
 fn lower_parameter_value(
     parameter: &CppPlace,
     layouts: &BTreeMap<String, crate::languages::interface::RecordLayout>,
