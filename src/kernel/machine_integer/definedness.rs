@@ -7,8 +7,8 @@
 
 use super::{FORMATS, Operation, comparison::ComparisonOperand, range, representation};
 use crate::kernel::{
-    IntegerComparisonOperator, IntegerTerm, MachineIntegerType, MachineOperandView,
-    OldConditionTerm, Proposition, SharedIntegerTerm,
+    IntegerComparisonOperator, IntegerTerm, MachineIntegerType, MachineOperandView, Proposition,
+    SharedIntegerTerm, StoredConditionTerm,
 };
 
 /// The formats whose definedness facts the kernel files, narrowest first:
@@ -57,7 +57,6 @@ fn exact_result(
 }
 
 pub(crate) fn ordinary_bounds(format: MachineIntegerType, exact: IntegerTerm) -> [Proposition; 2] {
-    use crate::kernel::StoredConditionTerm;
     let exact = SharedIntegerTerm::from(exact);
     let (minimum, maximum) = range::range(format);
     [
@@ -91,7 +90,7 @@ pub(crate) fn overflow_fact_of_integer_bound(
     formats: impl Iterator<Item = MachineIntegerType>,
 ) -> Option<Proposition> {
     let query = overflow_query_of_integer_bound(bound, formats)?;
-    Some(Proposition::condition_is(query.boxed_condition()?, false))
+    Some(Proposition::condition_is(query.stored_condition(), false))
 }
 
 /// Private query over the original operand handles. Ordinary bounds remain
@@ -138,13 +137,30 @@ impl OverflowQueryView {
         ordinary_bounds(self.format, self.exact.clone())
     }
 
-    fn boxed_condition(&self) -> Option<OldConditionTerm> {
-        representation::overflow_condition(
+    fn stored_condition(&self) -> StoredConditionTerm {
+        use crate::kernel::{KernelTerm, KernelTermImport, OldMachineTerm};
+
+        let roots = self.operands.each_ref().map(|operand| {
+            if let ComparisonOperand::Observation(machine) = operand
+                && machine.retained_written_operand().is_none()
+                && let Some(root) = machine.shared_operand()
+            {
+                return root.clone();
+            }
+            let written = operand.boxed_value();
+            match written {
+                OldMachineTerm::Constant { .. } | OldMachineTerm::Variable(_) => {
+                    KernelTermImport::for_exact_field_inputs().machine(self.format, written)
+                }
+                _ => KernelTerm::written_machine_operand(self.format, written),
+            }
+        });
+        StoredConditionTerm::from_root(KernelTerm::boolean_overflow_raw(
             self.format,
-            self.operation,
-            Box::new(self.operands[0].boxed_value().clone()),
-            Box::new(self.operands[1].boxed_value().clone()),
-        )
+            self.operation_kind(),
+            roots,
+        ))
+        .expect("overflow condition")
     }
 }
 
@@ -232,8 +248,8 @@ fn same_integer_bound(left: &Proposition, right: &Proposition) -> bool {
 /// Read one explicitly supplied ordinary range conjunction as an arithmetic
 /// query. This is a structural adapter for existing interval certificates;
 /// it neither adds an overflow fact nor searches the context for bounds.
-pub(crate) fn ordinary_arithmetic_guard(proposition: &Proposition) -> Option<OldConditionTerm> {
-    ordinary_arithmetic_guard_view(proposition)?.boxed_condition()
+pub(crate) fn ordinary_arithmetic_guard(proposition: &Proposition) -> Option<StoredConditionTerm> {
+    Some(ordinary_arithmetic_guard_view(proposition)?.stored_condition())
 }
 
 pub(crate) fn ordinary_arithmetic_guard_view(
@@ -315,7 +331,7 @@ pub(crate) fn interval_query_form(proposition: &Proposition) -> Option<Propositi
 #[cfg(test)]
 mod shared_query_tests {
     use super::*;
-    use crate::kernel::OldMachineTerm;
+    use crate::kernel::{OldConditionTerm, OldMachineTerm};
 
     fn legacy_overflow_query(
         bound: &Proposition,
@@ -498,6 +514,40 @@ mod shared_query_tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn overflow_outputs_preserve_each_integer_address_class() {
+        use crate::kernel::effective_type::{CAccessClass, CScalarClass};
+        use crate::kernel::{Address, AddressObjectClass, OverflowOperation, Variable};
+        let _session = crate::kernel::VerificationSession::enter();
+        let format = MachineIntegerType::UInt64;
+        let classes = [CScalarClass::Int, CScalarClass::Char];
+        let outputs = classes.map(|class| {
+            let source = Proposition::condition_is(
+                OldConditionTerm::Overflows {
+                    format,
+                    op: OverflowOperation::Add,
+                    left: Box::new(OldMachineTerm::IntegerAddress(
+                        Box::new(Address::symbolic(Variable(982205))),
+                        AddressObjectClass::new(Some(CAccessClass::Scalar(class))),
+                    )),
+                    right: Box::new(OldMachineTerm::uint64_constant(1)),
+                },
+                false,
+            );
+            range_domain_query(&source).unwrap().stored_condition()
+        });
+        assert_eq!(outputs[0], outputs[1]);
+        for (output, class) in outputs.iter().zip(classes) {
+            let OldConditionTerm::Overflows { left, .. } = output.old_form() else {
+                unreachable!()
+            };
+            let OldMachineTerm::IntegerAddress(_, annotation) = &**left else {
+                unreachable!()
+            };
+            assert_eq!(annotation.class(), Some(CAccessClass::Scalar(class)));
         }
     }
 

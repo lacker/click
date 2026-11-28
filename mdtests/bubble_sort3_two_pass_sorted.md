@@ -104,7 +104,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                         intro() {
                             if k < (j - 1) {
                                 have k < at(region(4).entry, j);
-                                instantiate(forall (__click_q0: int32) { at(region(6).entry, 0) <= at(region(6).entry, __click_q0) and at(region(6).entry, 0) <= at(region(6).entry, __click_q0) and at(region(6).entry, __click_q0) < at(region(6).entry, j) implies at(region(6).entry, p[__click_q0]) <= at(region(6).entry, tmp) }, k);
+                                instantiate(forall (prefix_index: int32) { at(region(6).entry, 0) <= at(region(6).entry, prefix_index) and at(region(6).entry, 0) <= at(region(6).entry, prefix_index) and at(region(6).entry, prefix_index) < at(region(6).entry, j) implies at(region(6).entry, p[prefix_index]) <= at(region(6).entry, tmp) }, k);
                                 have at(region(4).entry, j) != k by { close(); }
                                 have at(region(4).entry, separate(memory(p[j]), memory(p[k]))) by {
                                     apply(click::separation::separate_elements(p, at(region(4).entry, j), k));
@@ -171,7 +171,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                         intro() {
                             if k < (j - 1) {
                                 have k < at(region(4).entry, j);
-                                instantiate(forall (__click_q0: int32) { at(region(9).entry, 0) <= at(region(9).entry, __click_q0) and at(region(9).entry, 0) <= at(region(9).entry, __click_q0) and at(region(9).entry, __click_q0) < at(region(9).entry, j) implies at(region(9).entry, p[__click_q0]) <= at(region(9).entry, p[j]) }, k);
+                                instantiate(forall (prefix_index: int32) { at(region(9).entry, 0) <= at(region(9).entry, prefix_index) and at(region(9).entry, 0) <= at(region(9).entry, prefix_index) and at(region(9).entry, prefix_index) < at(region(9).entry, j) implies at(region(9).entry, p[prefix_index]) <= at(region(9).entry, p[j]) }, k);
                                 have p[k] <= p[j] by {
                                     have j == at(region(9).entry, j + 1);
                                     rewrite(j, at(region(9).entry, j + 1));

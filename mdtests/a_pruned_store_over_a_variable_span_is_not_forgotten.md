@@ -42,5 +42,5 @@ int32 read_after_a_pruned_store(int32* a, int32 n, int32 i, int32 j, int32 m) {
 ```
 
 ```expect
-fail: the two sides read the same address in different memory states (`result` reads the outcome state, `old(a[m])` reads function entry)
+fail: the two sides read the same address in different memory states (`result` reads the memory recorded at `statement(2).exit`; `old(a[m])` reads the function-entry memory)
 ```

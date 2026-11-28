@@ -358,7 +358,8 @@ pub(crate) fn memory_erased_proposition_key(
 
 fn memory_erased_proposition_key_one(proposition: &Proposition) -> MemoryErasedPropositionKey {
     use crate::kernel::machine_integer::comparison::{
-        native_comparison_view, retained_integer_observation_comparison,
+        native_comparison_from_integer_operands, retained_integer_observation_comparison,
+        written_integer_comparison,
     };
     if let Proposition::ConditionIs(condition, value) = proposition
         && let Some(root) = condition.root()
@@ -374,17 +375,17 @@ fn memory_erased_proposition_key_one(proposition: &Proposition) -> MemoryErasedP
         );
     }
     match proposition {
-        condition_source_0 @ Proposition::ConditionIs(_, value)
-            if let Some((condition @ crate::kernel::integer_comparison_condition!(_, _), _)) =
-                condition_source_0.old_condition() =>
+        Proposition::ConditionIs(condition, value)
+            if let Some((operator, operands)) =
+                written_integer_comparison(condition.operand_view()) =>
         {
-            native_comparison_view(condition, *value)
+            native_comparison_from_integer_operands(operator, operands.each_ref(), *value)
                 .map(state_observation_key)
                 .unwrap_or_else(|| MemoryErasedPropositionKey::Exact(proposition.clone()))
         }
         // `Bool` values have no state-blind key yet: they are filed
         // exactly until their checked memory bridge has a structural view.
-        Proposition::ConditionIs(condition, _) if condition.old_form().is_bool_value_form() => {
+        Proposition::ConditionIs(condition, _) if condition.operand_view().is_bool_value_form() => {
             MemoryErasedPropositionKey::Exact(proposition.clone())
         }
         Proposition::ConditionIs(condition, value) => MemoryErasedPropositionKey::Condition(

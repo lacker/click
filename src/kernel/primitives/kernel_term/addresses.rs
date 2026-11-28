@@ -787,6 +787,26 @@ mod tests {
                 let stored = StoredConditionTerm::address_equal(&local, &other);
                 let root = stored.root().unwrap();
                 assert!(!root.has_cached_native_argument());
+                let displaced = local.with_offset(AddressOffset::raw_add(
+                    AddressOffset::constant(1),
+                    AddressOffset::constant(-1),
+                ));
+                let raw = KernelTerm::address_equal_raw([
+                    displaced.into_shared(),
+                    other.shared().clone(),
+                ]);
+                let source = crate::kernel::Proposition::condition_is(
+                    StoredConditionTerm::from_root(raw.clone()).unwrap(),
+                    false,
+                );
+                let crate::kernel::Proposition::ConditionIs(canonical, false) =
+                    crate::kernel::canonical_condition_fact(&source)
+                else {
+                    panic!("expected negative address fact")
+                };
+                assert_eq!(canonical.root(), Some(root));
+                assert!(!raw.has_cached_native_argument());
+                assert!(!root.has_cached_native_argument());
                 let native = StoredConditionTerm::from(OldConditionTerm::AddressEqual(
                     Box::new(local),
                     Box::new(other.clone()),

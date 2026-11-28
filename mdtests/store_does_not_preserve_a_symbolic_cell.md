@@ -27,5 +27,5 @@ void mark_one(int32 a[], int32 n, int32 i, int32 m) {
 ```
 
 ```expect
-fail: unclosed goal: a[m] == old(a[m]); the two sides read the same address in different memory states (`a[m]` reads the outcome state, `old(a[m])` reads function entry); `a[m]` may have changed since function entry: the store to `a[i]` may have written it. If `m` and `i` differ, state `m != i`.
+fail: unclosed goal: a[m] == old(a[m]); the two sides read the same address in different memory states (`a[m]` reads the memory recorded at `region(1).exit`; `old(a[m])` reads the function-entry memory); `a[m]` may have changed since function entry: the store to `a[i]` may have written it. If `m` and `i` differ, state `m != i`.
 ```

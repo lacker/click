@@ -31,6 +31,23 @@ fn arithmetic_guard_classification_keeps_shared_prefixes() {
                         condition.root().unwrap().clone()
                     });
                     let guard = Proposition::And(Box::new(upper.clone()), Box::new(lower));
+                    let exports = crate::kernel::KernelTermExport::machine_export_count();
+                    let fact = definedness_of_integer_bound(&upper).unwrap();
+                    let Proposition::ConditionIs(condition, false) = fact else {
+                        unreachable!()
+                    };
+                    let result = ordinary_arithmetic_guard(&guard).unwrap();
+                    assert_eq!(condition.root().unwrap(), result.root().unwrap());
+                    let (_, _, [crate::kernel::MachineOperandView::Shared(left), _]) =
+                        result.operand_view().overflow().unwrap()
+                    else {
+                        unreachable!()
+                    };
+                    assert_eq!(left, &term);
+                    assert_eq!(
+                        crate::kernel::KernelTermExport::machine_export_count(),
+                        exports
+                    );
                     let query = ordinary_arithmetic_guard_view(&guard).unwrap();
                     assert_eq!(query.format, format);
                     assert_eq!(query.operation, Operation::Add);

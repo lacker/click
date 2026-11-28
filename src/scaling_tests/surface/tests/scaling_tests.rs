@@ -5065,8 +5065,12 @@ fn counter_call_chain(call_count: usize) -> (String, String) {
     click_source.push_str(&format!(
         "void drive(struct range* r) {{\n    owns *r;\n    requires r->end == 0;\n    ensures r->end == {call_count};\n}} by {{\n"
     ));
-    for _ in 0..call_count {
-        click_source.push_str("    step();\n");
+    for previous in 0..call_count {
+        // Check the call against the end value established by the preceding
+        // ensure (or the caller's entry fact for the first call).
+        click_source.push_str(&format!(
+            "    step() {{\n        requires r->end < 1000000 by close() using {{ r->end == {previous}; }};\n        requires aligned(r, 4) by close();\n    }}\n"
+        ));
     }
     click_source.push_str("    step_until(function.exit);\n    close();\n}\n");
     (c_source, click_source)
@@ -5410,11 +5414,16 @@ fn call_requirement_checking_is_linear_in_the_requirement_count() {
         let requires = (1..=size)
             .map(|k| format!("    requires x != {k};\n"))
             .collect::<String>();
+        // Establish each requirement at the frontier from the same bound.
+        // This measures checking the call's requirements at every size.
+        let evidence = (1..=size)
+            .map(|k| format!("    have x != {k} by close() using {{ x > {size}; }};\n"))
+            .collect::<String>();
         let click_source = format!(
             "verifying \"many_requires.c\";\n\n\
              extern int32 g(int32 x) {{\n{requires}    ensures result == x;\n}}\n\n\
-             int32 caller(int32 x) {{\n    requires x > {size};\n    ensures result == x;\n}} by {{\n    \
-             step();\n    step();\n    close();\n}}\n"
+             int32 caller(int32 x) {{\n    requires x > {size};\n    ensures result == x;\n}} by {{\n\
+             {evidence}    step();\n    step();\n    close();\n}}\n"
         );
         let rebuilds_before = crate::kernel::reasoning::path_facts::context_rebuild_entries();
         let (verified, sample) = scaling_sample(size, || {
@@ -8959,7 +8968,22 @@ resource callbacks0(cb: const struct callbacks*) {
         for layer in (1..=depth).rev() {
             source.push_str(&format!("unfold(node{layer}(p)); observe(callbacks{layer}(cb));\n"));
         }
-        source.push_str("unfold(node0(p)); with(callbacks0(cb)) { step_until(function.exit); } fold(node0(p));\n");
+        source.push_str(r#"
+unfold(node0(p));
+with(callbacks0(cb)) {
+    have separate(memory(cb->invoke), memory(p->value));
+    mark before;
+    step();
+    have separate(statement(0).footprint, memory(cb->invoke)) by {
+        close() using { separate(memory(cb->invoke), memory(p->value)); };
+    }
+    have cb->invoke == at(before, cb->invoke) by {
+        preserve(memory(cb->invoke), statement(0));
+    }
+    step_until(function.exit);
+}
+fold(node0(p));
+"#);
         for layer in 1..=depth {
             source.push_str(&format!("fold(node{layer}(p));\n"));
         }

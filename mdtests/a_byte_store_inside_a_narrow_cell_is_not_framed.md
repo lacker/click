@@ -42,5 +42,5 @@ int32 stale_narrow_read(int32* q) {
 ```
 
 ```expect
-fail: unclosed goal: result == old(q[0]); the two sides read the same address in different memory states (`result` reads the outcome state, `old(q[0])` reads function entry); `q[0]` changed since function entry: the store to `q[…]` wrote it.
+fail: unclosed goal: result == old(q[0]); the two sides read the same address in different memory states (`result` reads the memory recorded at `statement(3).exit`; `old(q[0])` reads the function-entry memory); `q[0]` changed since function entry: the store to `q[…]` wrote it.
 ```

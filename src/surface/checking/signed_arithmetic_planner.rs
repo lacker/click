@@ -31,24 +31,29 @@ const SIGNED_MAX: i64 = i32::MAX as i64;
 // their selected syntax before exporting once at this public-payload boundary;
 // the kernel reads incoming shared claims directly when checking the evidence.
 fn native_certificate_proposition(proposition: &Proposition) -> Option<Proposition> {
-    let canonical = crate::kernel::canonical_condition_fact(proposition);
-    let Proposition::ConditionIs(condition, truth) = &canonical else {
-        return Some(canonical);
+    use crate::kernel::machine_integer::comparison;
+    let Proposition::ConditionIs(condition, truth) = proposition else {
+        return Some(proposition.clone());
     };
-    if matches!(condition.old_form(), OldConditionTerm::Compare { .. }) {
-        return Some(canonical);
-    }
-    let Some(view) = crate::kernel::machine_integer::comparison::structural_native_comparison_view(
-        condition.old_form(),
+    // Integer comparisons already have their canonical fact spelling. Keep
+    // the written operands through the certificate size check.
+    let Some((operator, operands)) =
+        comparison::written_integer_comparison(condition.operand_view())
+    else {
+        return Some(crate::kernel::canonical_condition_fact(proposition));
+    };
+    let Some(view) = comparison::structural_comparison_from_integer_operands(
+        operator,
+        operands.each_ref(),
         *truth,
     ) else {
-        return Some(canonical);
+        return Some(proposition.clone());
     };
     if !matches!(
         view.format,
         MachineIntegerType::Int32 | MachineIntegerType::UInt32
     ) {
-        return Some(canonical);
+        return Some(proposition.clone());
     }
     let mut pending = view
         .operands
@@ -71,10 +76,8 @@ fn native_certificate_proposition(proposition: &Proposition) -> Option<Propositi
         }
     }
     let (condition, truth) =
-        crate::kernel::machine_integer::comparison::native_comparison_of_integer_observation(
-            condition.old_form(),
-            *truth,
-        )?;
+        comparison::native_comparison_from_integer_operands(operator, operands.each_ref(), *truth)?
+            .boxed_condition()?;
     Some(crate::kernel::canonical_condition_fact(
         &Proposition::condition_is(condition, truth),
     ))
@@ -3584,6 +3587,43 @@ mod tests {
         let goal = lt(constant(0), n.clone());
         let premises = [ge(n.clone(), constant(0)), neq(n, constant(1))];
         assert!(plan_signed_arithmetic(&goal, &premises).is_none());
+    }
+
+    #[test]
+    fn certificate_conversion_keeps_stored_comparison_until_output() {
+        use crate::kernel::{
+            IntegerComparisonOperator, IntegerTerm, KernelTerm, KernelType, MachineBinaryOp,
+            ProgramType, SharedMachineIntegerTerm, StoredConditionTerm,
+        };
+        let _session = crate::kernel::VerificationSession::enter();
+        let format = MachineIntegerType::Int32;
+        let compare = |word| {
+            let observation = SharedMachineIntegerTerm::from_shared(format, word).unwrap();
+            let condition = StoredConditionTerm::integer_comparison(
+                IntegerComparisonOperator::GreaterEqual,
+                IntegerTerm::Machine(observation.clone()).into(),
+                IntegerTerm::constant(1.into()).into(),
+            );
+            let root = condition.root().unwrap().clone();
+            let result =
+                native_certificate_proposition(&Proposition::condition_is(condition, false));
+            assert!(!root.has_cached_native_argument());
+            (result, observation)
+        };
+        let mut word =
+            KernelTerm::variable(KernelType::Program(ProgramType::Int32), Variable(982210));
+        assert_eq!(compare(word.clone()).0, Some(lt(var(982210), constant(1))));
+
+        for _ in 0..13 {
+            word = KernelTerm::machine_binary_shared(
+                format,
+                MachineBinaryOp::Add,
+                [word.clone(), word],
+            );
+        }
+        let (result, observation) = compare(word);
+        assert!(result.is_none());
+        assert!(!observation.has_boxed_operand());
     }
 
     #[test]

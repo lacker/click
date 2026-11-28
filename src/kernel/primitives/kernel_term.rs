@@ -1574,15 +1574,20 @@ impl KernelTerm {
     ) -> Self {
         KernelTermImport::default()
             .machine_arithmetic(format, value)
-            .unwrap_or_else(|| {
-                // Native equality can ignore object-class evidence and
-                // state authority. Preserve this exact producer payload;
-                // checking may relate it to another leaf separately.
-                Self::intern(
-                    KernelType::Program(format.program_type()),
-                    KernelTermNode::WrittenMachine(KernelWrittenMachine::expression(format, value)),
-                )
-            })
+            .unwrap_or_else(|| Self::written_machine_operand(format, value))
+    }
+
+    /// Preserve the exact native operand for an output that must reproduce
+    /// its written syntax. Compound inputs can carry distinct declaration
+    /// metadata even when they compare equal.
+    pub(in crate::kernel) fn written_machine_operand(
+        format: MachineIntegerType,
+        value: &OldMachineTerm,
+    ) -> Self {
+        Self::intern(
+            KernelType::Program(format.program_type()),
+            KernelTermNode::WrittenMachine(KernelWrittenMachine::expression(format, value)),
+        )
     }
 
     /// An opaque address index already owns its exact producer syntax and

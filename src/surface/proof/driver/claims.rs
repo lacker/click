@@ -2124,16 +2124,53 @@ fn close_claim_directly_from_outcome<'a>(
                         if same_address && kernel_left != kernel_right {
                             let surface_left = describe_contract_expression(left);
                             let surface_right = describe_contract_expression(right);
-                            let left_role = state_role(left);
-                            let right_role = state_role(right);
-                            let program_point_note = if left_role == right_role {
-                                format!(
-                                    "`{surface_left}` and `{surface_right}` both read {left_role}"
+                            // Each side's memory, named by the point its read
+                            // is recorded at. A side whose point has no
+                            // retained name is described by the state its
+                            // spelling reads.
+                            let recorded = proof
+                                .outcome_fixed_state_view()
+                                .map(|view| view.fixed_state.recorded_states);
+                            let read_memory = |value: &ProgramValue| {
+                                crate::surface::diagnostics::describe_read_memory(
+                                    value,
+                                    pre_state.observation_point_id(),
+                                    state.observation_point_id(),
+                                    recorded,
                                 )
-                            } else {
-                                format!(
-                                    "`{surface_left}` reads {left_role}, `{surface_right}` reads {right_role}"
-                                )
+                            };
+                            let (left_role, right_role, program_point_note) = match (
+                                read_memory(&kernel_left),
+                                read_memory(&kernel_right),
+                            ) {
+                                (Some(left_memory), Some(right_memory)) => {
+                                    let note = if left_memory == right_memory {
+                                        format!(
+                                            "`{surface_left}` and `{surface_right}` both read {}",
+                                            left_memory.memory
+                                        )
+                                    } else {
+                                        format!(
+                                            "`{surface_left}` reads {}; `{surface_right}` reads {}",
+                                            left_memory.memory, right_memory.memory
+                                        )
+                                    };
+                                    (left_memory.since, right_memory.since, note)
+                                }
+                                _ => {
+                                    let left_role = state_role(left);
+                                    let right_role = state_role(right);
+                                    let note = if left_role == right_role {
+                                        format!(
+                                            "`{surface_left}` and `{surface_right}` both read {left_role}"
+                                        )
+                                    } else {
+                                        format!(
+                                            "`{surface_left}` reads {left_role}, `{surface_right}` reads {right_role}"
+                                        )
+                                    };
+                                    (left_role.to_string(), right_role.to_string(), note)
+                                }
                             };
                             // Both sides read one address at two program points,
                             // which is the resource tracker's question: it names
@@ -2141,8 +2178,8 @@ fn close_claim_directly_from_outcome<'a>(
                             let tracked = describe_two_sided_version_mismatch(
                                 &kernel_left,
                                 &kernel_right,
-                                left_role,
-                                right_role,
+                                &left_role,
+                                &right_role,
                                 parameter_binding,
                             )
                             .map(|mismatch| format!("; {mismatch}"))

@@ -732,6 +732,29 @@ fn shared_offsets_retain_state_identity_through_canonicalization() {
 }
 
 #[test]
+fn canonical_offset_equality_keeps_its_raw_spelling_after_offsets_fold() {
+    use crate::kernel::{KernelTerm, OffsetTree, StoredConditionTerm};
+    let _session = crate::kernel::VerificationSession::enter();
+    let sum = AddressOffset::raw_add(AddressOffset::constant(2), AddressOffset::constant(3));
+    let five = AddressOffset::constant(5).into_shared();
+    let raw = KernelTerm::address_offset_equal_raw([sum.into_shared(), five.clone()]);
+    let expected = KernelTerm::address_offset_equal_raw([five.clone(), five]);
+    for truth in [true, false] {
+        let source =
+            Proposition::condition_is(StoredConditionTerm::from_root(raw.clone()).unwrap(), truth);
+        let Proposition::ConditionIs(result, polarity) =
+            crate::kernel::canonical_condition_fact(&source)
+        else {
+            panic!("expected an offset equality")
+        };
+        assert_eq!(result.root(), Some(&expected));
+        assert_eq!(polarity, truth);
+        assert!(!raw.has_cached_native_argument());
+        assert!(!expected.has_cached_native_argument());
+    }
+}
+
+#[test]
 fn canonical_offset_term_is_complete_and_idempotent_at_multiple_depths() {
     for depth in [64, 128, 256] {
         let mut offset =

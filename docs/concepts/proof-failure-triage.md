@@ -63,6 +63,22 @@ two memories therefore never print alike. Different states do not by
 themselves establish unequal values: the proof may establish that their reads
 agree.
 
+When a comparison's two sides read one address in different memories, the
+refusal names the memory each side's read is recorded at, from the read's own
+version point or the recorded point holding its memory: the function-entry
+memory, the outcome memory, or the memory recorded at a point, which for a
+call's exit also names the call:
+
+```text
+unclosed goal: result == a[m]; the two sides read the same address in different memory states (`result` reads the function-entry memory; `a[m]` reads the memory recorded at `statement(3).exit`); `a[m]` may have changed since function entry: the store to `a[i]` may have written it. If `m` and `i` differ, state `m != i`.
+```
+
+The resource tracker then names the step between the two reads that broke
+the chain. Where it shows the cell unchanged between them, the text says
+"the cell is unchanged between the two reads, but they carry different read
+names": the values differ only in how the reads were named, which is a
+tooling defect rather than a missing proof step.
+
 A `viewable` fact names its memory too, since an object's lifetime can end
 between two points. In a report about a program state, a fact from an earlier
 recorded point is `at(point, viewable(p[0..n]))`, including
@@ -287,7 +303,10 @@ in an ordinary report, and reports say when additional context was omitted. In a
 memory with no source name is labeled `<state A>`, `<state B>`, and so on, and
 in a trace `state#1`, `state#2`, numbered by first appearance within one
 report: equal memory shares one label and memory that differs gets another, so
-"same memory" and "different memory" are visible as such. The structural
+"same memory" and "different memory" are visible as such. Reads of one
+memory under different read names (different version points, or a version
+point and the memory itself) get labels of their own, and the legend says
+which label each shares its memory with and where its reads are named. The structural
 comparison stops after the first 32 distinct memories. Expanded
 trace facts retain further memory identities with constant-time lookup;
 repeated uses of a retained version share a label. Beyond that comparison
