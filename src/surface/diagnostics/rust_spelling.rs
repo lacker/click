@@ -27,7 +27,7 @@ impl RustLoopSpelling {
                         iterator
                             .slice_fields
                             .iter()
-                            .flat_map(|fields| [fields.pointer.clone(), fields.length.clone()]),
+                            .map(|fields| fields.slice.clone()),
                     )
                     .chain(iterator.count_binding.iter().cloned())
                     .chain(iterator.range_bounds.iter().flatten().cloned())

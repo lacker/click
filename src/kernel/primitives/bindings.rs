@@ -88,8 +88,7 @@ enum LocalBindingKind {
     PreparedArgument,
     LoopEscape,
     EnumerateCount,
-    SliceIteratorPointer,
-    SliceIteratorLength,
+    SliceIteratorSlice,
     ChunkIterator(ChunkIteratorField),
     IteratorOption(IteratorOptionField),
     RangeStart,
@@ -308,29 +307,19 @@ impl LocalBindingId {
         }))
     }
 
-    pub(crate) fn slice_iterator_fields(
+    /// The slice a slice iterator still covers, one wide value of
+    /// `slice_type` (`design/rust-slice-values.md`, step 4b).
+    pub(crate) fn slice_iterator_slice(
         owner: LocalFunctionId,
         ordinal: u32,
-        pointer_type: ProgramType,
-    ) -> [Self; 2] {
-        [
-            (LocalBindingKind::SliceIteratorPointer, pointer_type),
-            (LocalBindingKind::SliceIteratorLength, ProgramType::UInt64),
-        ]
-        .map(|(kind, ty)| {
-            Self(Arc::new(LocalDeclaration {
-                owner: owner.clone(),
-                parameter: false,
-                kind,
-                ordinal,
-                scope_depth: 0,
-                spelling: None,
-                program_type: OnceLock::from(ty),
-                array_shape: OnceLock::new(),
-                struct_name: OnceLock::new(),
-                call_parameter: None,
-            }))
-        })
+        slice_type: ProgramType,
+    ) -> Self {
+        Self::iterator_field(
+            &owner,
+            ordinal,
+            LocalBindingKind::SliceIteratorSlice,
+            slice_type,
+        )
     }
 
     pub(crate) fn range_bounds(owner: LocalFunctionId, ordinal: u32, ty: ProgramType) -> [Self; 2] {
@@ -342,8 +331,7 @@ impl LocalBindingId {
         matches!(
             self.0.kind,
             LocalBindingKind::EnumerateCount
-                | LocalBindingKind::SliceIteratorPointer
-                | LocalBindingKind::SliceIteratorLength
+                | LocalBindingKind::SliceIteratorSlice
                 | LocalBindingKind::ChunkIterator(_)
                 | LocalBindingKind::RangeStart
                 | LocalBindingKind::RangeEnd
@@ -464,11 +452,8 @@ impl Hash for LocalBindingId {
             LocalBindingKind::LoopEscape => (&self.0.owner, 3u8, self.0.ordinal).hash(state),
             LocalBindingKind::EnumerateCount => (&self.0.owner, 4u8, self.0.ordinal).hash(state),
             LocalBindingKind::PreparedArgument => (&self.0.owner, 5u8, self.0.ordinal).hash(state),
-            LocalBindingKind::SliceIteratorPointer => {
+            LocalBindingKind::SliceIteratorSlice => {
                 (&self.0.owner, 7u8, self.0.ordinal).hash(state)
-            }
-            LocalBindingKind::SliceIteratorLength => {
-                (&self.0.owner, 8u8, self.0.ordinal).hash(state)
             }
             LocalBindingKind::ChunkIterator(field) => {
                 (&self.0.owner, 9u8, self.0.ordinal, field).hash(state)
@@ -538,8 +523,7 @@ impl std::fmt::Display for CanonicalLocalBinding<'_> {
         }
         let slice_field = match id.0.kind {
             LocalBindingKind::EnumerateCount => return f.write_str("<enumeration count>"),
-            LocalBindingKind::SliceIteratorPointer => Some("pointer"),
-            LocalBindingKind::SliceIteratorLength => Some("length"),
+            LocalBindingKind::SliceIteratorSlice => Some("slice"),
             _ => None,
         };
         if let Some(field) = slice_field {

@@ -110,7 +110,7 @@ impl Context<'_> {
             );
             if let Some((name, payload_type)) = element {
                 let value = self.shared_array_yielded_value(
-                    variable(fields.pointer.clone()),
+                    shared_arrays::cursor(&fields),
                     element_type,
                     payload_type,
                 )?;

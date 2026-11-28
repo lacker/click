@@ -2203,13 +2203,13 @@ impl adler2::Adler32 {
       have remainder.len() <= backing_length by { rewrite(remainder.len(), backing_length % 4u64); close(); }
       have loop(5).iter.len() <= remainder.len() by { rewrite(loop(5).iter.len(), remainder.len()); close(); }
      have 0 <= ((loop(5).iter.len() as u32) as i32) and ((loop(5).iter.len() as u32) as i32) <= ((remainder.len() as u32) as i32) by { rewrite(((loop(5).iter.len() as u32) as i32), ((remainder.len() as u32) as i32)); all { 0 <= ((remainder.len() as u32) as i32) => { close(); } ((remainder.len() as u32) as i32) <= ((remainder.len() as u32) as i32) => { close() using {}; } } }
-      have (loop(5).iter.as_slice() as Pointer) == (remainder as Pointer) by close();
-      have loop(5).iter.as_slice() == remainder by close() using {
-       (loop(5).iter.as_slice() as Pointer) == (remainder as Pointer);
+      have (loop(5).iter.as_slice().as_ptr() as Pointer) == (remainder as Pointer) by close();
+      have loop(5).iter.as_slice().as_ptr() == remainder by close() using {
+       (loop(5).iter.as_slice().as_ptr() as Pointer) == (remainder as Pointer);
       };
       have remainder == bytes.as_ptr() + (backing_length - backing_length % 4u64) by close();
       have backing_length - loop(5).iter.len() == backing_length - backing_length % 4u64 by { rewrite(loop(5).iter.len(), remainder.len()); rewrite(remainder.len(), backing_length % 4u64); close(); }
-      have loop(5).iter.as_slice() == bytes.as_ptr() + (backing_length - backing_length % 4u64) by { rewrite(loop(5).iter.as_slice(), remainder); close(); }
+      have loop(5).iter.as_slice().as_ptr() == bytes.as_ptr() + (backing_length - backing_length % 4u64) by { rewrite(loop(5).iter.as_slice().as_ptr(), remainder); close(); }
      have adler_tail_consumed(((remainder.len() as u32) as i32), ((loop(5).iter.len() as u32) as i32)) == 0 by { unfold(adler_tail_consumed(((remainder.len() as u32) as i32), ((loop(5).iter.len() as u32) as i32))); rewrite(((loop(5).iter.len() as u32) as i32), ((remainder.len() as u32) as i32)); close() using {}; }
      have adler_tail_a_ceiling(0) == 327600 by { unfold(adler_tail_a_ceiling(0)); close() using {}; }
      have adler_tail_b_ceiling(0) == 1506966 by { unfold(adler_tail_b_ceiling(0)); close() using {}; }
@@ -2390,7 +2390,7 @@ impl adler2::Adler32 {
        invariant remainder.len() <= 3u64;
        invariant remainder.len() <= backing_length;
        invariant loop(5).iter.len() <= remainder.len();
-       invariant loop(5).iter.as_slice() == bytes.as_ptr() + (backing_length - loop(5).iter.len());
+       invariant loop(5).iter.as_slice().as_ptr() == bytes.as_ptr() + (backing_length - loop(5).iter.len());
       invariant defined((((backing_length as u32) as i32) - ((loop(5).iter.len() as u32) as i32)));
       invariant 0 <= old(to_integer((self.a as u32))) and old(to_integer((self.a as u32))) <= 65520;
       invariant 0 <= old(to_integer((self.b as u32)));
@@ -2419,7 +2419,7 @@ impl adler2::Adler32 {
        have truncating_remainder(to_integer(at(tail_head, a)), 65521) == adler_spec_a(bytes.as_ptr(), (((backing_length as u32) as i32) - at(tail_head, ((loop(5).iter.len() as u32) as i32))), old(to_integer((self.a as u32))));
        have truncating_remainder(to_integer(at(tail_head, b)), 65521) == adler_spec_b(bytes.as_ptr(), (((backing_length as u32) as i32) - at(tail_head, ((loop(5).iter.len() as u32) as i32))), old(to_integer((self.a as u32))), old(to_integer((self.b as u32))));
        apply(adler_tail_read_offset(backing_length - backing_length % 4u64, backing_length, remainder.len(), loop(5).iter.len()));
-       have at(tail_head, loop(5).iter.as_slice()) == bytes.as_ptr() + (backing_length - at(tail_head, loop(5).iter.len())) by close();
+       have at(tail_head, loop(5).iter.as_slice().as_ptr()) == bytes.as_ptr() + (backing_length - at(tail_head, loop(5).iter.len())) by close();
        step_until(loop(5).statement(0).entry);
        have loop(5).iter.len() == at(tail_head, loop(5).iter.len()) - 1u64;
        have at(tail_head, loop(5).iter.len()) <= 2147483647u64 by close() using { at(tail_head, loop(5).iter.len()) <= remainder.len(); remainder.len() <= 3u64; };
@@ -2463,16 +2463,16 @@ impl adler2::Adler32 {
        have to_integer(1u64) <= to_integer(backing_length - loop(5).iter.len()) by close() using { to_integer(backing_length - loop(5).iter.len()) == to_integer(backing_length) - to_integer(loop(5).iter.len()); 1u64 <= backing_length - loop(5).iter.len(); };
        apply(integer::uint64_subtract_to_integer(backing_length - loop(5).iter.len(), 1u64));
        have to_integer(backing_length - loop(5).iter.len() - 1u64) == to_integer(backing_length - at(tail_head, loop(5).iter.len())) by close() using { to_integer(backing_length - loop(5).iter.len()) == to_integer(backing_length) - to_integer(loop(5).iter.len()); to_integer(backing_length - at(tail_head, loop(5).iter.len())) == to_integer(backing_length) - to_integer(at(tail_head, loop(5).iter.len())); to_integer(backing_length - loop(5).iter.len() - 1u64) == to_integer(backing_length - loop(5).iter.len()) - to_integer(1u64); loop(5).iter.len() == at(tail_head, loop(5).iter.len()) - 1u64; };
-       have at(tail_head, loop(5).iter.as_slice()) == bytes.as_ptr() + (backing_length - loop(5).iter.len() - 1u64) by close() using { at(tail_head, loop(5).iter.as_slice()) == bytes.as_ptr() + (backing_length - at(tail_head, loop(5).iter.len())); to_integer(backing_length - loop(5).iter.len() - 1u64) == to_integer(backing_length - at(tail_head, loop(5).iter.len())); };
+       have at(tail_head, loop(5).iter.as_slice().as_ptr()) == bytes.as_ptr() + (backing_length - loop(5).iter.len() - 1u64) by close() using { at(tail_head, loop(5).iter.as_slice().as_ptr()) == bytes.as_ptr() + (backing_length - at(tail_head, loop(5).iter.len())); to_integer(backing_length - loop(5).iter.len() - 1u64) == to_integer(backing_length - at(tail_head, loop(5).iter.len())); };
        apply(adler_count_previous_byte_observation(bytes.as_ptr(), backing_length, loop(5).iter.len()));
        have (byte as u32) == (at(tail_head, loop(5).iter.as_slice()[0]) as u32);
        apply(adler_helper_byte_observation(at(tail_head, loop(5).iter.as_slice()[0])));
-       have at(tail_head, loop(5).iter.as_slice()[0]) == (at(tail_head, loop(5).iter.as_slice()))[0] by close();
-       apply(adler_equal_byte_read(at(tail_head, loop(5).iter.as_slice()), bytes.as_ptr() + (backing_length - loop(5).iter.len() - 1u64), 0));
+       have at(tail_head, loop(5).iter.as_slice()[0]) == (at(tail_head, loop(5).iter.as_slice().as_ptr()))[0] by close();
+       apply(adler_equal_byte_read(at(tail_head, loop(5).iter.as_slice().as_ptr()), bytes.as_ptr() + (backing_length - loop(5).iter.len() - 1u64), 0));
        have to_integer(byte as u32) == to_integer(((bytes.as_ptr() + (backing_length - loop(5).iter.len() - 1u64))[0] as i32)) by {
         rewrite((byte as u32), (at(tail_head, loop(5).iter.as_slice()[0]) as u32));
         rewrite(to_integer((at(tail_head, loop(5).iter.as_slice()[0]) as u32)), to_integer((at(tail_head, loop(5).iter.as_slice()[0]) as i32)));
-        rewrite((at(tail_head, loop(5).iter.as_slice()))[0], (bytes.as_ptr() + (backing_length - loop(5).iter.len() - 1u64))[0]);
+        rewrite((at(tail_head, loop(5).iter.as_slice().as_ptr()))[0], (bytes.as_ptr() + (backing_length - loop(5).iter.len() - 1u64))[0]);
         close();
        }
        have to_integer(byte as u32) == to_integer((bytes[((((backing_length as u32) as i32) - ((loop(5).iter.len() as u32) as i32)) - 1)] as i32)) by {
@@ -2575,11 +2575,11 @@ impl adler2::Adler32 {
         to_integer(loop(5).iter.len()) == to_integer(at(tail_head, loop(5).iter.len())) - 1;
        };
        have loop(5).iter.len() < at(tail_head, loop(5).iter.len()) by close() using { to_integer(loop(5).iter.len()) == to_integer(at(tail_head, loop(5).iter.len())) - 1; };
-       have loop(5).iter.as_slice() == byte_offset(at(tail_head, loop(5).iter.as_slice()), 1) by close();
+       have loop(5).iter.as_slice().as_ptr() == byte_offset(at(tail_head, loop(5).iter.as_slice().as_ptr()), 1) by close();
        apply(adler_uint64_pointer_association(bytes.as_ptr(), (backing_length - at(tail_head, loop(5).iter.len())), 1u64));
-       have loop(5).iter.as_slice() == bytes.as_ptr() + (backing_length - loop(5).iter.len()) by {
-        rewrite(loop(5).iter.as_slice(), byte_offset(at(tail_head, loop(5).iter.as_slice()), 1));
-        rewrite(at(tail_head, loop(5).iter.as_slice()), bytes.as_ptr() + (backing_length - at(tail_head, loop(5).iter.len())));
+       have loop(5).iter.as_slice().as_ptr() == bytes.as_ptr() + (backing_length - loop(5).iter.len()) by {
+        rewrite(loop(5).iter.as_slice().as_ptr(), byte_offset(at(tail_head, loop(5).iter.as_slice().as_ptr()), 1));
+        rewrite(at(tail_head, loop(5).iter.as_slice().as_ptr()), bytes.as_ptr() + (backing_length - at(tail_head, loop(5).iter.len())));
         rewrite(to_integer((backing_length - loop(5).iter.len())), to_integer((backing_length - at(tail_head, loop(5).iter.len())) + 1u64));
         close();
        }

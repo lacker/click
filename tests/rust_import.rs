@@ -1876,8 +1876,8 @@ fn charon_slice_iter_sums_bytes_by_its_library_contract() {
         ),
         // The iterator stands where the count says, not one element on.
         (
-            "invariant iter.as_slice() == bytes.as_ptr() + (bytes.len() - iter.len());",
-            "invariant iter.as_slice() == bytes.as_ptr() + ((bytes.len() - iter.len()) + 1u64);",
+            "invariant iter.as_slice().as_ptr() == bytes.as_ptr() + (bytes.len() - iter.len());",
+            "invariant iter.as_slice().as_ptr() == bytes.as_ptr() + ((bytes.len() - iter.len()) + 1u64);",
         ),
         // Each `next()` yields one element.
         (

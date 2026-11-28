@@ -2445,15 +2445,17 @@ impl ChunkIteratorFields {
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(crate) struct SliceIteratorFields {
-    pub(crate) pointer: crate::kernel::BindingName,
-    pub(crate) length: crate::kernel::BindingName,
+    /// The slice the iterator still covers, one wide value
+    /// (`design/rust-slice-values.md`, step 4b): `iter.as_slice()`, whose
+    /// data pointer is `iter.as_slice().as_ptr()` and count `iter.len()`.
+    pub(crate) slice: crate::kernel::BindingName,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum RustIteratorKind {
     /// `core::slice::Iter` or a shared array's iterator: the slice it still
-    /// covers, whose pointer and length a proof reads as `iter.as_slice()`
-    /// and `iter.len()`.
+    /// covers, which a proof reads as `iter.as_slice()`, with its data
+    /// pointer `iter.as_slice().as_ptr()` and its length `iter.len()`.
     Slice,
     /// `Enumerate<Iter<T>>`: the slice iterator's fields and its count,
     /// which a proof reads as `iter.count`.
