@@ -85,6 +85,17 @@ mod tests {
                 root.clone(),
                 KernelTermImport::default().algebraic(&variable),
             ]);
+            let written = OldConditionTerm::AlgebraicEqual(Box::new(value), Box::new(variable));
+            let stored = StoredConditionTerm::from(written.clone());
+            assert_eq!(stored.root(), Some(&condition));
+            let [left, _] = stored.operand_view().written_algebraic_equality().unwrap();
+            let AlgebraicTermNode::MemoryLoad { point, .. } = &left.node else {
+                panic!("stored read operand");
+            };
+            assert_eq!(
+                point.shared_memory().arena_id(),
+                read.parts().0.shared_memory().arena_id()
+            );
             let a = OldMachineTerm::constant(1);
             let b = OldMachineTerm::constant(2);
             let common = KernelTerm::machine_if_shared(
@@ -101,10 +112,7 @@ mod tests {
             let native = SharedMachineIntegerTerm::intern(
                 format,
                 OldMachineTerm::If {
-                    condition: Box::new(OldConditionTerm::AlgebraicEqual(
-                        Box::new(value),
-                        Box::new(variable),
-                    )),
+                    condition: Box::new(written),
                     then_term: Box::new(a),
                     else_term: Box::new(b),
                 },
