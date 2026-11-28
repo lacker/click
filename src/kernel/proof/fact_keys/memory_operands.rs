@@ -161,7 +161,9 @@ pub(super) fn written(term: &OldMachineTerm) -> MemoryErasedBitvectorKey {
                 memory_erased_bitvector_key(else_term),
             )
         }
-        OldMachineTerm::If { .. } | OldMachineTerm::RangeFold { .. } => {
+        OldMachineTerm::If { .. }
+        | OldMachineTerm::RangeFold { .. }
+        | OldMachineTerm::AlgebraicMatch { .. } => {
             Node::ExactOperand(crate::kernel::SharedMachineIntegerTerm::intern(
                 MachineIntegerType::Int32,
                 term.clone(),
@@ -263,7 +265,10 @@ pub(super) fn operand(view: crate::kernel::MachineOperandView<'_>) -> MemoryEras
                 )
                 .expect("machine fold"),
             ))
-        } else if let Some(value) = root.machine_conversion_leaf() {
+        } else if let Some(value) = root
+            .machine_conversion_leaf()
+            .or_else(|| root.written_machine_input())
+        {
             written(value)
         } else if let Some(variable) = view.variable() {
             written(&OldMachineTerm::Variable(*variable))
