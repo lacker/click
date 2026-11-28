@@ -1694,10 +1694,25 @@ impl Parser {
             pointee_constant: false,
             reference: false,
         };
-        if self.peek() == Some(&Token::LParen) {
-            self.position += 1;
-            self.expect(Token::RParen)?;
+        if self.peek() == Some(&Token::LParen) && self.peek_next() == Some(&Token::RParen) {
+            self.position += 2;
             return Ok(scalar(InterfaceType::Void));
+        }
+        // A tuple, `(A, B)`, is a Click type, but a program value of one is
+        // not supported yet (`design/tuples.md`, step T2).
+        if self.peek() == Some(&Token::LParen) {
+            let at = self.error_context();
+            let components =
+                self.parse_tuple_components(|parser| parser.parse_rust_type().map(|_| ()))?;
+            return Err(self.error_at(
+                at,
+                format!(
+                    "a tuple of {} components is not supported as a program value yet: a `fn` \
+                     signature cannot take or return a tuple, though a contract or a pure \
+                     function may use one",
+                    components.len()
+                ),
+            ));
         }
         if self.peek() == Some(&Token::Amp) {
             return self.parse_rust_reference_type();

@@ -424,6 +424,9 @@ fn validate_scoped_integer_proposition_one(
             operator,
             right,
         } => {
+            if spells_tuple(left) || spells_tuple(right) {
+                return Ok(());
+            }
             let mut locals = BinderSet::new();
             let left_kind =
                 integer_expression_kind(left, integer_bindings, click_functions, &mut locals);
@@ -845,8 +848,12 @@ fn integer_expression_kind(
                 // schema by the algebraic validator.  Preserve the existing
                 // Integer inference for that scoped binding while allowing
                 // nested matches and calls to contribute their own type.
+                // A tuple's components have the types of its type
+                // arguments, which this pass does not read: a binding of
+                // one has no kind here (`design/tuples.md`).
+                let tuple_arm = crate::surface::tuples::arity(&arm.type_name).is_some();
                 let mut inserted_bindings = Vec::new();
-                for binding in &arm.bindings {
+                for binding in arm.bindings.iter().filter(|_| !tuple_arm) {
                     if locals.insert(binding.clone()) {
                         inserted_bindings.push(binding);
                     }
@@ -2354,6 +2361,29 @@ fn infer_scoped_range_fold_type(
     }
 }
 
+/// Whether a comparison operand is written with a tuple: a tuple value, a
+/// projection or a destructuring. This C-carrier pass reads no datatype
+/// schema, so such a comparison is checked by the schema-aware algebraic
+/// validation and by lowering instead (`design/tuples.md`).
+fn spells_tuple(expression: &SyntaxTerm) -> bool {
+    match expression {
+        SyntaxTerm::AlgebraicConstructor { variant, .. } => {
+            crate::surface::tuples::arity(variant).is_some()
+        }
+        SyntaxTerm::AlgebraicMatch { scrutinee, arms } => {
+            arms.iter()
+                .any(|arm| crate::surface::tuples::arity(&arm.type_name).is_some())
+                || spells_tuple(scrutinee)
+        }
+        SyntaxTerm::Old(inner)
+        | SyntaxTerm::Exact(inner)
+        | SyntaxTerm::At {
+            expression: inner, ..
+        } => spells_tuple(inner),
+        _ => false,
+    }
+}
+
 fn validate_comparison_expression_types(
     left: &SyntaxTerm,
     operator: ComparisonOperator,
@@ -2362,6 +2392,9 @@ fn validate_comparison_expression_types(
     click_functions: &BinderMap<ClickFunctionType>,
     context: &str,
 ) -> Result<(), ClickError> {
+    if spells_tuple(left) || spells_tuple(right) {
+        return Ok(());
+    }
     if contains_scoped_expression_shape(left, ScopedExpressionShape::Lambda)
         || contains_scoped_expression_shape(right, ScopedExpressionShape::Lambda)
     {
@@ -3634,6 +3667,17 @@ pub(in crate::surface) fn describe_click_type(click_type: &ClickType) -> String 
             )
         ),
         ClickType::Integer => "Integer".to_string(),
+        ClickType::Algebraic(application)
+            if crate::surface::tuples::arity(&application.name).is_some() =>
+        {
+            crate::surface::tuples::spell(
+                &application
+                    .arguments
+                    .iter()
+                    .map(describe_click_type)
+                    .collect::<Vec<_>>(),
+            )
+        }
         ClickType::Algebraic(application) => {
             if application.arguments.is_empty() {
                 application.name.clone()
