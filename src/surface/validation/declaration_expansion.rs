@@ -653,6 +653,9 @@ fn build_library_selection(
     mask: u64,
 ) -> Result<(ClickFile, BTreeMap<String, usize>), ClickError> {
     let mut file = empty_library_file()?;
+    // The built-in tuple datatypes are part of every library selection.
+    file.algebraic_type_definitions
+        .extend(crate::surface::tuples::definitions());
     for (index, module) in modules.iter().enumerate() {
         if mask & (1 << index) != 0 {
             append_library_module(&mut file, module.file.clone());

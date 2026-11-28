@@ -594,6 +594,42 @@ recursive datatype. Mutual induction across distinct datatype families is not
 generated. Reusing one constructor refinement across repeated matches is
 tracked separately in the algebraic match path-correlation issue.
 
+## Tuples
+
+Tuples have Rust's syntax and meaning ([design](https://github.com/clicklang/click/blob/master/design/tuples.md)).
+A tuple type is `(A, B)`, `(A,)` or `()`, with up to 12 components of any
+Click value type, including `Integer`, spec enums and other tuples. A value is
+`(a, b)`, `(a,)` or `()`; `(a)` is `a` parenthesized. `t.0` is a component,
+`let (a, b) = t; body` and the match arm `(a, b) => body` bind every
+component, and `==` is componentwise:
+
+<!-- verified-example: mdtests/tuples_construct_project_and_compare.md -->
+```click
+function swap(p: (int32, int32)) -> (int32, int32) {
+    (p.1, p.0)
+}
+```
+
+A tuple is a built-in datatype of one constructor, so constructor equality,
+`match` and a proof `match` apply to it as to a `spec enum`. A projection
+is a one-arm match: `(x, y).0 == x` closes with `close()`, and
+`(x, y) == (u, v)` gives `x == u`. A projection of a projection needs its
+inner step, `have ((x, y), z).0 == (x, y) by close();` and a `rewrite`. A
+proof `match t { (a, b) => { ... } }` introduces `t == (a, b)`, which proves
+surjective pairing, `swap(swap(p)) == p` in the example. Printed facts and
+expanded proofs spell tuples as written: `(A, B)`, `(a, b)` and `t.1`.
+
+A projection needs its receiver's type: a parameter, a typed `let`, a call
+result, a constructed tuple or a match binding of one. A projection of a
+non-tuple, an index past the last component, a one-component tuple without
+its trailing comma, and a tuple whose components' types nothing fixes are
+refused. Patterns bind names only; they do not nest, and a destructuring
+`let` takes no type annotation. A Rust `fn` signature, in a sidecar or an
+interface file, cannot yet take or return a tuple: tuple program values are
+refused by name
+(`rust_fn_signatures_refuse_tuple_program_values` in
+`src/surface/tests/surface_syntax.rs`).
+
 ## Specification sequences
 
 `[a, b, c]` is an immutable finite specification sequence. Its elements must

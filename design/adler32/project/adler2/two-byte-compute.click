@@ -123,7 +123,7 @@ impl adler2::Adler32 {
      }
      // Follow each serial iteration at its two accumulator updates.
      have loop(5).iter.len() == 2u64;
-     have loop(5).iter.as_slice() == old(bytes.as_ptr()) + 0u64;
+     have loop(5).iter.as_slice().as_ptr() == old(bytes.as_ptr()) + 0u64;
      step_until(loop(5).statement(0).entry);
      have byte == old(bytes[0]) by { close(); }
      have a == 1u32;
@@ -153,7 +153,7 @@ impl adler2::Adler32 {
      have to_integer(b) <= 393382;
      step(); step();
      have loop(5).iter.len() == 1u64;
-     have loop(5).iter.as_slice() == old(bytes.as_ptr()) + 1u64;
+     have loop(5).iter.as_slice().as_ptr() == old(bytes.as_ptr()) + 1u64;
      step_until(loop(5).statement(0).entry);
      have byte == remainder[1];
      have remainder[1] == old(bytes[1]);

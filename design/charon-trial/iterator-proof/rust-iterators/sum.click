@@ -29,7 +29,7 @@ fn sum(bytes: &[u8]) -> i32 {
 } by {
     step_until(loop(0).entry);
     have loop(0).iter.len() == bytes.len();
-    have loop(0).iter.as_slice() == bytes.as_ptr();
+    have loop(0).iter.as_slice().as_ptr() == bytes.as_ptr();
     have bytes.len() - loop(0).iter.len() == 0u64;
     have prefix(bytes, bytes.len() - loop(0).iter.len()) == 0 by {
         rewrite(bytes.len() - loop(0).iter.len(), 0u64);
@@ -44,7 +44,7 @@ fn sum(bytes: &[u8]) -> i32 {
         views bytes[0..bytes.len()];
         invariant bytes.len() <= 1000u64;
         invariant iter.len() <= bytes.len();
-        invariant iter.as_slice() == bytes.as_ptr() + (bytes.len() - iter.len());
+        invariant iter.as_slice().as_ptr() == bytes.as_ptr() + (bytes.len() - iter.len());
         invariant 0 <= total and to_integer(total) <= 255 * (to_integer(bytes.len()) - to_integer(iter.len()));
         invariant total == prefix(bytes, bytes.len() - iter.len());
         maintain by {
@@ -74,15 +74,15 @@ fn sum(bytes: &[u8]) -> i32 {
                 have viewable(memory(bytes[(bytes.len() - iter.len())])) by {
                     apply(click::separation::viewable_restrict(memory(bytes[0u64..bytes.len()]), memory(bytes[(bytes.len() - iter.len())])));
                 }
-                have *iter.as_slice() == bytes[(bytes.len() - iter.len())] by {
-                    apply(read_same_byte(bytes.as_ptr() + (bytes.len() - iter.len()), iter.as_slice()));
+                have *iter.as_slice().as_ptr() == bytes[(bytes.len() - iter.len())] by {
+                    apply(read_same_byte(bytes.as_ptr() + (bytes.len() - iter.len()), iter.as_slice().as_ptr()));
                     close();
                 }
                 step_until(loop(0).statement(0).entry);
                 have iter.len() == at(iteration, iter.len()) - 1u64;
-                have iter.as_slice() == (bytes.as_ptr() + (bytes.len() - at(iteration, iter.len()))) + 1u64;
+                have iter.as_slice().as_ptr() == (bytes.as_ptr() + (bytes.len() - at(iteration, iter.len()))) + 1u64;
                 apply(pointer_association(bytes.as_ptr(), bytes.len() - at(iteration, iter.len()), 1u64));
-                have at(iteration, *iter.as_slice()) == byte;
+                have at(iteration, *iter.as_slice().as_ptr()) == byte;
                 have at(iteration, bytes[(bytes.len() - iter.len())]) == byte;
                 have defined(total + byte as i32) by {
                     close() using { 0 <= total; to_integer(total) <= 255000; };
@@ -102,7 +102,7 @@ fn sum(bytes: &[u8]) -> i32 {
                 apply(integer::uint64_add_to_integer(bytes.len() - at(iteration, iter.len()), 1u64));
                 have to_integer(bytes.len() - iter.len()) == to_integer((bytes.len() - at(iteration, iter.len())) + 1u64);
                 have iter.len() <= bytes.len();
-                have iter.as_slice() == bytes.as_ptr() + (bytes.len() - iter.len()) by {
+                have iter.as_slice().as_ptr() == bytes.as_ptr() + (bytes.len() - iter.len()) by {
                     rewrite((bytes.len() - iter.len()), (bytes.len() - at(iteration, iter.len())) + 1u64);
                     close();
                 }

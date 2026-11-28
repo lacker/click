@@ -84,6 +84,7 @@ pub(crate) mod proof_diagnostics;
 mod source_registry;
 mod struct_values;
 mod structural_clauses;
+mod tuples;
 pub use structural_clauses::StructuralClauses;
 mod surface_propositions;
 mod typed_surface;
@@ -461,10 +462,11 @@ pub(crate) fn loop_iterations_spelling(index: usize) -> String {
 
 /// The Rust accessors a proof reads a loop's iterator through, as written
 /// after `iter.`: a call such as `len()` or a public field such as `start`.
-pub(crate) const RUST_ITERATOR_ACCESSORS: [&str; 13] = [
+pub(crate) const RUST_ITERATOR_ACCESSORS: [&str; 14] = [
     "len()",
     "count",
     "as_slice()",
+    "as_slice().as_ptr()",
     "start",
     "end",
     "start()",
@@ -485,9 +487,11 @@ pub(crate) fn rust_iterator_accessors(
     kind: crate::languages::interface::RustIteratorKind,
 ) -> &'static [&'static str] {
     match kind {
-        crate::languages::interface::RustIteratorKind::Slice => &["len()", "as_slice()"],
+        crate::languages::interface::RustIteratorKind::Slice => {
+            &["len()", "as_slice()", "as_slice().as_ptr()"]
+        }
         crate::languages::interface::RustIteratorKind::Enumerate => {
-            &["len()", "as_slice()", "count"]
+            &["len()", "as_slice()", "as_slice().as_ptr()", "count"]
         }
         crate::languages::interface::RustIteratorKind::Range => &["start", "end", "len()"],
         crate::languages::interface::RustIteratorKind::RangeInclusive => {
@@ -503,26 +507,29 @@ pub(crate) fn rust_iterator_accessors(
 }
 
 /// `iter.<accessor>` of `iterator`, read from the state the importer keeps
-/// for it. `iter.as_slice()` reads as a slice parameter does, its data.
+/// for it. `iter.as_slice()` is a slice, as a slice parameter is.
 pub(crate) fn rust_iterator_method(
     iterator: &crate::languages::interface::RustLoopIterator,
     accessor: &str,
 ) -> Result<SyntaxTerm, String> {
     use crate::languages::interface::RustIteratorKind as K;
     let expression = match (iterator.kind, accessor) {
-        // A slice iterator is the slice it still covers: `iter.as_slice()`
-        // reads as a slice parameter does, its data, and `iter.len()` is
-        // its length. An enumeration also counts what it has yielded.
-        (K::Slice | K::Enumerate, "len()" | "as_slice()") => {
+        // A slice iterator is the slice it still covers, one wide value
+        // (`design/rust-slice-values.md`, step 4b): `iter.as_slice()` is
+        // that slice, `iter.as_slice().as_ptr()` its data pointer and
+        // `iter.len()` its length. An enumeration also counts what it has
+        // yielded.
+        (K::Slice | K::Enumerate, "len()" | "as_slice()" | "as_slice().as_ptr()") => {
             let fields = iterator
                 .slice_fields
                 .as_ref()
                 .ok_or("missing slice iterator fields")?;
-            ProgramExpression::Variable(if accessor == "len()" {
-                fields.length.clone()
-            } else {
-                fields.pointer.clone()
-            })
+            let slice = ProgramExpression::Variable(fields.slice.clone());
+            match accessor {
+                "len()" => ProgramExpression::SliceLength(Box::new(slice)),
+                "as_slice()" => slice,
+                _ => ProgramExpression::SliceData(Box::new(slice)),
+            }
         }
         (K::Enumerate, "count") => ProgramExpression::Variable(
             iterator
@@ -602,7 +609,7 @@ pub(crate) fn rust_iterator_method(
 
 /// The Rust spelling of the importer's iterator state variable `name` in a
 /// function whose loops advance `iterators`: `loop(i).iter.len()` for loop
-/// `i`'s remaining length, `loop(i).iter.as_slice()` for its cursor, and
+/// `i`'s remaining length, `loop(i).iter.as_slice()` for its slice, and
 /// bare `iter.len()` for the iterator of `current`, the loop whose phases
 /// are being checked.
 pub(crate) fn rust_iterator_spelling(
@@ -5468,7 +5475,7 @@ impl RecordedStates {
     /// The recorded points at which some local held a pointer into `block`,
     /// with their states, in the locals' name order: at most
     /// [`POINTER_POINTS_OFFERED`], each checked against its state.
-    fn points_holding_address_base<'a>(
+    pub(crate) fn points_holding_address_base<'a>(
         &'a self,
         block: &'a crate::kernel::AddressBase,
     ) -> impl Iterator<Item = (&'a ProgramPointSelector, &'a ExecutionState)> {

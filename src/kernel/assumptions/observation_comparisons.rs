@@ -592,18 +592,24 @@ impl ObservationComparisons {
         condition: &OldConditionTerm,
         truth: bool,
     ) -> Option<&Proposition> {
+        match condition {
+            OldConditionTerm::Constant(value) => self.literal_source(*value, truth),
+            _ => self.lookup_source(|| Some(key(&comparison_view(condition, truth)?))),
+        }
+    }
+
+    pub(super) fn literal_source(&self, literal: bool, truth: bool) -> Option<&Proposition> {
+        self.lookup_source(|| Some(Key::Truth(literal == truth)))
+    }
+
+    fn lookup_source(&self, query: impl FnOnce() -> Option<Key>) -> Option<&Proposition> {
         if self.sources.is_empty() {
             return None;
         }
         let _checking =
             crate::instrumentation::CheckingWorkScope::new("read observation comparison source", 1);
         crate::instrumentation::record_deterministic_work(1);
-        let key = if let OldConditionTerm::Constant(value) = condition {
-            Key::Truth(*value == truth)
-        } else {
-            key(&comparison_view(condition, truth)?)
-        };
-        self.sources.get(&key)?.iter().next()
+        self.sources.get(&query()?)?.iter().next()
     }
 }
 

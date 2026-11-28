@@ -193,6 +193,13 @@ fn slice_variable(
     if let Some((slice, _)) = call_result_slice(&Address::symbolic(variable), state) {
         return Some(slice);
     }
+    // A slice local that holds this slice, here or at a recorded point,
+    // such as a slice iterator's slice at a loop's head
+    // (`design/rust-slice-values.md`, step 4b). A thin local holding its
+    // data pointer names the data pointer, never the slice.
+    if let Some((local, _)) = program_slice_local(variable, state, |slice| slice) {
+        return Some(local);
+    }
     // Another value named where it was introduced is named by its
     // address's routes.
     synthesize_surface_pointer_expression(
@@ -201,6 +208,74 @@ fn slice_variable(
         state,
         bound_variables,
     )
+}
+
+/// `component` of the slice local that holds the slice the variable
+/// `variable` names: in `state`, the local itself, or `at(p, local)` at
+/// the first recorded point whose state holds it.
+fn program_slice_local(
+    variable: Variable,
+    state: &ExecutionState,
+    component: impl Fn(ProgramExpression) -> ProgramExpression,
+) -> Option<(SyntaxTerm, crate::kernel::SliceElement)> {
+    if let Some((local, element)) = slice_local_holding(variable, state) {
+        return Some((SyntaxTerm::ProgramExpression(component(local)), element));
+    }
+    let base = AddressBase::Symbolic(variable);
+    SYNTHESIS_RECORDED_POINTS.with(|slot| {
+        let slot = slot.borrow();
+        slot.as_ref()?
+            .points_holding_address_base(&base)
+            .find_map(|(selector, recorded)| {
+                let (local, element) = slice_local_holding(variable, recorded)?;
+                Some((
+                    SyntaxTerm::At {
+                        selector: selector.clone(),
+                        expression: Box::new(SyntaxTerm::ProgramExpression(component(local))),
+                    },
+                    element,
+                ))
+            })
+    })
+}
+
+/// The count of the slice the variable `variable` names, as the program's
+/// own component read `local.len()` of the slice local that holds it, here
+/// or at a recorded point.
+fn program_slice_local_count(variable: Variable, state: &ExecutionState) -> Option<SyntaxTerm> {
+    program_slice_local(variable, state, |slice| {
+        ProgramExpression::SliceLength(Box::new(slice))
+    })
+    .map(|(count, _)| count)
+}
+
+/// The local of `state` that holds the slice the variable `variable` names,
+/// its data pointer and count: its name, with the slice's element. One
+/// lookup in the index of locals holding a pointer into the slice's block.
+fn slice_local_holding(
+    variable: Variable,
+    state: &ExecutionState,
+) -> Option<(ProgramExpression, crate::kernel::SliceElement)> {
+    let count = OldMachineTerm::Variable(variable.element_count());
+    state
+        .locals()
+        .pointer_objects_in_block(&AddressBase::Symbolic(variable))
+        .find_map(|(name, held)| {
+            crate::instrumentation::record_deterministic_work(1);
+            let ProgramType::SlicePointer(element) = held.program_type() else {
+                return None;
+            };
+            (held.is_wide()
+                && held.len() == Some(&count)
+                && matches!(held.address().offset.view(), OffsetView::Constant(0))
+                && has_surface_iterator_binding(name))
+            .then(|| {
+                (
+                    ProgramExpression::Variable(crate::kernel::program_local_source_name(name)),
+                    element,
+                )
+            })
+        })
 }
 
 /// The slice parameter `parameter` as Surface: its name.
@@ -386,6 +461,21 @@ pub(super) fn raise_slice_count(
         {
             (slice, element == crate::kernel::SliceElement::Str)
         }
+        OldMachineTerm::Variable(counted)
+            // A slice no binder or parameter names, which a slice local
+            // holds: the program's own `local.len()`, as `slice_variable`
+            // names the slice.
+            if let Some(local) = counted
+                .counted_slice()
+                .filter(|variable| {
+                    folds::binder_name(false, *variable).is_none()
+                        && !bound_variables.contains_key(variable)
+                        && slice_parameter_of(*variable, parameter_binding).is_none()
+                })
+                .and_then(|variable| program_slice_local_count(variable, state)) =>
+        {
+            return Some(local);
+        }
         OldMachineTerm::Variable(counted) => {
             let variable = counted.counted_slice()?;
             (
@@ -469,6 +559,33 @@ pub(super) fn slice_data_pointer(
                 parameter.binding_name(),
             )),
         )));
+        if pointer_indices::literal(index.operand_view()) == Some(OldMachineTerm::constant(0)) {
+            return Some(data);
+        }
+        let index = pointer_indices::raise(
+            index.operand_view(),
+            parameter_binding,
+            state,
+            bound_variables,
+        )?;
+        return Some(SyntaxTerm::Add(Box::new(data), Box::new(index)));
+    }
+    // The data pointer of a slice no binder or parameter names, which a
+    // slice local holds, here or at a recorded point, displaced by `k`
+    // elements: the program's own `local.as_ptr() + k`
+    // (`design/rust-slice-values.md`, step 4b).
+    if let AddressBase::Symbolic(variable) = &address.base
+        && folds::binder_name(false, *variable).is_none()
+        && !bound_variables.contains_key(variable)
+        && slice_parameter_of(*variable, parameter_binding).is_none()
+        && call_result_slice(&Address::symbolic(*variable), state).is_none()
+        && let Some((data, element)) = program_slice_local(*variable, state, |slice| {
+            ProgramExpression::SliceData(Box::new(slice))
+        })
+    {
+        let width = element.thin_pointer_type().pointee_type()?.byte_width();
+        let origin = address.with_offset(crate::kernel::AddressOffset::constant(0));
+        let index = synthesis_element_index(address, &origin, width)?;
         if pointer_indices::literal(index.operand_view()) == Some(OldMachineTerm::constant(0)) {
             return Some(data);
         }

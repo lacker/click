@@ -11,7 +11,7 @@ Slice iterator loops): each pass's `next()` yields the element at
 `iter.as_slice()` and moves the slice on by one, as `core`'s does. The proof
 observes the iterator through Rust's own methods, `iter.len()` and
 `iter.as_slice()`, and carries where it stands as an invariant,
-`iter.as_slice() == bytes + (bytes.len() - iter.len())`. The
+`iter.as_slice().as_ptr() == bytes.as_ptr() + (bytes.len() - iter.len())`. The
 `maintain` script splits on `0u64 < iter.len()`; the copied pattern reads the
 yielded address, and an exhausted iterator performs no read.
 
