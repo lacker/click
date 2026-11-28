@@ -3620,8 +3620,8 @@ mod tests {
     }
 
     /// A single tuple arm whose body is its second binding's variable is
-    /// the projection `t.1`, read from the arm's structure; a body that is
-    /// no binding stays a match (`design/tuples.md`).
+    /// the projection `t.1` in a diagnostic, read from the arm's structure;
+    /// a body that is no binding stays a match (`design/tuples.md`).
     #[test]
     fn a_tuple_arm_that_yields_a_binding_prints_as_its_projection() {
         use crate::kernel::{
@@ -3672,17 +3672,19 @@ mod tests {
         };
         let mut labels = MemoryStateLabels::default();
         labels.source_name(Variable(1), "t".into());
+        // Diagnostics spell a match in source mode; the exact modes refuse
+        // every match, a projection included.
         assert_eq!(
-            render(
+            source(
                 &equality(matched(OldMachineTerm::Variable(Variable(3)))),
                 &mut labels
             ),
-            Some("t.1 == 0".into())
+            "t.1 == 0"
         );
-        let rendered = render(&equality(matched(OldMachineTerm::constant(7))), &mut labels);
+        let rendered = source(&equality(matched(OldMachineTerm::constant(7))), &mut labels);
         assert!(
-            rendered.as_deref().is_none_or(|text| !text.contains("t.")),
-            "{rendered:?}"
+            rendered.starts_with("match t {") && !rendered.contains("t.1"),
+            "{rendered}"
         );
     }
 
