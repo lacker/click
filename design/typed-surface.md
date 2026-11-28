@@ -397,7 +397,6 @@ Lowering still elaborates these clauses itself:
 - C++ proof clauses, since that front end records no declarations yet.
 - A contract refinement's clauses, which name a contract definition's
   parameters rather than a C position.
-- A fixed-state clause lowered while recording its goal's introductions.
 
 `Declarations` reads names' C types from kernel states (the entry state, the
 entry values, and the state that declares the clause's locals) for names that
