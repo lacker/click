@@ -128,6 +128,7 @@ pub(in crate::surface::proof) fn lower_fixed_state_proposition_with_assumptions(
         spec_definitions,
         &BTreeMap::new(),
         &PersistentBinderMap::default(),
+        None,
     )
     .map(|(proposition, _)| proposition)
 }
@@ -246,6 +247,7 @@ pub(in crate::surface::proof) fn lower_fixed_state_proposition_with_assumptions_
     spec_definitions: SpecDefinitions<'_>,
     algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
     integer_values: &PersistentBinderMap<crate::kernel::SpecIntegerExpression>,
+    elaborated: Option<&crate::surface::lowering::ElaboratedProofClause<'_>>,
 ) -> Result<(Proposition, crate::kernel::LoweringIntroductions), String> {
     let names = proposition_referenced_names(proposition);
     let (values, array_refs) =
@@ -264,6 +266,7 @@ pub(in crate::surface::proof) fn lower_fixed_state_proposition_with_assumptions_
                 parameter_binding,
                 &names,
             ),
+            elaborated,
             ..Default::default()
         },
     )

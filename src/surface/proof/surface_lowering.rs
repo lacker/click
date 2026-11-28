@@ -221,6 +221,28 @@ fn algebraic_values_for_surface_proposition(
 }
 
 impl<'a> Proof<'a> {
+    /// A proof clause about the focused returned outcome `view`, elaborated
+    /// in the parameter scope: once the function has returned, its locals
+    /// have left scope.
+    fn elaborate_outcome_clause<'s>(
+        &self,
+        context: &ExecutionProofContext<'_>,
+        view: &FixedStateOperationView<'_>,
+        surface: &'s SyntaxProposition,
+        algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
+    ) -> Option<crate::surface::lowering::ElaboratedProofClause<'s>> {
+        crate::surface::lowering::elaborate_proof_clause(
+            surface,
+            context.parsed_function,
+            context.parsed_function.parameter_scope(),
+            &self.local_integer_values(),
+            algebraic_values,
+            view.fixed_state.result.is_some(),
+            view.fixed_state.recorded_states,
+            view.spec_definitions,
+        )
+    }
+
     /// A proof clause of the fixed-state proof `context`, elaborated where
     /// its clauses are written, when the front end records that.
     fn elaborate_fixed_state_clause<'s>(
@@ -381,18 +403,8 @@ impl<'a> Proof<'a> {
                     self.local_algebraic_values(),
                     self.retained_match_algebraic_values(),
                 );
-                // A returned outcome's locals have left scope: only the
-                // parameters remain.
-                let elaborated = crate::surface::lowering::elaborate_proof_clause(
-                    &surface,
-                    context.parsed_function,
-                    context.parsed_function.parameter_scope(),
-                    &self.local_integer_values(),
-                    &algebraic_values,
-                    view.fixed_state.result.is_some(),
-                    view.fixed_state.recorded_states,
-                    view.spec_definitions,
-                );
+                let elaborated =
+                    self.elaborate_outcome_clause(context, &view, &surface, &algebraic_values);
                 // An available historical fact is not the meaning of a
                 // current-state expression with the same spelling: an entry
                 // resource fact such as `cell[0] == 8` survives the store of 7,
@@ -596,18 +608,8 @@ impl<'a> Proof<'a> {
                     self.local_algebraic_values(),
                     self.retained_match_algebraic_values(),
                 );
-                // A returned outcome's locals have left scope: only the
-                // parameters remain.
-                let elaborated = crate::surface::lowering::elaborate_proof_clause(
-                    &surface,
-                    context.parsed_function,
-                    context.parsed_function.parameter_scope(),
-                    &self.local_integer_values(),
-                    &algebraic_values,
-                    view.fixed_state.result.is_some(),
-                    view.fixed_state.recorded_states,
-                    view.spec_definitions,
-                );
+                let elaborated =
+                    self.elaborate_outcome_clause(context, &view, &surface, &algebraic_values);
                 lower_fixed_state_proposition_with_proof_locals(
                     &surface,
                     self.facts().assumptions(),
@@ -776,19 +778,23 @@ impl<'a> Proof<'a> {
             }
             ProofContext::FixedState(context) => {
                 let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
+                let algebraic_values = algebraic_values_for_surface_proposition(
+                    &surface,
+                    &BTreeMap::new(),
+                    self.local_algebraic_values(),
+                    self.retained_match_algebraic_values(),
+                );
+                let elaborated =
+                    self.elaborate_fixed_state_clause(context, &surface, &algebraic_values);
                 lower_fixed_state_proposition_with_assumptions_recording_introductions(
                     &surface,
                     self.facts().assumptions(),
                     context.parameter_binding,
                     context.fixed_state,
                     context.spec_definitions,
-                    &algebraic_values_for_surface_proposition(
-                        &surface,
-                        &BTreeMap::new(),
-                        self.local_algebraic_values(),
-                        self.retained_match_algebraic_values(),
-                    ),
+                    &algebraic_values,
                     &self.local_integer_values(),
+                    elaborated.as_ref(),
                 )
                 .map(|(proposition, introductions)| (proposition, Some(introductions)))
                 .map_err(|message| {
@@ -799,24 +805,28 @@ impl<'a> Proof<'a> {
             // that outcome: like the fixed-state arm above, this deliberately
             // skips the recorded-lowering shortcut so a newly stated goal
             // cannot borrow a same-written fact's older state anchoring.
-            ProofContext::Execution(_) if self.focused_outcome_data().is_some() => {
+            ProofContext::Execution(context) if self.focused_outcome_data().is_some() => {
                 let view = self
                     .outcome_fixed_state_view()
                     .expect("a focused outcome judgment resolves its fixed-state view");
                 let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
+                let algebraic_values = algebraic_values_for_surface_proposition(
+                    &surface,
+                    &BTreeMap::new(),
+                    self.local_algebraic_values(),
+                    self.retained_match_algebraic_values(),
+                );
+                let elaborated =
+                    self.elaborate_outcome_clause(context, &view, &surface, &algebraic_values);
                 lower_fixed_state_proposition_with_assumptions_recording_introductions(
                     &surface,
                     self.facts().assumptions(),
                     view.parameter_binding,
                     view.fixed_state,
                     view.spec_definitions,
-                    &algebraic_values_for_surface_proposition(
-                        &surface,
-                        &BTreeMap::new(),
-                        self.local_algebraic_values(),
-                        self.retained_match_algebraic_values(),
-                    ),
+                    &algebraic_values,
                     &self.local_integer_values(),
+                    elaborated.as_ref(),
                 )
                 .map(|(proposition, introductions)| (proposition, Some(introductions)))
                 .map_err(|message| {
