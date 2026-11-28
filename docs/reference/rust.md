@@ -1515,9 +1515,10 @@ The original Rust source stays unchanged.
 
 The adapter retains Charon's native control flow, iterator calls, and `Option`
 branches. An iterator is held as the slice it still covers, the slice
-`iter.as_slice()` returns: its data and its length. `core`'s `slice::Iter`
+`iter.as_slice()` returns: one slice value, with its data pointer and its
+length. `core`'s `slice::Iter`
 holds the same slice as a start and an end pointer. Each successful
-`next()` yields the element at `iter.as_slice()`, binds the loop variable to
+`next()` yields the element at `iter.as_slice().as_ptr()`, binds the loop variable to
 its shared address, and moves the slice on by one element before entering
 the Rust body; no `Option` or compiler temporary holds it, as for a range. A
 `match` on `next()` whose `Some(_)` arm binds nothing only moves the slice
@@ -1527,8 +1528,12 @@ slice.
 A proof reads a loop's iterator as `iter` inside that loop's clauses and
 phases, and as `loop(i).iter` anywhere, through Rust's own methods:
 `iter.len()` is the length left, and `iter.as_slice()` the remaining
-elements, which read as a slice parameter does, `iter.as_slice()[k]` and
-`iter.as_slice().len()`. The importer records which iterator each loop
+elements, a slice that reads as a slice parameter does: `iter.as_slice()[k]`,
+`iter.as_slice().len()` (which is `iter.len()`) and its data pointer
+`iter.as_slice().as_ptr()`. Pointer comparisons and arithmetic are written on
+`iter.as_slice().as_ptr()`, as on a slice parameter's `bytes.as_ptr()`; a
+slice compared with a pointer, `iter.as_slice() == bytes.as_ptr()`, is a type
+error naming `.as_ptr()`. The importer records which iterator each loop
 advances, so the iterator needs no name of its own; diagnostics print its
 state the same way. Where the iterator stands is an invariant the proof
 states:
@@ -1538,7 +1543,7 @@ loop {
     decreases iter.len();
     views bytes[0..bytes.len()];
     invariant iter.len() <= bytes.len();
-    invariant iter.as_slice() == bytes.as_ptr() + (bytes.len() - iter.len());
+    invariant iter.as_slice().as_ptr() == bytes.as_ptr() + (bytes.len() - iter.len());
     ...
 }
 ```
@@ -1580,15 +1585,15 @@ exhaustion yields no element.
 `for (i, x) in xs.iter().enumerate()` over a slice of any integer width is
 `core`'s `Enumerate { iter, count }`: the slice iterator above and `count`,
 how many elements it has yielded, which a proof reads as `iter.count`
-(`iter.len()` and `iter.as_slice()` read the slice iterator). The exporter
+(`iter.len()`, `iter.as_slice()` and `iter.as_slice().as_ptr()` read the slice iterator). The exporter
 checks that `enumerate` is the core `Iterator::enumerate` default method and
 that `next` is the core `impl<I: Iterator> Iterator for Enumerate<I>`. Each
-iteration yields index `iter.count` and the element at `iter.as_slice()`,
+iteration yields index `iter.count` and the element at `iter.as_slice().as_ptr()`,
 then counts it and moves the slice on; a reference pattern `(i, x)` binds
 the element's address and a copied pattern `(i, &x)` reads it.
 [`design/charon-trial/enumerate`](https://github.com/clicklang/click/blob/master/design/charon-trial/enumerate/enumerate.click)
 proves the last index a loop yields with `iter.count == xs.len() - iter.len()`
-and `iter.as_slice() == xs + iter.count`.
+and `iter.as_slice().as_ptr() == xs.as_ptr() + iter.count`.
 `.iter_mut()` and by-value array iteration remain outside this subset; a
 crate's own iterator is [below](#crate-iterators).
 

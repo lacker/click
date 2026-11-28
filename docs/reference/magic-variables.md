@@ -42,7 +42,8 @@ iterates the value `bytes.iter()` returns. Inside that loop's clauses and
 phases `iter` is that iterator, and `loop(i).iter` names it elsewhere. A
 proof reads it through the iterator type's own Rust methods and fields:
 
-- a slice or array iterator: `iter.len()` and `iter.as_slice()`;
+- a slice or array iterator: `iter.len()`, `iter.as_slice()` (a slice) and its
+  data pointer `iter.as_slice().as_ptr()`;
 - a range `a..b`: `iter.start` and `iter.end`;
 - an inclusive range `a..=b`: `iter.start()` and `iter.end()`;
 - `chunks_exact`: its library methods, such as `iter.len()`;

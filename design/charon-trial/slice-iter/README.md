@@ -8,7 +8,7 @@ reference. The iterator is held as the slice it still covers, read through
 `sum.click` proves the same contract as the example: the exact mathematical
 sum of the input bytes for lengths `0..=1000`. The loop carries where the
 iterator stands as an ordinary invariant,
-`iter.as_slice() == bytes + (bytes.len() - iter.len())`. Each `next()`
+`iter.as_slice().as_ptr() == bytes.as_ptr() + (bytes.len() - iter.len())`. Each `next()`
 moves the remaining slice on by one element and shortens it by one; the
 proof carries the invariant across it with one pointer-association theorem
 it states itself.

@@ -1309,11 +1309,21 @@ impl Parser {
         };
         let at = self.position;
         let accessor = accessor_at(self, at).map(|(accessor, width)| {
-            // `iter.as_slice().len()` is `iter.len()`, and a slice field's
-            // length is `iter.v.len()`.
+            // `iter.as_slice().len()` is `iter.len()`, its data pointer is
+            // `iter.as_slice().as_ptr()`, and a slice field's length is
+            // `iter.v.len()`. An index `iter.as_slice()[i]` reads through
+            // the data pointer, as a slice parameter's does.
             match accessor_at(self, at + width) {
                 Some((next, more)) if accessor == "as_slice()" && next == "len()" => {
                     (next, width + more)
+                }
+                Some((next, more)) if accessor == "as_slice()" && next == "as_ptr()" => {
+                    (format!("{accessor}.{next}"), width + more)
+                }
+                None if accessor == "as_slice()"
+                    && self.tokens.get(at + width) == Some(&Token::LBracket) =>
+                {
+                    ("as_slice().as_ptr()".to_string(), width)
                 }
                 Some((next, more))
                     if matches!(accessor.as_str(), "v" | "rem") && next == "len()" =>

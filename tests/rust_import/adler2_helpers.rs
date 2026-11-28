@@ -1815,8 +1815,8 @@ fn charon_adler2_small_batch_compute_rejects_false_induction_and_final_bounds() 
 fn charon_adler2_small_batch_compute_rejects_false_tail_state_and_ranking() {
     for (before, after) in [
         (
-            "have loop(5).iter.as_slice() == remainder by",
-            "have loop(5).iter.as_slice() == remainder + 1 by",
+            "have loop(5).iter.as_slice().as_ptr() == remainder by",
+            "have loop(5).iter.as_slice().as_ptr() == remainder + 1 by",
         ),
         (
             "have loop(5).iter.len() < at(tail_head, loop(5).iter.len()) by close() using { to_integer(loop(5).iter.len()) == to_integer(at(tail_head, loop(5).iter.len())) - 1; };",

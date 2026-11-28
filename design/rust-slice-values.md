@@ -15,7 +15,8 @@ every wide pointer raising to it, and `Str` is its string slice type, with
 wide value through three program operations, and a Rust `fn`'s slice
 parameters and locals are one wide value. Step 3c is done: slice returns are
 one wide value, and `s.as_bytes()` in imported Rust calls the library's
-`str::as_bytes`. Steps 4 and 5 remain.
+`str::as_bytes`. Step 4b is done: a slice iterator holds the slice it still
+covers as one wide value. Steps 4 (the rest) and 5 remain.
 
 ## Requirements
 
@@ -243,7 +244,7 @@ one value.
 | `s[i]` | read at thin part `+ i` | owes `i < s.len()` and a covering resource | `s[i]` |
 | `s[a..b]`, `&mut s[a..b]` | construction: thin `+ a`, count `b - a` | owes `a <= b <= s.len()`; lends the subrange | `s[a..b]` |
 | `s.split_at(k)`, `split_at_mut` | two constructions | owes `k <= s.len()`; `_mut` lends disjoint `owns` | `s[..k]`, `s[k..]` |
-| `s.iter()`, `iter_mut`, `enumerate` | iterator over the thin range | item `k` is `&s[k]` | `s[k]` |
+| `s.iter()`, `iter_mut`, `enumerate` | iterator holding the slice it still covers, one wide value (step 4b) | item `k` is `&s[k]` | `iter.as_slice()`, `iter.as_slice().as_ptr()`, `iter.len()` |
 | `s.chunks(n)`, `chunks_exact` | item `k` a construction | item `k == s[k*n..k*n+n]` | `s[k*n..k*n + n]` |
 | `&*s`, `&mut *s` (reborrow) | the same value | a new loan of the same range | `s` |
 | `g(s)`, `return s` | one argument, one result | callee facts about `result.len()` reach the caller's `w.len()` by substitution | `w`, `w.len()` |
@@ -379,8 +380,8 @@ unmerged slice-return prototype). The kernel inventory is
   - about 13 `charon/temporaries.rs` folds that special-case slice
     temporaries or `SliceLength`.
 
-  Iterators keep their own fields (remaining pointer and length); only
-  their construction from a slice and their yielded slices change.
+  An iterator field that is a slice becomes one wide value (step 4b for
+  the slice iterator; 4c for `ChunksExact`'s `v` and `rem`).
 - **Surface:**
   - `FunctionParameter::rust_slice_length` and the about 20 constructors
     that set `slice_length`;
@@ -1029,7 +1030,50 @@ construct.
      the count names the local that holds a slice with that count, `0u64 <
      bytes.len()`; the test asserts the spelling.
 4. **split_at, iterators, chunks.** Their inputs and the slices they yield
-   are wide pointers; their internal fields stay.
+   are wide pointers, and a field that is a slice is one wide value.
+   - **4b. Slice iterators carry wide values.** Done. A slice iterator,
+     `core::slice::Iter` (`iter()`, `into_iter()` on a slice, a shared
+     array's iterator) and the iterator an `Enumerate` wraps, holds the slice
+     it still covers as one wide local of slice type
+     (`SliceIteratorFields::slice`, `LocalBindingKind::SliceIteratorSlice`),
+     not a data pointer and a separate count. `iter()` assigns it the
+     source's data pointer and count built into one slice
+     (`SliceFromRawParts`); `next` yields `SliceData(slice)` and moves on by
+     assigning `SliceFromRawParts(SliceData(slice) + 1, SliceLength(slice) -
+     1)`; the loop's test is `0 < SliceLength(slice)`. In a sidecar,
+     `iter.as_slice()` is that slice, `iter.as_slice().as_ptr()` its data
+     pointer and `iter.len()` (and `iter.as_slice().len()`) its count, the
+     program operations read where they are written. An index
+     `iter.as_slice()[k]` reads through the data pointer, as a slice
+     parameter's does. A pointer comparison or argument writes
+     `iter.as_slice().as_ptr()`: every sidecar in the repository that wrote
+     `iter.as_slice() == bytes.as_ptr() + k` (the slice-iterator,
+     enumerate, into-slices, scalar-slices and iterator-proof fixtures, the
+     two `examples/rust-iter*` projects and the `design/adler32` sidecars)
+     is migrated. Raising: a slice at a loop's head is a fresh
+     variable-named slice; `slice_variable`
+     (`surface_synthesis/slices.rs`) names it by the slice local that holds
+     it, in the current state or at a recorded point (`at(iteration,
+     iter.as_slice())`, one lookup in the index of locals holding a pointer
+     into the slice's block), before the thin pointer routes, which named
+     it by a thin local holding its data pointer (`slice::len(byte)`,
+     which does not lower). A thin pointer into such a slice raises as
+     `local.as_ptr() + k` of the slice local that holds it, here or at a
+     recorded point (`slice_data_pointer`), and the pointer-local route of
+     `synthesize_surface_pointer` names a pointer into a slice local's data
+     as `local.as_ptr() + k`, never as the slice. On the five iterator
+     fixtures the raise-lower audit reports the same failures as at
+     `f0275fe656`. A slice compared with a thin pointer, the old
+     `iter.as_slice() == bytes.as_ptr() + k` or `result == bytes.as_ptr()`,
+     is a type error naming `.as_ptr()` (`comparison_elaboration.rs`, with a
+     backstop in `comparison_proposition`); test
+     `charon_a_slice_compared_with_a_pointer_is_a_type_error`. The yielded element's `Option` payload stays a
+     thin pointer (`&T`). Rust slice iteration stays an importer
+     statement, a listed departure in `docs/concepts/library-interfaces.md`.
+   - **4c. Chunk iterators.** Remaining: `ChunksExact`'s `v` and `rem`
+     fields are still a pointer and a count each (`iter.v ==
+     bytes.as_ptr() + k`), and a chunk `Option`'s payload a pointer and a
+     length.
 5. **Cleanup and docs.** `docs/reference/rust.md` (byte slices, string
    slices, pure-function slices, signatures), `docs/internals/kernel.md`,
    and `design/first-class-slices.md`, which this note supersedes.
