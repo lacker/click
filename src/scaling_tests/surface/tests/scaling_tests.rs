@@ -6249,16 +6249,20 @@ fn constant_index_stores(stores: usize) -> (String, String) {
 /// `N` stores `a[ck] = k` to indices one chain of order facts separates,
 /// `0 <= c0 < c1 < … < n`, then a claim about the first.
 fn chain_ordered_index_stores(stores: usize) -> (String, String) {
-    chain_ordered_index_stores_in(stores, false)
+    chain_ordered_index_stores_in(stores, false, true)
 }
 
 /// [`chain_ordered_index_stores`] with the stores in the order `a[cN-1]`
 /// first, down to `a[c0]` last, which is the index the claim names.
 fn chain_ordered_index_stores_descending(stores: usize) -> (String, String) {
-    chain_ordered_index_stores_in(stores, true)
+    chain_ordered_index_stores_in(stores, true, false)
 }
 
-fn chain_ordered_index_stores_in(stores: usize, descending: bool) -> (String, String) {
+fn chain_ordered_index_stores_in(
+    stores: usize,
+    descending: bool,
+    preserve_first_cell: bool,
+) -> (String, String) {
     let indices = (0..stores)
         .map(|index| format!(", int32 c{index}"))
         .collect::<String>();
@@ -6277,12 +6281,61 @@ fn chain_ordered_index_stores_in(stores: usize, descending: bool) -> (String, St
         bounds.push_str(&format!("    requires c{} < c{index};\n", index - 1));
     }
     bounds.push_str(&format!("    requires c{} < n;\n", stores - 1));
-    let steps = "    step();\n".repeat(stores);
+    let mut steps = if preserve_first_cell {
+        String::from("    step();\n")
+    } else {
+        "    step();\n".repeat(stores)
+    };
+    if preserve_first_cell {
+        for index in 1..stores {
+            steps.push_str(&step_preserving_first_ordered_cell(
+                "a", "c", index, index, 0,
+            ));
+        }
+    }
     let click_source = format!(
         "verifying \"mark.c\";\n\n{signature} {{\n{bounds}    owns a[0..n];\n    \
          ensures a[c0] == 0;\n}} by {{\n{steps}    step_until(function.exit);\n    close();\n}}\n"
     );
     (c_source, click_source)
+}
+
+/// Carry the checked value of the first cell across a store to a later index.
+fn step_preserving_first_ordered_cell(
+    array: &str,
+    prefix: &str,
+    index: usize,
+    statement: usize,
+    first_value: usize,
+) -> String {
+    let first = format!("{prefix}0");
+    let written = format!("{prefix}{index}");
+    let mut proof = String::new();
+    if index > 1 {
+        let previous = format!("{prefix}{}", index - 1);
+        proof.push_str(&format!(
+            "    have {first} < {written} by close() using {{ {first} < {previous}; {previous} < {written}; }};\n"
+        ));
+    }
+    proof.push_str(&format!(
+        r#"    have {first} != {written} by close() using {{ {first} < {written}; }};
+    have separate(memory({array}[{first}]), memory({array}[{written}])) by {{
+        apply(click::separation::separate_elements({array}, {first}, {written}));
+    }}
+    mark before_{index};
+    step();
+    have separate(statement({statement}).footprint, memory({array}[{first}])) by
+        close() using {{ separate(memory({array}[{first}]), memory({array}[{written}])); }};
+    have {array}[{first}] == at(before_{index}, {array}[{first}]) by {{
+        preserve(memory({array}[{first}]), statement({statement}));
+    }}
+    have {array}[{first}] == {first_value} by {{
+        rewrite({array}[{first}], at(before_{index}, {array}[{first}]));
+        close();
+    }}
+"#
+    ));
+    proof
 }
 
 /// Inspect the generated bounds separately from the store framing work.
@@ -6292,7 +6345,7 @@ fn chain_ordered_index_stores_in(stores: usize, descending: bool) -> (String, St
 fn signed_store_order_expansion_reuses_bounds() {
     for stores in [8, 24, 48] {
         for descending in [false, true] {
-            let (c_source, click_source) = chain_ordered_index_stores_in(stores, descending);
+            let (c_source, click_source) = chain_ordered_index_stores_in(stores, descending, false);
             let click_source = click_source.replace("ensures a[c0] == 0;", "ensures 1 == 1;");
             let program = [("mark.c", c_source.as_str())];
             let label = "mark.contract";
@@ -9224,7 +9277,17 @@ fn symbolic_index_store_work_is_flat_across_recorded_order_chains() {
         let requirements = (0..size)
             .map(|i| format!("requires x{i} < x{};", i + 1))
             .collect::<String>();
-        let steps = "step();".repeat(size + 4);
+        let mut steps = String::from("step(); step();\n");
+        for index in 1..=size {
+            steps.push_str(&step_preserving_first_ordered_cell(
+                "data",
+                "x",
+                index,
+                index + 1,
+                100,
+            ));
+        }
+        steps.push_str("step(); have first == 100 by close(); step();\n");
         let source = format!(
             "verifying \"ordered.c\"; int32 caller(int32* data, int32 len{parameters}) {{ owns data[0..len]; requires 0 <= x0; {requirements} requires x{size} < len; ensures result == 100; }} by {{ {steps} close(); }}"
         );
@@ -9240,8 +9303,8 @@ fn symbolic_index_store_work_is_flat_across_recorded_order_chains() {
                 crate::instrumentation::VerificationEvent::TacticFinished {
                     tactic, work, ..
                 } if tactic.tactic_name == "step"
-                    && tactic.source_index >= 1
-                    && tactic.source_index <= size + 1 =>
+                    && tactic.statement_index >= 1
+                    && tactic.statement_index <= size + 1 =>
                 {
                     Some(*work)
                 }
