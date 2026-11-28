@@ -112,8 +112,6 @@ int64 FeeFrac::EvaluateFee<true>(int32 at_size) const {
     }
     step_until(function.exit);
     have to_integer(result) == to_integer(((this->fee as uint64 * at_size as uint64) / this->size as uint32 as uint64)) by {
-        have result == (((this->fee as uint64 * at_size as uint64) / this->size as uint32 as uint64)) as int64 by { close(); }
-        rewrite(result, (((this->fee as uint64 * at_size as uint64) / this->size as uint32 as uint64)) as int64);
         apply(fee_result_to_int64(((this->fee as uint64 * at_size as uint64) / this->size as uint32 as uint64)));
     }
     have to_integer(result) == truncating_quotient(to_integer(this->fee) * to_integer(at_size), to_integer(this->size)) by {
