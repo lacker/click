@@ -31,10 +31,18 @@ theorem adler_tail_ceiling_before_next(k: Integer) {
 }
 theorem adler_tail_ceiling_increments(k: Integer) {
  ensures adler_tail_a_ceiling(k + 1) == adler_tail_a_ceiling(k) + 255 by {
-  unfold(adler_tail_a_ceiling(k + 1)); unfold(adler_tail_a_ceiling(k)); close() using {};
+  unfold(adler_tail_a_ceiling(k + 1));
+  unfold(adler_tail_a_ceiling(k));
+  apply(integer::multiply_add_left(255, k, 1));
+  rewrite(255 * (k + 1), 255 * k + 255 * 1);
+  close() using {};
  }
  ensures adler_tail_b_ceiling(k + 1) == adler_tail_b_ceiling(k) + 328365 by {
-  unfold(adler_tail_b_ceiling(k + 1)); unfold(adler_tail_b_ceiling(k)); close() using {};
+  unfold(adler_tail_b_ceiling(k + 1));
+  unfold(adler_tail_b_ceiling(k));
+  apply(integer::multiply_add_left(328365, k, 1));
+  rewrite(328365 * (k + 1), 328365 * k + 328365 * 1);
+  close() using {};
  }
 }
 theorem adler_tail_a_next(k: Integer, a: Integer, byte: Integer) {
