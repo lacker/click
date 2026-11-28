@@ -294,6 +294,55 @@ pub(super) struct PointNode {
     array_version_after_call: Option<ReadVersionPoint>,
     array_block_versions: Option<ArrayBlockVersions>,
     external_entry_writes: Option<ExternalEntryWrites>,
+    /// At a loop's exit: what the loop's iterations wrote. A loop's head
+    /// step stands for its iterations, and the iterations that run back to
+    /// the head are on no exit's path, so their writes are recorded here
+    /// once the body is checked.
+    loop_iterations: Option<LoopIterations>,
+}
+
+/// The writes of a loop's iterations: every store, call and inner loop on
+/// each path from the loop's head back to it.
+pub(crate) struct LoopIterations {
+    /// The head point whose step stands for these iterations.
+    pub(crate) head: ProgramPointId,
+    /// `None` when some path back to the head does not record its writes.
+    ///
+    /// Held behind a trait object: a point that holds writes that hold
+    /// memories that hold points is a type whose thread-safety the compiler
+    /// would otherwise prove by unbounded recursion.
+    writes: Option<Arc<dyn std::any::Any + Send + Sync>>,
+}
+
+impl std::fmt::Debug for LoopIterations {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoopIterations")
+            .field("head", &self.head)
+            .field("writes", &self.writes())
+            .finish()
+    }
+}
+
+impl LoopIterations {
+    pub(crate) fn new(
+        head: ProgramPointId,
+        writes: Option<Arc<crate::kernel::RecordedWrites>>,
+    ) -> Self {
+        Self {
+            head,
+            writes: writes.map(|writes| writes as Arc<dyn std::any::Any + Send + Sync>),
+        }
+    }
+
+    /// What the iterations wrote, when every path back to the head
+    /// recorded it.
+    pub(crate) fn writes(&self) -> Option<&crate::kernel::RecordedWrites> {
+        self.writes.as_deref().map(|writes| {
+            writes
+                .downcast_ref()
+                .expect("loop iterations hold recorded writes")
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -776,12 +825,14 @@ impl PathLink {
 
     /// Visits every recorded step on every path from `from` to this point,
     /// each point once: the memory history of a region whose paths may
-    /// branch and join. `None` when some path into this point does not
-    /// start at `from`.
+    /// branch and join. Each step is visited with the point it reached, and
+    /// a loop exit's record of its iterations with `iterations`. `None` when
+    /// some path into this point does not start at `from`.
     pub(crate) fn visit_region_steps_since(
         &self,
         from: &PathLink,
-        mut visit: impl FnMut(&MemoryDerivation),
+        mut visit: impl FnMut(ProgramPointId, &MemoryDerivation),
+        mut iterations: impl FnMut(&LoopIterations),
     ) -> Option<()> {
         let target = from.id()?;
         let target_depth = from.0.as_ref()?.depth;
@@ -799,6 +850,9 @@ impl PathLink {
             if !seen.insert(node.id) {
                 continue;
             }
+            if let Some(record) = &node.loop_iterations {
+                iterations(record);
+            }
             let starts: Vec<_> = node
                 .predecessors
                 .iter()
@@ -808,7 +862,7 @@ impl PathLink {
             let mut steps = node.steps.as_deref();
             while let Some(log) = steps {
                 crate::instrumentation::record_deterministic_work(1);
-                visit(&log.step);
+                visit(node.id, &log.step);
                 if starts.contains(&log.step.base().arena_id()) {
                     break;
                 }
@@ -879,6 +933,7 @@ impl PathLink {
             Box::new([]),
             None,
             PointTransition::FunctionEntry,
+            None,
         )
     }
 
@@ -928,10 +983,35 @@ impl PathLink {
                 Box::new([]),
                 None,
                 PointTransition::Provisional,
+                None,
             ),
             _ => self.clone(),
         };
-        Self::reached_from(memory, steps, Box::new([from]), None, transition)
+        Self::reached_from(memory, steps, Box::new([from]), None, transition, None)
+    }
+
+    /// The point after a loop whose iterations wrote `iterations`: the same
+    /// memory, reached from this exit.
+    pub(super) fn after_loop_iterations(&self, iterations: LoopIterations) -> Self {
+        let Some(node) = &self.0 else {
+            return self.clone();
+        };
+        Self::reached_from(
+            node.memory.clone(),
+            None,
+            Box::new([self.clone()]),
+            None,
+            PointTransition::Execution,
+            Some(iterations),
+        )
+    }
+
+    /// The head point of the loop whose head step this point's log holds
+    /// last, when it holds one: the point a loop's iterations return to.
+    pub(crate) fn loop_head(&self) -> Option<ProgramPointId> {
+        let node = self.0.as_ref()?;
+        let log = node.steps.as_deref()?;
+        matches!(*log.step, MemoryDerivation::LoopHavoc { .. }).then_some(node.id)
     }
 
     /// A new point where two arms that split at `split` rejoin with
@@ -989,6 +1069,7 @@ impl PathLink {
                 array_version_after_call: None,
                 array_block_versions: ArrayBlockVersions::joining(points, joined),
                 external_entry_writes: ExternalEntryWrites::joining(points),
+                loop_iterations: None,
             })),
             IndexedView::Recorded,
         )
@@ -1000,6 +1081,7 @@ impl PathLink {
         predecessors: Box<[PathLink]>,
         split: Option<PathLink>,
         transition: PointTransition,
+        loop_iterations: Option<LoopIterations>,
     ) -> Self {
         let predecessors = predecessors
             .into_vec()
@@ -1048,6 +1130,7 @@ impl PathLink {
                 array_version_after_call,
                 array_block_versions,
                 external_entry_writes,
+                loop_iterations,
             }
         });
         super::record_memory_occurrence(&node.memory, &node);

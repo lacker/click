@@ -1786,6 +1786,14 @@ impl ExecutionBudget {
     /// Moves the counter past `variable`, so nothing it hands out from now
     /// on is `variable` or below it. Identities it skips are never handed
     /// out; the counter only advances.
+    /// Continue from at least `mark` ([`Self::next_kernel_variable`]): every
+    /// identity below it was issued by an earlier part of this execution.
+    pub(in crate::kernel) fn continue_past_mark(&mut self, mark: u64) {
+        self.next_kernel_variable = self
+            .next_kernel_variable
+            .max(Self::KERNEL_VARIABLE_BASE + mark);
+    }
+
     pub(in crate::kernel) fn skip_kernel_variables_through(&mut self, variable: Variable) {
         self.next_kernel_variable = self.next_kernel_variable.max(variable.0 + 1);
     }

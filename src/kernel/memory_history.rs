@@ -4400,7 +4400,7 @@ const DAG_LOAD_EQUALITY_MEMO_LIMIT: usize = 200_000;
 
 /// The writes the memory history records on every path from one point to a
 /// later one: what a region did to memory, read from its steps.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct RecordedWrites {
     /// Each store's destination and extent.
     pub(crate) accesses: BTreeSet<(Address, AccessExtent)>,
@@ -4421,58 +4421,90 @@ impl RecordedWrites {
         after: &crate::kernel::program_point::PathLink,
     ) -> Option<Self> {
         let mut writes = Self::default();
-        let mut unbounded = false;
-        after.visit_region_steps_since(before, |step| {
-            if let Some((pointer, extent)) = step.single_write_extent() {
-                writes.accesses.insert((pointer.clone(), extent));
-            }
-            match step {
-                // A seeded run writes its slots: one range for the run,
-                // whatever its length. Caching bytes the base already holds
-                // writes nothing.
-                MemoryDerivation::CellsSeeded { base, run }
-                    if !crate::kernel::resource_tracker::step_effect::seeded_loads_preserve_base(
-                        step,
-                    ) =>
-                {
-                    writes.ranges.push((
-                        MemoryRange::new_with_element_width(
-                            run.base().clone(),
-                            0u32.into(),
-                            run.count().into(),
-                            run.element_width(),
-                        ),
-                        base.clone(),
-                    ));
+        // A loop head with no checked footprint is answered by its exit's
+        // record of the iterations, when one is on the path.
+        let mut unbounded_heads = BTreeSet::new();
+        let mut recorded_heads = BTreeSet::new();
+        let mut iteration_writes = Vec::new();
+        after.visit_region_steps_since(
+            before,
+            |point, step| {
+                if let Some((pointer, extent)) = step.single_write_extent() {
+                    writes.accesses.insert((pointer.clone(), extent));
                 }
-                MemoryDerivation::CallHavoc {
-                    base,
-                    mutable_ranges,
-                    ..
-                } => writes.ranges.extend(
-                    mutable_ranges
-                        .iter()
-                        .map(|range| (range.clone(), base.clone())),
-                ),
-                MemoryDerivation::LoopHavoc {
-                    base,
-                    mutable_ranges,
-                    ..
-                } => match mutable_ranges {
-                    Some(ranges) => writes
-                        .ranges
-                        .extend(ranges.iter().map(|range| (range.clone(), base.clone()))),
-                    None => unbounded = true,
-                },
-                MemoryDerivation::BlockDeclared { block, .. }
-                | MemoryDerivation::HeapAllocated { block, .. } => {
-                    writes.created.insert(block.clone());
+                match step {
+                    // A seeded run writes its slots: one range for the run,
+                    // whatever its length. Caching bytes the base already
+                    // holds writes nothing.
+                    MemoryDerivation::CellsSeeded { base, run }
+                        if !crate::kernel::resource_tracker::step_effect::seeded_loads_preserve_base(
+                            step,
+                        ) =>
+                    {
+                        writes.ranges.push((
+                            MemoryRange::new_with_element_width(
+                                run.base().clone(),
+                                0u32.into(),
+                                run.count().into(),
+                                run.element_width(),
+                            ),
+                            base.clone(),
+                        ));
+                    }
+                    MemoryDerivation::CallHavoc {
+                        base,
+                        mutable_ranges,
+                        ..
+                    } => writes.ranges.extend(
+                        mutable_ranges
+                            .iter()
+                            .map(|range| (range.clone(), base.clone())),
+                    ),
+                    MemoryDerivation::LoopHavoc {
+                        base,
+                        mutable_ranges,
+                        ..
+                    } => match mutable_ranges {
+                        Some(ranges) => writes
+                            .ranges
+                            .extend(ranges.iter().map(|range| (range.clone(), base.clone()))),
+                        None => {
+                            unbounded_heads.insert(point);
+                        }
+                    },
+                    MemoryDerivation::BlockDeclared { block, .. }
+                    | MemoryDerivation::HeapAllocated { block, .. } => {
+                        writes.created.insert(block.clone());
+                    }
+                    _ => {}
                 }
-                _ => {}
+            },
+            |iterations| {
+                iteration_writes.push((iterations.head, iterations.writes().cloned()));
+            },
+        )?;
+        // An exit records the iterations of every head its loop rule checked;
+        // only the heads this region passed through wrote on it.
+        for (head, recorded) in iteration_writes {
+            if !unbounded_heads.contains(&head) {
+                continue;
             }
-        })?;
-        writes.unbounded_loop = unbounded;
+            recorded_heads.insert(head);
+            match recorded {
+                Some(recorded) => writes.merge(&recorded),
+                None => writes.unbounded_loop = true,
+            }
+        }
+        writes.unbounded_loop |= !unbounded_heads.is_subset(&recorded_heads);
         Some(writes)
+    }
+
+    /// Add `other`'s writes to these.
+    pub(crate) fn merge(&mut self, other: &Self) {
+        self.accesses.extend(other.accesses.iter().cloned());
+        self.ranges.extend(other.ranges.iter().cloned());
+        self.created.extend(other.created.iter().cloned());
+        self.unbounded_loop |= other.unbounded_loop;
     }
 }
 

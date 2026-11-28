@@ -122,6 +122,12 @@ impl LoopBoundary {
     pub(super) fn explicit_exit_state(&self) -> Option<&ExecutionState> {
         (self.may_exit() && !self.head_compatible).then_some(self.state())
     }
+
+    /// The state this boundary returns to the loop head from, when the
+    /// guard may let another iteration start.
+    pub(super) fn back_edge_state(&self) -> Option<&ExecutionState> {
+        self.guard.may_continue().then_some(self.state())
+    }
 }
 
 /// Feasible arms of one checked C `if` frontier.
