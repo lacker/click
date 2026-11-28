@@ -73,3 +73,39 @@ fn logical_resource_field_projections_keep_stored_roots_and_result_modes() {
         );
     }
 }
+
+#[test]
+fn parameter_comparisons_preserve_each_operands_constructor_schema() {
+    let _session = VerificationSession::enter();
+    let defined = KernelMatch::test_scrutinee(vec![]);
+    let mut missing = defined.clone();
+    missing.algebraic_type.schemas = std::sync::Arc::new(AlgebraicSchemas::new(BTreeMap::new()));
+    assert_eq!(defined, missing);
+    let compare = |left: &AlgebraicTerm, right: &AlgebraicTerm, operator| {
+        let proposition = program_value_comparison_proposition(
+            &ProgramValue::Parameter(Box::new(left.clone())),
+            operator,
+            &ProgramValue::Parameter(Box::new(right.clone())),
+        )
+        .unwrap();
+        let Proposition::ConditionIs(condition, truth) = proposition else {
+            panic!("expected parameter comparison");
+        };
+        assert_eq!(truth, operator == ComparisonOperator::Equal);
+        condition
+    };
+    let forward = compare(&defined, &missing, ComparisonOperator::Equal);
+    let reverse = compare(&missing, &defined, ComparisonOperator::NotEqual);
+    assert_eq!(forward, reverse);
+    for (condition, expected) in [(forward, [true, false]), (reverse, [false, true])] {
+        assert!(condition.root().is_some());
+        let operands = condition
+            .operand_view()
+            .written_algebraic_equality()
+            .unwrap();
+        assert_eq!(
+            operands.map(|operand| operand.algebraic_type.has_consistent_root_schema()),
+            expected
+        );
+    }
+}
