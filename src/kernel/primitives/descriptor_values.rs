@@ -333,16 +333,7 @@ impl From<OldConditionTerm> for StoredConditionTerm {
             OldConditionTerm::BoolApplication(application) => {
                 KernelTermImport::for_exact_field_inputs().boolean_call(application)
             }
-            OldConditionTerm::AlgebraicEqual(left, right)
-                if [left, right].iter().all(|term| {
-                    matches!(
-                        term.node,
-                        AlgebraicTermNode::Variable(_)
-                            | AlgebraicTermNode::MemoryLoad { .. }
-                            | AlgebraicTermNode::Constructor { .. }
-                    )
-                }) =>
-            {
+            OldConditionTerm::AlgebraicEqual(..) => {
                 KernelTermImport::for_exact_field_inputs().condition(&value)
             }
             OldConditionTerm::Overflows {

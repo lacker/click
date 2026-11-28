@@ -318,6 +318,48 @@ mod tests {
     }
 
     #[test]
+    fn stored_algebraic_equalities_preserve_top_level_calls_matches_and_conditionals() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let variable = KernelMatch::test_scrutinee(vec![]);
+        let operands = [
+            AlgebraicTermNode::PureFunctionApplication {
+                name: "algebraic_equality_operand".into(),
+                arguments: vec![PureFunctionArgument::Algebraic(variable.clone())],
+            },
+            AlgebraicTermNode::Match {
+                scrutinee: Box::new(variable.clone()),
+                arms: vec![AlgebraicResultMatchArm {
+                    variant: "Arm".into(),
+                    bindings: vec![],
+                    binding_names: Default::default(),
+                    body: variable.clone(),
+                }],
+            },
+            AlgebraicTermNode::If {
+                condition: Box::new(OldConditionTerm::Constant(false)),
+                then_term: Box::new(variable.clone()),
+                else_term: Box::new(variable.clone()),
+            },
+        ]
+        .map(|node| AlgebraicTerm {
+            node,
+            algebraic_type: variable.algebraic_type.clone(),
+        });
+        for left in &operands {
+            for right in &operands {
+                let written = OldConditionTerm::AlgebraicEqual(
+                    Box::new(left.clone()),
+                    Box::new(right.clone()),
+                );
+                let stored = StoredConditionTerm::from(written.clone());
+                let root = stored.root().expect("shared equality");
+                assert_eq!(stored.old_form(), &written);
+                assert_eq!(KernelTermExport::condition(root).unwrap(), written);
+            }
+        }
+    }
+
+    #[test]
     fn common_algebraic_equality_keeps_operand_order_and_legacy_views() {
         let a = KernelMatch::test_scrutinee(vec![]);
         let mut b = a.clone();
