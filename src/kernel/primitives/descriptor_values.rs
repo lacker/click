@@ -333,13 +333,13 @@ impl From<OldConditionTerm> for StoredConditionTerm {
             OldConditionTerm::BoolApplication(application) => {
                 KernelTermImport::for_exact_field_inputs().boolean_call(application)
             }
-            // Variables and reads have fixed-size roots. Importing either keeps
-            // the native comparison's original type, read version, and address.
             OldConditionTerm::AlgebraicEqual(left, right)
                 if [left, right].iter().all(|term| {
                     matches!(
                         term.node,
-                        AlgebraicTermNode::Variable(_) | AlgebraicTermNode::MemoryLoad { .. }
+                        AlgebraicTermNode::Variable(_)
+                            | AlgebraicTermNode::MemoryLoad { .. }
+                            | AlgebraicTermNode::Constructor { .. }
                     )
                 }) =>
             {

@@ -613,6 +613,60 @@ mod tests {
         assert_eq!(export.algebraic(&common.into_term()).unwrap(), native);
     }
     #[test]
+    fn constructor_equalities_retain_each_match_arms_written_names() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let comparisons = ["first", "second"].map(|name| {
+            let matched = AlgebraicTerm {
+                algebraic_type: datatype(),
+                node: AlgebraicTermNode::Match {
+                    scrutinee: Box::new(scrutinee()),
+                    arms: vec![AlgebraicResultMatchArm {
+                        variant: "Box".into(),
+                        bindings: binding(),
+                        body: scrutinee(),
+                        binding_names: BindingNames::written(&[name.to_owned()]),
+                    }],
+                },
+            };
+            let other = KernelMatch::test_scrutinee(vec![matched.algebraic_type.value_type()]);
+            let mut outer = other.clone();
+            outer.node = AlgebraicTermNode::Constructor {
+                variant: "Arm".into(),
+                fields: vec![AlgebraicValue::Algebraic(matched)],
+            };
+            StoredConditionTerm::from(OldConditionTerm::AlgebraicEqual(
+                Box::new(outer),
+                Box::new(other),
+            ))
+        });
+        assert_eq!(comparisons[0], comparisons[1]);
+        let roots = comparisons
+            .each_ref()
+            .map(|condition| condition.root().expect("shared equality"));
+        assert_ne!(roots[0], roots[1]);
+        let observed =
+            roots.map(crate::kernel::primitives::integer::observation_identity::normalize);
+        assert_eq!(observed[0], observed[1]);
+        for (root, name) in roots.into_iter().zip(["first", "second"]) {
+            let OldConditionTerm::AlgebraicEqual(outer, _) =
+                KernelTermExport::condition(root).unwrap()
+            else {
+                panic!("expected equality")
+            };
+            let AlgebraicTermNode::Constructor { fields, .. } = &outer.node else {
+                panic!("expected constructor")
+            };
+            let [AlgebraicValue::Algebraic(field)] = fields.as_slice() else {
+                panic!("expected algebraic field")
+            };
+            let AlgebraicTermNode::Match { arms, .. } = &field.node else {
+                panic!("expected match")
+            };
+            assert_eq!(arms[0].binding_names.get(0), Some(name));
+        }
+    }
+
+    #[test]
     fn match_payload_preserves_arm_order_and_rejects_mixed_result_sorts() {
         let scrutinee =
             KernelTermImport::default().argument(&PureFunctionArgument::Algebraic(scrutinee()));

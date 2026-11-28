@@ -14951,6 +14951,16 @@ impl BindingNames {
         )
     }
 
+    pub(in crate::kernel::primitives) fn spellings(
+        &self,
+    ) -> impl ExactSizeIterator<Item = Option<&str>> {
+        self.0
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(BinderName::as_str)
+    }
+
     pub fn get(&self, index: usize) -> Option<&str> {
         self.0.as_deref()?.get(index)?.as_str()
     }
