@@ -549,6 +549,12 @@ fn structural_condition_key(
             pointer_keys::state_address(&b),
         ));
     }
+    if let Some([left, right]) = condition.written_algebraic_equality() {
+        return Some(MemoryErasedConditionKey::AlgebraicEqual(
+            Box::new(left.clone()),
+            Box::new(right.clone()),
+        ));
+    }
     None
 }
 
@@ -5434,6 +5440,42 @@ mod boolean_atom_tests {
                 &memory_erased_condition_key(atom),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod algebraic_condition_tests {
+    use super::*;
+    use crate::kernel::{KernelMatch, KernelTermImport, StoredConditionTerm};
+    use std::collections::hash_map::DefaultHasher;
+
+    #[test]
+    fn algebraic_equality_keys_preserve_written_operands_and_order() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let left = KernelMatch::test_scrutinee(vec![]);
+        let mut right = left.clone();
+        right.node = AlgebraicTermNode::Variable(Variable(998653));
+        let forward =
+            OldConditionTerm::AlgebraicEqual(Box::new(left.clone()), Box::new(right.clone()));
+        let reversed = OldConditionTerm::AlgebraicEqual(Box::new(right), Box::new(left));
+        let stored = [&forward, &reversed].map(|source| {
+            let root = KernelTermImport::default().condition(source);
+            let term = StoredConditionTerm::from_root(root.clone()).unwrap();
+            let mut written_hash = DefaultHasher::new();
+            let mut stored_hash = DefaultHasher::new();
+            source.hash(&mut written_hash);
+            term.hash(&mut stored_hash);
+            assert_eq!(written_hash.finish(), stored_hash.finish());
+            assert_stored_proposition_keys(&root, &memory_erased_condition_key(source));
+            term
+        });
+        assert_ne!(forward, reversed);
+        assert_eq!(stored[0].cmp(&stored[1]), forward.cmp(&reversed));
+        assert!(
+            stored
+                .iter()
+                .all(|term| term.root().unwrap().cached_condition_output().is_none())
+        );
     }
 }
 
