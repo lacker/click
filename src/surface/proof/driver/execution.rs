@@ -386,6 +386,30 @@ fn defer_post_execution_match<'a>(
     continuation: &InternalProofNode,
     expansion_capture: Option<&mut ExpansionCapture>,
 ) -> Driven<Proof<'a>> {
+    if let Some(assertions) = proof_match.ensuring.as_deref()
+        && let Some(join) = return_match_fact_join(proof_match, arms)
+    {
+        // Keep the execution match when exact constructor facts leave a
+        // single live arm. Its excluded arms can own written bridge proofs.
+        if proof.plan_execution_match(proof_match).is_ok_and(|plan| {
+            (0..arms.len())
+                .filter(|&index| !plan.arm_holds_false(index))
+                .take(2)
+                .count()
+                == 1
+        }) {
+            return decline();
+        }
+        check_verification_deadline()?;
+        return Ok(Ok(defer_return_interface_join(
+            &proof,
+            index,
+            source_index,
+            join,
+            assertions,
+            expansion_capture,
+        )?));
+    }
     let bindings = &proof
         .execution()
         .expect("the match is deferred on a terminal frontier")
@@ -400,32 +424,16 @@ fn defer_post_execution_match<'a>(
     )));
     let before = outcome_path_count(&proof);
     let split = match proof.driver().split_outcome_paths(&deferred) {
-        Ok(split) if outcome_path_count(&split) <= before || ends_after_split(continuation) => {
-            split
-        }
+        Ok(split) => split,
         Err(OutcomeSplitFailure::Obligation(error)) => return Err(error),
-        other => {
-            if let Some(assertions) = proof_match.ensuring.as_deref()
-                && let Some(join) = return_match_fact_join(proof_match, arms)
-            {
-                return Ok(Ok(defer_return_interface_join(
-                    &proof,
-                    index,
-                    source_index,
-                    join,
-                    assertions,
-                    expansion_capture,
-                )?));
-            }
-            match other {
-                Ok(_) => return Err(post_execution_match_forks_the_proof()),
-                Err(_) => {
-                    check_verification_deadline()?;
-                    return decline();
-                }
-            }
+        Err(OutcomeSplitFailure::Partition(_)) => {
+            check_verification_deadline()?;
+            return decline();
         }
     };
+    if outcome_path_count(&split) > before && !ends_after_split(continuation) {
+        return Err(post_execution_match_forks_the_proof());
+    }
     Ok(Ok(split.defer_post_execution_source_tactic(
         index,
         source_index,
