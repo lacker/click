@@ -161,7 +161,9 @@ pub(super) fn written(term: &OldMachineTerm) -> MemoryErasedBitvectorKey {
                 memory_erased_bitvector_key(else_term),
             )
         }
-        OldMachineTerm::If { .. } | OldMachineTerm::RangeFold { .. } => {
+        OldMachineTerm::If { .. }
+        | OldMachineTerm::RangeFold { .. }
+        | OldMachineTerm::AlgebraicMatch { .. } => {
             Node::ExactOperand(crate::kernel::SharedMachineIntegerTerm::intern(
                 MachineIntegerType::Int32,
                 term.clone(),
@@ -208,7 +210,11 @@ pub(super) fn operand(view: crate::kernel::MachineOperandView<'_>) -> MemoryEras
         }
         crate::instrumentation::record_deterministic_work(1);
         let view = V::Shared(&root);
-        let children = if let Some((_, _, children)) = view.binary() {
+        // Retained inputs are keyed by written() below. Their children belong
+        // to the native expression and have no shared IDs to schedule here.
+        let children = if root.retained_machine_input().is_some() {
+            Vec::new()
+        } else if let Some((_, _, children)) = view.binary() {
             children.into_iter().collect::<Vec<_>>()
         } else if let Some((_, _, _, child)) = view.cast() {
             vec![child]
@@ -259,7 +265,10 @@ pub(super) fn operand(view: crate::kernel::MachineOperandView<'_>) -> MemoryEras
                 )
                 .expect("machine fold"),
             ))
-        } else if let Some(value) = root.machine_conversion_leaf() {
+        } else if let Some(value) = root
+            .machine_conversion_leaf()
+            .or_else(|| root.written_machine_input())
+        {
             written(value)
         } else if let Some(variable) = view.variable() {
             written(&OldMachineTerm::Variable(*variable))
