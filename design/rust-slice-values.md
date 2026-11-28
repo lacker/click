@@ -1063,7 +1063,11 @@ construct.
      `synthesize_surface_pointer` names a pointer into a slice local's data
      as `local.as_ptr() + k`, never as the slice. On the five iterator
      fixtures the raise-lower audit reports the same failures as at
-     `f0275fe656`. The yielded element's `Option` payload stays a
+     `f0275fe656`. A slice compared with a thin pointer, the old
+     `iter.as_slice() == bytes.as_ptr() + k` or `result == bytes.as_ptr()`,
+     is a type error naming `.as_ptr()` (`comparison_elaboration.rs`, with a
+     backstop in `comparison_proposition`); test
+     `charon_a_slice_compared_with_a_pointer_is_a_type_error`. The yielded element's `Option` payload stays a
      thin pointer (`&T`). Rust slice iteration stays an importer
      statement, a listed departure in `docs/concepts/library-interfaces.md`.
    - **4c. Chunk iterators.** Remaining: `ChunksExact`'s `v` and `rem`

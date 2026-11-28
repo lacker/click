@@ -1531,7 +1531,9 @@ phases, and as `loop(i).iter` anywhere, through Rust's own methods:
 elements, a slice that reads as a slice parameter does: `iter.as_slice()[k]`,
 `iter.as_slice().len()` (which is `iter.len()`) and its data pointer
 `iter.as_slice().as_ptr()`. Pointer comparisons and arithmetic are written on
-`iter.as_slice().as_ptr()`, as on a slice parameter's `bytes.as_ptr()`. The importer records which iterator each loop
+`iter.as_slice().as_ptr()`, as on a slice parameter's `bytes.as_ptr()`; a
+slice compared with a pointer, `iter.as_slice() == bytes.as_ptr()`, is a type
+error naming `.as_ptr()`. The importer records which iterator each loop
 advances, so the iterator needs no name of its own; diagnostics print its
 state the same way. Where the iterator stands is an invariant the proof
 states:

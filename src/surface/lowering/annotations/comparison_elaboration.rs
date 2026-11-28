@@ -66,6 +66,23 @@ impl Elaborator<'_> {
         surface
     }
 
+    /// The slice type of a comparison operand that reads a program slice,
+    /// `s`, `old(s)` or `at(p, s)`; `None` for any other operand.
+    fn comparison_slice_type(
+        &self,
+        term: &SyntaxTerm,
+        typing: &TypingEnvironment<'_>,
+    ) -> Option<ProgramType> {
+        match term {
+            SyntaxTerm::ProgramExpression(expression) => {
+                self.declarations.slice_expression_type(expression, typing)
+            }
+            SyntaxTerm::Old(inner) => self.comparison_slice_type(inner, typing),
+            SyntaxTerm::At { expression, .. } => self.comparison_slice_type(expression, typing),
+            _ => None,
+        }
+    }
+
     /// The typed Surface form of `left operator right`.
     pub(super) fn elaborate_comparison(
         &self,
@@ -82,6 +99,20 @@ impl Elaborator<'_> {
                 right: SurfaceTerm::Untyped(right.clone()),
             })
         };
+        // A slice is one value, not its data pointer: a slice compared with
+        // a thin pointer is written on `s.as_ptr()`
+        // (`design/rust-slice-values.md`, "Source compatibility").
+        for (slice, other) in [(left, right), (right, left)] {
+            if self.comparison_slice_type(slice, typing).is_some()
+                && self.comparison_slice_type(other, typing).is_none()
+                && self.contract_pointer_element_type(other, typing).is_some()
+            {
+                let written = crate::surface::diagnostics::describe_contract_expression(slice);
+                return Err(format!(
+                    "`{written}` is a slice, not a pointer: a pointer comparison is written on its data pointer, `.as_ptr()`, as in `{written}.as_ptr() == p`"
+                ));
+            }
+        }
         if let (Some(left_element), Some(right_element)) = (
             self.contract_pointer_element_type(left, typing),
             self.contract_pointer_element_type(right, typing),
