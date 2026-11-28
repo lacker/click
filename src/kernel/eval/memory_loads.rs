@@ -353,21 +353,24 @@ pub(in crate::kernel) fn evaluate_indexed_read(
     obligations: Vec<ProofObligation>,
 ) -> ExpressionPath {
     if let ProgramType::Parameter(parameter) = value_type {
-        let value = AlgebraicTermNode::parameter_load_at(version.clone(), pointer, parameter);
         if let Some(stored) = version.indexed_stored_value() {
-            let (ProgramValue::Parameter(read), ProgramValue::Parameter(stored)) =
-                (&value, stored.native())
-            else {
-                unreachable!("indexed opaque store");
-            };
+            let read = KernelTerm::algebraic_read(
+                parameter.algebraic_type(),
+                version.clone(),
+                pointer.shared().clone(),
+            );
+            let stored = stored.value().algebraic().expect("indexed opaque store");
+            let equality = KernelTerm::algebraic_equal_raw([read, stored]);
             facts.push(ExecutionPureFact {
                 logical_read_equation: true,
                 ..ExecutionPureFact::certified(Proposition::condition_is(
-                    OldConditionTerm::AlgebraicEqual(read.clone(), stored.clone()),
+                    crate::kernel::StoredConditionTerm::from_root(equality)
+                        .expect("algebraic equality"),
                     true,
                 ))
             });
         }
+        let value = AlgebraicTermNode::parameter_load_at(version, pointer, parameter);
         return ExpressionPath {
             outcome: ExpressionOutcome::Value(value),
             facts,
@@ -7091,6 +7094,53 @@ mod tests {
         assert!(defining_read.identity.is_point_named());
         assert_eq!(pointer.provenance(), pointer.address());
         assert_eq!(pointer.bounds_owner(), Some(pointer.address()));
+    }
+
+    #[test]
+    fn indexed_parameter_read_equation_keeps_the_stored_algebraic_root() {
+        use crate::kernel::TypeParameterName;
+        let _session = crate::kernel::VerificationSession::enter();
+        let name = "indexed_read_tests::StoredModel";
+        TypeParameterName::declare_library_instance(name);
+        let parameter = TypeParameterName::intern(name);
+        let ty = ProgramType::Parameter(parameter);
+        let cell = Address::new("local:stored-model".into(), AddressOffset::constant(0));
+        let stored = KernelTerm::variable(
+            KernelType::Algebraic(parameter.algebraic_type()),
+            Variable(982220),
+        );
+        let entry = ExecutionState::new().begin_function_entry_memory();
+        let memory = entry
+            .memory()
+            .clone()
+            .store_retained(cell.clone(), stored.clone().into());
+        let origin = entry.with_memory(memory).program_point();
+        let version = origin
+            .indexed_typed_version(&cell, ty)
+            .expect("stored model");
+        let read = KernelTerm::algebraic_read(
+            parameter.algebraic_type(),
+            version.clone(),
+            cell.shared().clone(),
+        );
+        let path = evaluate_indexed_read(
+            version,
+            &origin,
+            cell,
+            ty,
+            ExecutionFacts::new(),
+            Vec::new(),
+        );
+        assert_eq!(path.facts.len(), 1);
+        let fact = &path.facts[0];
+        assert!(fact.is_logical_read_equation());
+        let Proposition::ConditionIs(condition, true) = fact.proposition() else {
+            panic!("expected a positive read equation");
+        };
+        assert_eq!(
+            condition.root(),
+            Some(&KernelTerm::algebraic_equal_raw([read, stored]))
+        );
     }
 
     #[test]

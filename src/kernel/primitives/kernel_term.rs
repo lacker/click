@@ -572,6 +572,13 @@ impl PartialEq for NodeKey {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
             || (self.0.ty == other.0.ty
+                // Logical type identity omits the schemas used for constructor checks
+                // and declared field classes. A stored root must reproduce both.
+                && match (&self.0.ty, &other.0.ty) {
+                    (KernelType::Algebraic(a), KernelType::Algebraic(b)) =>
+                        Arc::ptr_eq(&a.schemas, &b.schemas) || a.schemas == b.schemas,
+                    _ => true,
+                }
                 && match (&self.0.node, &other.0.node) {
                     (
                         KernelTermNode::MemoryLoad {

@@ -11254,7 +11254,7 @@ pub(super) fn program_value_comparison_proposition(
                 ) =>
         {
             return Some(Proposition::condition_is(
-                OldConditionTerm::AlgebraicEqual(a.clone(), b.clone()),
+                StoredConditionTerm::algebraic_equal(a, b),
                 operator == ComparisonOperator::Equal,
             ));
         }

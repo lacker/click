@@ -573,6 +573,14 @@ impl StoredConditionTerm {
         Self::pointer_equal(left, right)
     }
 
+    pub(crate) fn algebraic_equal(left: &AlgebraicTerm, right: &AlgebraicTerm) -> Self {
+        let mut import = KernelTermImport::for_exact_field_inputs();
+        Self(StoredCondition::Shared(KernelTerm::algebraic_equal_raw([
+            import.algebraic(left),
+            import.algebraic(right),
+        ])))
+    }
+
     pub(crate) fn pointer_equal(left: &Pointer, right: &Pointer) -> Self {
         let root = match left.equality_kind(right) {
             PointerEqualityKind::Complete => {

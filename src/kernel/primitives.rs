@@ -5023,7 +5023,7 @@ pub struct AlgebraicVariantType {
 /// pointer value's class it is not part of the type's identity: two types
 /// that differ only in it are equal, and only fresh symbolic field values
 /// read it.
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct AlgebraicSchemas {
     variants:
         std::collections::BTreeMap<AlgebraicValueType, std::sync::Arc<[AlgebraicVariantType]>>,
