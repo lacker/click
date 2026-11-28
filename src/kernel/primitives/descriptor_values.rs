@@ -584,6 +584,26 @@ impl StoredConditionTerm {
         )))
     }
 
+    /// Preserve operand order and spelling for exact overflow premises.
+    pub(crate) fn written_overflow(
+        format: MachineIntegerType,
+        op: OverflowOperation,
+        operands: [MachineOperandView<'_>; 2],
+    ) -> Self {
+        let roots = operands.map(|operand| match operand {
+            MachineOperandView::Shared(root) => root.clone(),
+            MachineOperandView::Old(
+                written @ (OldMachineTerm::Constant { .. } | OldMachineTerm::Variable(_)),
+            ) => KernelTermImport::for_exact_field_inputs().machine(format, written),
+            MachineOperandView::Old(written) => {
+                KernelTerm::written_machine_operand(format, written)
+            }
+        });
+        Self(StoredCondition::Shared(KernelTerm::boolean_overflow_raw(
+            format, op, roots,
+        )))
+    }
+
     /// A signed count bound folds two literal words and keeps the written
     /// direction for exact fact lookup otherwise.
     pub(in crate::kernel) fn signed_int32_at_least(

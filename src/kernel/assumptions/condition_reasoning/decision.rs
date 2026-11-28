@@ -1372,16 +1372,12 @@ impl PureFactContext {
         let value = if from_bounds { false } else { direct? };
         if implicit_consulted_premises_capturing() {
             if direct.is_some() {
-                let written = OldConditionTerm::Overflows {
+                let written = crate::kernel::StoredConditionTerm::written_overflow(
                     format,
                     op,
-                    left: Box::new(left.clone()),
-                    right: Box::new(right.clone()),
-                };
-                record_implicit_consulted_premises(
-                    self,
-                    &Proposition::condition_is(written, value),
+                    [left, right].map(crate::kernel::MachineOperandView::Old),
                 );
+                record_implicit_consulted_premises(self, &Proposition::ConditionIs(written, value));
             } else if let Some(bounds) = bounds {
                 for bound in bounds {
                     record_implicit_consulted_premises(self, &bound);
