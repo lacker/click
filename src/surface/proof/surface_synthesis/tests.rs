@@ -1165,16 +1165,18 @@ fn external_symbolic_element_constant_byte_requirement(
 /// caller's outer `loadable(bytes[0..len + 1])` fact is a separate premise;
 /// this regression targets the quantified `k` carrier that retains `1`.
 fn full_external_guarded_range_surface() -> SyntaxProposition {
-    let length = SyntaxTerm::ProgramExpression(ProgramExpression::Variable("__click_q0".into()));
-    let index = SyntaxTerm::ProgramExpression(ProgramExpression::Variable("__click_q1".into()));
+    let length_binder = SurfaceBinder::fresh();
+    let index_binder = SurfaceBinder::fresh();
+    let length = length_binder.reference();
+    let index = index_binder.reference();
     let quantified_range = SyntaxProposition::Loadable {
         segment: ContractSegment {
             uninitialized: false,
             state: ContractSegmentState::Current,
             base: ProgramExpression::Variable("bytes".into()),
-            start: ProgramExpression::Variable("__click_q1".into()),
+            start: ProgramExpression::Variable(index_binder.kernel_name()),
             end: ProgramExpression::Add(
-                Box::new(ProgramExpression::Variable("__click_q1".into())),
+                Box::new(ProgramExpression::Variable(index_binder.kernel_name())),
                 Box::new(ProgramExpression::Value(int32(1))),
             ),
             surface: ContractSegmentSurface::Range {
@@ -1191,7 +1193,7 @@ fn full_external_guarded_range_surface() -> SyntaxProposition {
     };
     let all_before_loadable = SyntaxProposition::ForAll {
         click_type: ClickType::Program(InterfaceType::Int32),
-        name: "__click_q1".into(),
+        name: index_binder,
         written_name: None,
         body: Box::new(SyntaxProposition::Implies(
             Box::new(SyntaxProposition::And(
@@ -1211,12 +1213,12 @@ fn full_external_guarded_range_surface() -> SyntaxProposition {
     };
     SyntaxProposition::Exists {
         click_type: ClickType::Program(InterfaceType::Int32),
-        name: "__click_q0".into(),
+        name: length_binder.clone(),
         written_name: None,
         body: Box::new(SyntaxProposition::And(
             Box::new(SyntaxProposition::Defined {
                 expression: SyntaxTerm::ProgramExpression(ProgramExpression::Add(
-                    Box::new(ProgramExpression::Variable("__click_q0".into())),
+                    Box::new(ProgramExpression::Variable(length_binder.kernel_name())),
                     Box::new(ProgramExpression::Value(int32(1))),
                 )),
             }),

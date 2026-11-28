@@ -75,6 +75,7 @@ impl Declared {
                         .map(|(name, _, width)| (name.to_string(), *width))
                         .collect(),
                 ),
+                spelled_local_types: Default::default(),
             },
             definitions: SpecDefinitions::new(&predicates, &functions),
             retained_states: None,

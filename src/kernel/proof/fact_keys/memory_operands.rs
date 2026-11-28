@@ -430,6 +430,35 @@ mod tests {
     }
 
     #[test]
+    fn exact_comparison_keys_preserve_truth_without_exporting_the_condition() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let variables = |ty: KernelType| {
+            [Variable(998241), Variable(998242)].map(|v| KernelTerm::variable(ty.clone(), v))
+        };
+        let integer = KernelTerm::integer_comparison(
+            IntegerComparisonOperator::LessThan,
+            variables(KernelType::Integer),
+        )
+        .unwrap();
+        let boolean = KernelTerm::boolean_equal_raw(variables(KernelType::Bool));
+        for root in [integer, boolean] {
+            for truth in [false, true] {
+                let condition =
+                    crate::kernel::StoredConditionTerm::from_root(root.clone()).unwrap();
+                let goal = Proposition::ConditionIs(condition, truth);
+                let MemoryErasedPropositionKey::Exact(Proposition::ConditionIs(stored, polarity)) =
+                    memory_erased_proposition_key(&goal)
+                else {
+                    panic!("comparison requires an exact key");
+                };
+                assert_eq!(stored.root(), Some(&root));
+                assert_eq!(polarity, truth);
+                assert!(root.cached_condition_output().is_none());
+            }
+        }
+    }
+
+    #[test]
     fn observation_keys_select_native_load_candidates_without_proving_them() {
         use crate::kernel::machine_integer::comparison::condition_for_operand_views;
         let _session = crate::kernel::VerificationSession::enter();

@@ -5,12 +5,11 @@ The back edge of
 owes the span bound of `viewable(a[0..k])` for every `k` the quantified
 invariant covers, as its own bundle member
 `forall (k: int32) { 0 <= k and k <= n implies (k as uint32) <= 1073741823u32 }`.
-The kernel builds that member, so nothing written spells it; the closer
-synthesizes its source form. The synthesized binder used to be a generated
-`__click_q0`, so a proof that focused the member with `both` and introduced
-it could not write `have 0 <= k;`: `k` was unbound. The binder now takes
-the name the invariant gave it, and the explicit proof below names `k` the
-way the invariant does.
+The closer synthesizes a source form for this kernel-generated member.
+When synthesis gave the binder a fresh name, a proof that focused the
+member with `both` and introduced it still had no binding for `k`.
+The binder now takes the name the invariant gave it, so the explicit
+proof below can write `have 0 <= k;`.
 
 ```c filename=loop_bundle_names_a_quantified_invariant_binder_as_written.c
 int32 count_up(int32 *a, int32 n) {

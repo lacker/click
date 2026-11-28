@@ -526,7 +526,7 @@ int32 vector_grow(struct vector* owner) {
             intro() {
                 intro() {
                     have at(statement(10).call(vector_copy, 0).entry, 0) <= at(statement(10).call(vector_copy, 0).entry, k) and at(statement(10).call(vector_copy, 0).entry, k) < at(statement(10).call(vector_copy, 0).entry, owner->len);
-                    instantiate(forall (__click_q0: int32) { at(statement(10).call(vector_copy, 0).entry, 0) <= at(statement(10).call(vector_copy, 0).entry, __click_q0) and at(statement(10).call(vector_copy, 0).entry, __click_q0) < at(statement(10).call(vector_copy, 0).entry, owner->len) implies at(statement(10).call(vector_copy, 0).exit, new_data[__click_q0]) == at(statement(10).call(vector_copy, 0).entry, old_data[__click_q0]) }, k);
+                    instantiate(forall (copy_index: int32) { at(statement(10).call(vector_copy, 0).entry, 0) <= at(statement(10).call(vector_copy, 0).entry, copy_index) and at(statement(10).call(vector_copy, 0).entry, copy_index) < at(statement(10).call(vector_copy, 0).entry, owner->len) implies at(statement(10).call(vector_copy, 0).exit, new_data[copy_index]) == at(statement(10).call(vector_copy, 0).entry, old_data[copy_index]) }, k);
                     have &owner->data[k] == at(region(14).entry, &new_data[k]) by {
                         close();
                     }
