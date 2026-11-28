@@ -271,18 +271,6 @@ fn defer_post_execution_case_split<'a>(
     continuation: &InternalProofNode,
     expansion_capture: Option<&mut ExpansionCapture>,
 ) -> Driven<Proof<'a>> {
-    if let Some(assertions) = ensuring
-        && let Some(join) = return_if_fact_join(condition, assertions, then_branch, else_branch)
-    {
-        return Ok(Ok(defer_return_interface_join(
-            &proof,
-            index,
-            source_index,
-            join,
-            assertions,
-            expansion_capture,
-        )?));
-    }
     let mut proof = proof;
     let bindings = &proof
         .execution()
@@ -327,11 +315,24 @@ fn defer_post_execution_case_split<'a>(
         source_index,
         tactic,
     };
-    if !deferred.reads_deferred_binding
+    let needs_split = !deferred.reads_deferred_binding
         && (nested
             || !explicit_cursor
-                && !proof.post_execution_if_is_path_decided(condition, disjunction)?)
+                && !proof.post_execution_if_is_path_decided(condition, disjunction)?);
+    if (needs_split || deferred.reads_deferred_binding)
+        && let Some(assertions) = ensuring
+        && let Some(join) = return_if_fact_join(condition, assertions, then_branch, else_branch)
     {
+        return Ok(Ok(defer_return_interface_join(
+            &proof,
+            index,
+            source_index,
+            join,
+            assertions,
+            expansion_capture,
+        )?));
+    }
+    if needs_split {
         // The case is open on some outcome path: fork those paths, one per
         // arm.
         let before = outcome_path_count(&proof);
@@ -380,18 +381,6 @@ fn defer_post_execution_match<'a>(
     continuation: &InternalProofNode,
     expansion_capture: Option<&mut ExpansionCapture>,
 ) -> Driven<Proof<'a>> {
-    if let Some(assertions) = proof_match.ensuring.as_deref()
-        && let Some(join) = return_match_fact_join(proof_match, arms)
-    {
-        return Ok(Ok(defer_return_interface_join(
-            &proof,
-            index,
-            source_index,
-            join,
-            assertions,
-            expansion_capture,
-        )?));
-    }
     let bindings = &proof
         .execution()
         .expect("the match is deferred on a terminal frontier")
@@ -405,18 +394,34 @@ fn defer_post_execution_match<'a>(
         bindings,
     )));
     let before = outcome_path_count(&proof);
-    let proof = match proof.driver().split_outcome_paths(&deferred) {
-        Ok(split) => split,
+    let split = match proof.driver().split_outcome_paths(&deferred) {
+        Ok(split) if outcome_path_count(&split) <= before || ends_after_split(continuation) => {
+            split
+        }
         Err(OutcomeSplitFailure::Obligation(error)) => return Err(error),
-        Err(OutcomeSplitFailure::Partition(_)) => {
-            check_verification_deadline()?;
-            return decline();
+        other => {
+            if let Some(assertions) = proof_match.ensuring.as_deref()
+                && let Some(join) = return_match_fact_join(proof_match, arms)
+            {
+                return Ok(Ok(defer_return_interface_join(
+                    &proof,
+                    index,
+                    source_index,
+                    join,
+                    assertions,
+                    expansion_capture,
+                )?));
+            }
+            match other {
+                Ok(_) => return Err(post_execution_match_forks_the_proof()),
+                Err(_) => {
+                    check_verification_deadline()?;
+                    return decline();
+                }
+            }
         }
     };
-    if outcome_path_count(&proof) > before && !ends_after_split(continuation) {
-        return Err(post_execution_match_forks_the_proof());
-    }
-    Ok(Ok(proof.defer_post_execution_source_tactic(
+    Ok(Ok(split.defer_post_execution_source_tactic(
         index,
         source_index,
         deferred.tactic,
