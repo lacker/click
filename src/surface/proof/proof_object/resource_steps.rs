@@ -2505,10 +2505,7 @@ impl<'a> Proof<'a> {
             .into_iter()
             .collect();
         let facts = self.facts().with_kernel_checked_fact(proposition.clone());
-        let complete = self
-            .goal()
-            .is_some_and(|goal| facts.introduced_goal_available(goal));
-        Ok(self.checked_fact_transition(locals, facts, complete, added, vec![proposition]))
+        Ok(self.checked_fact_transition(locals, facts, false, added, vec![proposition]))
     }
 
     fn apply_named_observation(

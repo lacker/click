@@ -13662,10 +13662,12 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             };
             let prepared = (|| {
                 let scope = search_input.driver().open_have(source.clone())?;
-                let scope = scope.driver().apply_step(ProofStep::Known).or_else(|_| {
-                    scope.driver().apply_step(ProofStep::ObserveResource(
+                let close = |scope: &ProofScope<'a>| scope.driver().apply_step(ProofStep::Known);
+                let scope = close(&scope).or_else(|_| {
+                    let observed = scope.driver().apply_step(ProofStep::ObserveResource(
                         ResourceClause::ViewMemory(segment),
-                    ))
+                    ))?;
+                    close(&observed)
                 })?;
                 scope.join()
             })();

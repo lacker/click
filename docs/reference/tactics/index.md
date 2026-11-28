@@ -1115,8 +1115,7 @@ establish the requested proposition; arm assumptions remain local.
 See [`have_disjunction_projection.md`](https://github.com/clicklang/click/blob/master/mdtests/have_disjunction_projection.md)
 and [`loop_exit_disjunction_projection.md`](https://github.com/clicklang/click/blob/master/mdtests/loop_exit_disjunction_projection.md).
 
-A simple tactic that adds a fact (`instantiate(...)`,
-`apply` and `obtain`) also closes a
+A fact added by `instantiate(...)` or `apply` also closes a
 proposition goal that it adds, when it is the last written step or only
 `close()` follows it. An added order fact closes
 the goal under either form of the same claim: `0 <= e` closes the goal
@@ -3153,7 +3152,8 @@ and profiling charges one instantiation per value.
 The right side states the exact available proposition, up to its bound names.
 The left side names the outputs in quantifier order. Their types come from
 the existential. Each output and the instantiated body are available in
-subsequent tactics in the same proof block. After function exit, `obtain` can
+subsequent tactics in the same proof block. The focused goal stays open.
+After function exit, `obtain` can
 open an available fact while a resource claim is still focused. Its bindings
 remain in scope for later claims in the block.
 
@@ -3614,13 +3614,12 @@ For an explicitly selected memory range, `observe(p[lo..hi])` adds
 held as a unit owner or view. This form also works at function exit and
 inside a `have` proof with a concrete program state. It performs indexed
 permission lookups, without looking for a covering range or following
-history. The held resources do not change.
+history. The held resources and the focused goal stay as they were.
 
-For a fixed-size linked-pointer view, `close()` can emit this observation
-directly when the range already names held storage. When the base is a
-pointer read from an initializer, expansion cites its equality with the
-file-qualified object, rewrites the view to that object, and observes the
-exact held range.
+For a fixed-size linked-pointer view, expansion can emit an observation
+followed by `close()` when the range already names held storage. For a
+pointer read from an initializer, expansion first cites its equality with the
+file-qualified object and rewrites the view to that object.
 
 A saved range selects the pointer value at a recorded point; its bounds are
 evaluated in the surrounding state. `observe(at(point, p)[lo..hi])` establishes

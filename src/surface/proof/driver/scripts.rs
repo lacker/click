@@ -635,7 +635,6 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
                     | ProofTactic::ApplyTheoremUsing { .. }
                     | ProofTactic::ApplyInduction { .. }
                     | ProofTactic::Instantiate { .. }
-                    | ProofTactic::LetSatisfy(_)
             ) && tactics.get(index + 1).is_some_and(|next| {
                 !matches!(
                     next,
@@ -1053,7 +1052,6 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
                     | ProofTactic::ApplyTheoremUsing { .. }
                     | ProofTactic::ApplyInduction { .. }
                     | ProofTactic::Instantiate { .. }
-                    | ProofTactic::LetSatisfy(_)
             ) && !proof.focused_discharged()
                 && checked_fact_spells_the_goal(&proof)
             {
