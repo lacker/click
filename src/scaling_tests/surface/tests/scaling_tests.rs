@@ -318,7 +318,9 @@ int32 probe(int32* p) {{
     unfold(before);
     {steps}
     have {guard} by close();
-    let after = fold(cell(p), {{ items: List<int32>::Cons(p[0], List<int32>::Nil) }});
+    let after = fold(cell(p), {{ items: List<int32>::Cons(p[0], List<int32>::Nil) }}) by {{ close(); }}
+    close();
+    close();
 }}
 "#
         );
@@ -351,8 +353,10 @@ int32 probe(int32* p) {{
                 expand_c_tactic_source_at(&source, &sources, position.line, position.column)
                     .expect("the selected constructor guard expands");
             assert!(!expanded.contains("solve();"), "{expanded}");
-            crate::surface::proof::without_implicit_solve(|| verify_c_sources(&expanded, &sources))
-                .expect("the explicit guard refutation cold-replays");
+            crate::surface::without_implicit_solve_for_claim("probe.contract", || {
+                verify_c_sources(&expanded, &sources).map_err(|error| error.message().to_owned())
+            })
+            .expect("the explicit guard refutation cold-replays");
             // The opposite guard holds for this nonempty constructor, while
             // the returned value is 1. Reject it with and without the certificate.
             for (proof, explicit) in [(&source, false), (&expanded, true)] {
@@ -361,14 +365,16 @@ int32 probe(int32* p) {{
                     "old(before.items) != List<int32>::Nil",
                 );
                 assert_ne!(&invalid, proof);
-                let verify = || verify_c_sources(&invalid, &sources);
+                let verify = || {
+                    verify_c_sources(&invalid, &sources).map_err(|error| error.message().to_owned())
+                };
                 let result = if explicit {
-                    crate::surface::proof::without_implicit_solve(verify)
+                    crate::surface::without_implicit_solve_for_claim("probe.contract", verify)
                 } else {
                     verify()
                 };
                 let error = result.unwrap_err();
-                assert!(!error.message().contains("budget"), "{error}");
+                assert!(!error.contains("budget"), "{error}");
             }
         }
     }
