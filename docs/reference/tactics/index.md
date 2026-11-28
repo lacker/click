@@ -2532,17 +2532,17 @@ statement. The next `step()` can use the fact.
 See [the checked loop example](https://github.com/clicklang/click/blob/master/mdtests/loop_decreases_index_ordered_walk.md).
 
 After function exit, a bare `instantiate` adds its facts to the current
-outcome, even while a resource claim is focused. An instance that adds the
-exact focused proposition closes that claim.
+outcome, even while a resource claim is focused. The same claim stays open
+when the instantiated fact matches it exactly.
 See [the checked outcome example](https://github.com/clicklang/click/blob/master/mdtests/instantiate_at_function_exit.md).
 
 **Failure, checking, and tools:**
 
 An unavailable source names the missing quantified fact. A non-universal or
 wrongly typed argument is refused locally. Missing guards do not cause an
-instantiation error: they remain in its resulting implication. After all
-arguments have checked, the step closes the goal if it added that exact
-fact. Use `close()` to close a consequence made available by propagation.
+instantiation error: they remain in its resulting implication. The focused
+goal stays open. Use `close()` or the block's implicit closer to discharge it
+from the instance or a consequence made available by propagation.
 Expansion retains the argument list and any needed guard proofs as ordinary
 `have` blocks. Checking does
 indexed source lookup and substitution over the selected body, without scans

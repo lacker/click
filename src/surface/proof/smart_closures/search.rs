@@ -12594,8 +12594,8 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
 
     /// Tries available universal facts when the atomic decision cannot name
     /// an instantiated premise. Candidate
-    /// discovery is read-only; a specialization is retained only after the
-    /// ordinary `Instantiate` operation advances and closes this Proof.
+    /// discovery is read-only; retain a specialization when the checked
+    /// instantiation and subsequent closer prove the goal.
     #[cfg(test)]
     pub(in crate::surface::proof) fn try_indexed_forall_instantiation(
         search_input: &Proof<'a>,

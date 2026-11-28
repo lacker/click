@@ -2460,7 +2460,7 @@ impl<'a> Proof<'a> {
         }
 
         // Each intermediate instance is available to check the next value.
-        // Close the active goal only after every written value has checked.
+        // Keep the fact deltas from every supplied argument.
         let mut added = state.state().added_facts().to_vec();
         for (index, argument) in remaining.iter().enumerate() {
             if !matches!(residual, Proposition::ForAll { .. }) {

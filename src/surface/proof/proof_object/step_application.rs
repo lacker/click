@@ -725,33 +725,6 @@ impl<'a> Proof<'a> {
         );
     }
 
-    /// Complete a proposition from an already published fact without a new
-    /// surface tactic. The enclosing outcome step supplies the certificate.
-    pub(in crate::surface::proof) fn complete_matching_instance(
-        &self,
-        instances: &[Proposition],
-    ) -> Result<Option<crate::kernel::proof::CheckedProposition>, ClickError> {
-        let Some(goal) = self.goal() else {
-            return Ok(None);
-        };
-        // Contract goals and instantiated facts can carry the same term in
-        // shared and native form. Compare their checked identities as well.
-        let identity = crate::kernel::proof::proposition_identity_key(goal);
-        if !instances.iter().any(|instance| {
-            instance == goal
-                || identity.as_ref().is_some_and(|identity| {
-                    crate::kernel::proof::proposition_identity_key(instance).as_ref()
-                        == Some(identity)
-                })
-        }) {
-            return Ok(None);
-        }
-        self.apply_known()?
-            .completed_proposition()
-            .map(Some)
-            .ok_or_else(|| self.step_error("completed proof is not a proposition judgment"))
-    }
-
     /// Apply exact facts and the selected live-partition separation rule.
     /// No ambient compositions or candidate resources are enumerated.
     pub(super) fn apply_known(&self) -> Result<KernelProofHandle, ClickError> {
