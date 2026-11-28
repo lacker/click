@@ -465,22 +465,7 @@ impl Printer<'_> {
                         _ => None,
                     }
                 }
-                V::Program(value) => match value.numeric_value() {
-                    crate::kernel::ProgramValue::Parameter(term) => match term.node {
-                        AlgebraicTermNode::Variable(variable) => Some(variable),
-                        _ => None,
-                    },
-                    crate::kernel::arithmetic_c_value!(OldMachineTerm::Variable(variable)) => {
-                        Some(*variable)
-                    }
-                    _ => None,
-                },
-                V::Integer(IntegerTerm::Variable(variable)) => Some(*variable),
-                V::Algebraic(term) => match term.node {
-                    AlgebraicTermNode::Variable(variable) => Some(variable),
-                    _ => None,
-                },
-                V::Integer(_) => None,
+                binding => binding_variable(binding),
             };
             match variable {
                 Some(variable) => {
@@ -1911,6 +1896,15 @@ impl Printer<'_> {
             B::ClickFunctionApplication { name, arguments } => self.call(name, arguments, depth),
             B::AlgebraicMatch { scrutinee, arms } => {
                 let scrutinee = self.algebraic(scrutinee, depth)?;
+                if let [arm] = arms.as_slice()
+                    && let OldMachineTerm::Variable(body) = &arm.body
+                    && let Some(index) = projected_binding(&arm.variant, &arm.bindings, *body)
+                {
+                    return Some(atom(crate::surface::tuples::spell_projection(
+                        &scrutinee.text,
+                        index,
+                    )));
+                }
                 let mut spelled_arms = Vec::new();
                 for arm in arms {
                     let (pattern, bound) =
@@ -1919,10 +1913,10 @@ impl Printer<'_> {
                     self.bound.truncate(self.bound.len() - bound);
                     spelled_arms.push(format!("{pattern} => {}", body?.text));
                 }
-                Some(atom(tuple_match_spelling(
-                    &scrutinee.text,
-                    arms.len(),
-                    &spelled_arms,
+                Some(atom(format!(
+                    "match {} {{ {} }}",
+                    scrutinee.text,
+                    spelled_arms.join(", ")
                 )))
             }
             B::IntegerAddress(pointer, _) => {
@@ -3189,6 +3183,15 @@ impl Printer<'_> {
                     return None;
                 }
                 let scrutinee = self.algebraic(scrutinee, depth + 1)?;
+                if let [arm] = arms.as_slice()
+                    && let AlgebraicTermNode::Variable(body) = arm.body.node
+                    && let Some(index) = projected_binding(&arm.variant, &arm.bindings, body)
+                {
+                    return Some(atom(crate::surface::tuples::spell_projection(
+                        &scrutinee.text,
+                        index,
+                    )));
+                }
                 let mut spelled_arms = Vec::new();
                 for arm in arms {
                     let (pattern, bound) =
@@ -3197,10 +3200,10 @@ impl Printer<'_> {
                     self.bound.truncate(self.bound.len() - bound);
                     spelled_arms.push(format!("{pattern} => {}", body?.text));
                 }
-                Some(atom(tuple_match_spelling(
-                    &scrutinee.text,
-                    arms.len(),
-                    &spelled_arms,
+                Some(atom(format!(
+                    "match {} {{ {} }}",
+                    scrutinee.text,
+                    spelled_arms.join(", ")
                 )))
             }
         }
@@ -3313,6 +3316,15 @@ impl Printer<'_> {
             }
             IntegerTerm::AlgebraicMatch { scrutinee, arms } => {
                 let scrutinee = self.algebraic(scrutinee, depth)?;
+                if let [arm] = arms.as_slice()
+                    && let IntegerTerm::Variable(body) = arm.body.as_ref()
+                    && let Some(index) = projected_binding(&arm.variant, &arm.bindings, *body)
+                {
+                    return Some(atom(crate::surface::tuples::spell_projection(
+                        &scrutinee.text,
+                        index,
+                    )));
+                }
                 let mut spelled_arms = Vec::new();
                 for arm in arms {
                     let (pattern, bound) =
@@ -3321,10 +3333,10 @@ impl Printer<'_> {
                     self.bound.truncate(self.bound.len() - bound);
                     spelled_arms.push(format!("{pattern} => {}", body?.text));
                 }
-                Some(atom(tuple_match_spelling(
-                    &scrutinee.text,
-                    arms.len(),
-                    &spelled_arms,
+                Some(atom(format!(
+                    "match {} {{ {} }}",
+                    scrutinee.text,
+                    spelled_arms.join(", ")
                 )))
             }
             IntegerTerm::RangeFold {
@@ -3605,6 +3617,73 @@ mod tests {
             true,
         );
         assert!(source(&integer, &mut labels).contains("4609434218613702656u64"));
+    }
+
+    /// A single tuple arm whose body is its second binding's variable is
+    /// the projection `t.1`, read from the arm's structure; a body that is
+    /// no binding stays a match (`design/tuples.md`).
+    #[test]
+    fn a_tuple_arm_that_yields_a_binding_prints_as_its_projection() {
+        use crate::kernel::{
+            AlgebraicBitvectorMatchArm, AlgebraicSchemas, AlgebraicType, AlgebraicValue,
+            AlgebraicValueType, AlgebraicVariantType, BindingNames,
+        };
+        let name = crate::surface::tuples::type_name(2);
+        let arguments = vec![AlgebraicValueType::Program(ProgramType::Int32); 2];
+        let variants: std::sync::Arc<[AlgebraicVariantType]> = vec![AlgebraicVariantType {
+            name: name.clone(),
+            fields: arguments.clone(),
+        }]
+        .into();
+        let tuple_type = AlgebraicType {
+            rigid: false,
+            name: name.clone(),
+            arguments: arguments.clone(),
+            variants: variants.clone(),
+            schemas: std::sync::Arc::new(AlgebraicSchemas::new(std::collections::BTreeMap::from(
+                [(
+                    AlgebraicValueType::Algebraic {
+                        name: name.clone(),
+                        arguments,
+                    },
+                    variants,
+                )],
+            ))),
+        };
+        let tuple = AlgebraicTerm {
+            algebraic_type: tuple_type,
+            node: AlgebraicTermNode::Variable(Variable(1)),
+        };
+        let matched = |body: OldMachineTerm| OldMachineTerm::AlgebraicMatch {
+            scrutinee: Box::new(tuple.clone()),
+            arms: vec![AlgebraicBitvectorMatchArm {
+                variant: name.clone(),
+                bindings: vec![
+                    AlgebraicValue::Program(ProgramValue::Int32(OldMachineTerm::Variable(
+                        Variable(2),
+                    ))),
+                    AlgebraicValue::Program(ProgramValue::Int32(OldMachineTerm::Variable(
+                        Variable(3),
+                    ))),
+                ],
+                body,
+                binding_names: BindingNames::written(&["_0".into(), "_1".into()]),
+            }],
+        };
+        let mut labels = MemoryStateLabels::default();
+        labels.source_name(Variable(1), "t".into());
+        assert_eq!(
+            render(
+                &equality(matched(OldMachineTerm::Variable(Variable(3)))),
+                &mut labels
+            ),
+            Some("t.1 == 0".into())
+        );
+        let rendered = render(&equality(matched(OldMachineTerm::constant(7))), &mut labels);
+        assert!(
+            rendered.as_deref().is_none_or(|text| !text.contains("t.")),
+            "{rendered:?}"
+        );
     }
 
     #[test]
@@ -4239,26 +4318,40 @@ mod resource_tests {
     }
 }
 
-/// A match from its spelled scrutinee and arms. A single tuple arm whose
-/// body is one of its bindings, `(_0, _1) => _1`, is the projection `t.1`
-/// it lowers from (`design/tuples.md`).
-fn tuple_match_spelling(scrutinee: &str, arm_count: usize, arms: &[String]) -> String {
-    if arm_count == 1
-        && let [arm] = arms
-        && let Some((pattern, body)) = arm.split_once(" => ")
-        && let Some(inner) = pattern.strip_prefix('(').and_then(|p| p.strip_suffix(')'))
-        && !inner.contains(['(', ')'])
-    {
-        let bindings = inner
-            .split(',')
-            .map(str::trim)
-            .filter(|binding| !binding.is_empty())
-            .collect::<Vec<_>>();
-        if let Some(index) = bindings.iter().rposition(|binding| *binding == body)
-            && *bindings[index] != *"_"
-        {
-            return crate::surface::tuples::spell_projection(scrutinee, index);
-        }
+/// The variable a match binding declares, when it is one. A wide slice
+/// binding is read by [`Printer::arm_pattern`] itself.
+fn binding_variable(binding: &crate::kernel::AlgebraicValue) -> Option<Variable> {
+    use crate::kernel::AlgebraicValue as V;
+    match binding {
+        V::Program(value) => match value.numeric_value() {
+            crate::kernel::ProgramValue::Parameter(term) => match term.node {
+                AlgebraicTermNode::Variable(variable) => Some(variable),
+                _ => None,
+            },
+            crate::kernel::arithmetic_c_value!(OldMachineTerm::Variable(variable)) => {
+                Some(*variable)
+            }
+            _ => None,
+        },
+        V::Integer(IntegerTerm::Variable(variable)) => Some(*variable),
+        V::Algebraic(term) => match term.node {
+            AlgebraicTermNode::Variable(variable) => Some(variable),
+            _ => None,
+        },
+        V::Integer(_) => None,
     }
-    format!("match {scrutinee} {{ {} }}", arms.join(", "))
+}
+
+/// The component a single tuple arm projects: the index of the binding
+/// whose declared variable is the arm's body, so the match is `t.index`
+/// (`design/tuples.md`). Read from the arm's retained structure.
+fn projected_binding(
+    variant: &str,
+    bindings: &[crate::kernel::AlgebraicValue],
+    body: Variable,
+) -> Option<usize> {
+    crate::surface::tuples::arity(variant)?;
+    bindings
+        .iter()
+        .rposition(|binding| binding_variable(binding) == Some(body))
 }
