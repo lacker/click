@@ -609,6 +609,11 @@ impl PartialEq for NodeKey {
                             address: q,
                         },
                     ) => m.read_key() == n.read_key() && a == b && p == q,
+                    (KernelTermNode::Match(a), KernelTermNode::Match(b)) => {
+                        a == b && a.arms.iter().zip(&b.arms).all(|(a, b)| {
+                            a.binding_names.spellings().eq(b.binding_names.spellings())
+                        })
+                    }
                     (a, b) => a == b,
                 })
     }
@@ -628,6 +633,15 @@ impl NodeKey {
         {
             point.read_key().hash(&mut hash);
         }
+        if let KernelTermNode::Match(matched) = &node {
+            for arm in &matched.arms {
+                let names = arm.binding_names.spellings();
+                names.len().hash(&mut hash);
+                for name in names {
+                    name.hash(&mut hash);
+                }
+            }
+        }
         node.hash(&mut hash);
         // A fresh legacy identity belongs to its producer. Read observations
         // still have native consumers. Keep conversion payloads containing them
@@ -638,14 +652,17 @@ impl NodeKey {
                 .fields
                 .iter()
                 .any(KernelTerm::has_opaque_observation_boundary),
-            KernelTermNode::Match(matched)
-                if matches!(ty, KernelType::Program(_) | KernelType::Algebraic(_)) =>
-            {
+            KernelTermNode::Match(matched) => {
                 matched
-                    .arguments
+                    .arms
                     .iter()
-                    .chain(matched.arms.iter().flat_map(|arm| &arm.bindings))
-                    .any(KernelTerm::has_opaque_observation_boundary)
+                    .any(|arm| arm.binding_names.spellings().len() != 0)
+                    || (matches!(ty, KernelType::Program(_) | KernelType::Algebraic(_))
+                        && matched
+                            .arguments
+                            .iter()
+                            .chain(matched.arms.iter().flat_map(|arm| &arm.bindings))
+                            .any(KernelTerm::has_opaque_observation_boundary))
             }
             KernelTermNode::Fold(fold) if matches!(ty, KernelType::Program(_)) => fold
                 .arguments

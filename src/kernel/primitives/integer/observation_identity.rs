@@ -117,6 +117,7 @@ pub(in crate::kernel::primitives) fn normalize(root: &KernelTerm) -> KernelTerm 
                     matched.arguments = matched.arguments.iter().map(&get).collect();
                     for arm in &mut matched.arms {
                         arm.bindings = arm.bindings.iter().map(&get).collect();
+                        arm.binding_names = BindingNames::default();
                     }
                     let root = matched.into_term();
                     if matches!(term.ty(), KernelType::Program(ty) if MachineIntegerType::from_program_type(*ty).is_some()) {
