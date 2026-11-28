@@ -469,6 +469,11 @@ and a reference `&T` is refused there. `x as T` casts in a body as in a
 contract. The C forms (`uint8`, `const uint8*`, `x as int32`) still read
 the same types.
 
+A pure function, predicate, theorem or contract may use Click's tuples,
+`(u32, u32)`, `(a, b)` and `t.0`
+([grammar](language/grammar.md#tuples)). A `fn` signature that takes or
+returns a tuple is refused: tuple program values are not supported yet.
+
 A pure function may take a slice of scalars, `bytes: &[u8]`. The body reads
 `bytes[k]`, `bytes.len()` and `*bytes`. Each slice is one argument of a call:
 a slice parameter in scope, such as a `fn`'s `bytes` or another pure

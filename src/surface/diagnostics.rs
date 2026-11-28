@@ -7824,6 +7824,14 @@ fn describe_contract_expression_grouping_casts(
             if let Some(literal) = describe_byte_list(expression) {
                 return literal;
             }
+            if crate::surface::tuples::arity(variant).is_some() {
+                return crate::surface::tuples::spell(
+                    &arguments
+                        .iter()
+                        .map(describe_contract_expression)
+                        .collect::<Vec<_>>(),
+                );
+            }
             // A struct's value, `*p` or a literal of its fields.
             if algebraic_type.name() == variant
                 && algebraic_type.arguments().is_empty()
@@ -7864,20 +7872,28 @@ fn describe_contract_expression_grouping_casts(
         SyntaxTerm::Binding(name) => name.clone(),
         SyntaxTerm::AlgebraicMatch { scrutinee, arms } => {
             let scrutinee = describe_contract_expression(scrutinee);
+            if let Some(index) = crate::surface::tuples::projected_index(arms) {
+                return crate::surface::tuples::spell_projection(&scrutinee, index);
+            }
             let arms = arms
                 .iter()
                 .map(|arm| {
-                    format!(
-                        "{}::{}({}) => {}",
-                        arm.type_name,
-                        arm.variant,
-                        arm.bindings
-                            .iter()
-                            .map(ToString::to_string)
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                        describe_contract_expression(&arm.body)
-                    )
+                    let bindings = arm
+                        .bindings
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>();
+                    let pattern = if crate::surface::tuples::arity(&arm.type_name).is_some() {
+                        crate::surface::tuples::spell(&bindings)
+                    } else {
+                        format!(
+                            "{}::{}({})",
+                            arm.type_name,
+                            arm.variant,
+                            bindings.join(", ")
+                        )
+                    };
+                    format!("{pattern} => {}", describe_contract_expression(&arm.body))
                 })
                 .collect::<Vec<_>>();
             format!("match {scrutinee} {{ {} }}", arms.join(", "))

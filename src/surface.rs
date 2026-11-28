@@ -84,6 +84,7 @@ pub(crate) mod proof_diagnostics;
 mod source_registry;
 mod struct_values;
 mod structural_clauses;
+mod tuples;
 pub use structural_clauses::StructuralClauses;
 mod surface_propositions;
 mod typed_surface;

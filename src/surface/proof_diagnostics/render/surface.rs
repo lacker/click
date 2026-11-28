@@ -439,6 +439,9 @@ impl Printer<'_> {
     ) -> (String, usize) {
         use crate::kernel::AlgebraicValue as V;
         if bindings.is_empty() {
+            if crate::surface::tuples::arity(variant).is_some() {
+                return ("()".to_owned(), 0);
+            }
             return (variant.to_owned(), 0);
         }
         let mut spelled = Vec::with_capacity(bindings.len());
@@ -486,6 +489,9 @@ impl Printer<'_> {
                 }
                 None => spelled.push("_".to_owned()),
             }
+        }
+        if crate::surface::tuples::arity(variant).is_some() {
+            return (crate::surface::tuples::spell(&spelled), bound);
         }
         (format!("{variant}({})", spelled.join(", ")), bound)
     }
@@ -1913,10 +1919,10 @@ impl Printer<'_> {
                     self.bound.truncate(self.bound.len() - bound);
                     spelled_arms.push(format!("{pattern} => {}", body?.text));
                 }
-                Some(atom(format!(
-                    "match {} {{ {} }}",
-                    scrutinee.text,
-                    spelled_arms.join(", ")
+                Some(atom(tuple_match_spelling(
+                    &scrutinee.text,
+                    arms.len(),
+                    &spelled_arms,
                 )))
             }
             B::IntegerAddress(pointer, _) => {
@@ -3152,6 +3158,9 @@ impl Printer<'_> {
                 {
                     return Some(atom(spelled));
                 }
+                if crate::surface::tuples::arity(variant).is_some() {
+                    return Some(atom(crate::surface::tuples::spell(&spelled_fields)));
+                }
                 let name = format!("{}::{variant}", value.algebraic_type.name);
                 Some(atom(if spelled_fields.is_empty() {
                     name
@@ -3188,10 +3197,10 @@ impl Printer<'_> {
                     self.bound.truncate(self.bound.len() - bound);
                     spelled_arms.push(format!("{pattern} => {}", body?.text));
                 }
-                Some(atom(format!(
-                    "match {} {{ {} }}",
-                    scrutinee.text,
-                    spelled_arms.join(", ")
+                Some(atom(tuple_match_spelling(
+                    &scrutinee.text,
+                    arms.len(),
+                    &spelled_arms,
                 )))
             }
         }
@@ -3312,10 +3321,10 @@ impl Printer<'_> {
                     self.bound.truncate(self.bound.len() - bound);
                     spelled_arms.push(format!("{pattern} => {}", body?.text));
                 }
-                Some(atom(format!(
-                    "match {} {{ {} }}",
-                    scrutinee.text,
-                    spelled_arms.join(", ")
+                Some(atom(tuple_match_spelling(
+                    &scrutinee.text,
+                    arms.len(),
+                    &spelled_arms,
                 )))
             }
             IntegerTerm::RangeFold {
@@ -4228,4 +4237,28 @@ mod resource_tests {
             "separate(tree(left_model), tree(right_model))"
         );
     }
+}
+
+/// A match from its spelled scrutinee and arms. A single tuple arm whose
+/// body is one of its bindings, `(_0, _1) => _1`, is the projection `t.1`
+/// it lowers from (`design/tuples.md`).
+fn tuple_match_spelling(scrutinee: &str, arm_count: usize, arms: &[String]) -> String {
+    if arm_count == 1
+        && let [arm] = arms
+        && let Some((pattern, body)) = arm.split_once(" => ")
+        && let Some(inner) = pattern.strip_prefix('(').and_then(|p| p.strip_suffix(')'))
+        && !inner.contains(['(', ')'])
+    {
+        let bindings = inner
+            .split(',')
+            .map(str::trim)
+            .filter(|binding| !binding.is_empty())
+            .collect::<Vec<_>>();
+        if let Some(index) = bindings.iter().rposition(|binding| *binding == body)
+            && *bindings[index] != *"_"
+        {
+            return crate::surface::tuples::spell_projection(scrutinee, index);
+        }
+    }
+    format!("match {scrutinee} {{ {} }}", arms.join(", "))
 }
