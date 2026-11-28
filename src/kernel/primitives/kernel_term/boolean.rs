@@ -425,7 +425,12 @@ impl<'a> BooleanOperandView<'a> {
                 } => Some((
                     *format,
                     *operation,
-                    arguments.each_ref().map(MachineOperandView::Shared),
+                    arguments.each_ref().map(|argument| match argument.node() {
+                        KernelTermNode::WrittenMachine(input) => {
+                            MachineOperandView::Old(input.value())
+                        }
+                        _ => MachineOperandView::Shared(argument),
+                    }),
                 )),
                 _ => None,
             },
