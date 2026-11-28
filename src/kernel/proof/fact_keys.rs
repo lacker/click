@@ -496,6 +496,12 @@ fn structural_condition_key(
     condition: crate::kernel::BooleanOperandView<'_>,
 ) -> Option<MemoryErasedConditionKey> {
     use crate::kernel::machine_integer::comparison::{FactOperand, fact_operand_identity};
+    if let Some(value) = condition.constant() {
+        return Some(MemoryErasedConditionKey::Constant(value));
+    }
+    if let Some(variable) = condition.variable() {
+        return Some(MemoryErasedConditionKey::Variable(*variable));
+    }
     if let Some((format, relation, operands)) = condition.comparison() {
         let operands = operands.map(|operand| match operand {
             crate::kernel::MachineOperandView::Shared(root)
@@ -5394,6 +5400,41 @@ fn assert_stored_proposition_keys(
         );
     }
     assert!(root.cached_condition_output().is_none());
+}
+
+#[cfg(test)]
+mod boolean_atom_tests {
+    use super::*;
+    use crate::kernel::StoredConditionTerm;
+    use std::collections::hash_map::DefaultHasher;
+
+    #[test]
+    fn stored_boolean_atoms_keep_written_hash_order_and_keys() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let atoms = [
+            OldConditionTerm::Constant(false),
+            OldConditionTerm::Constant(true),
+            OldConditionTerm::Variable(Variable(998651)),
+            OldConditionTerm::Variable(Variable(998652)),
+        ];
+        let stored = atoms
+            .each_ref()
+            .map(|atom| StoredConditionTerm::from(atom.clone()));
+        for (atom, term) in atoms.iter().zip(&stored) {
+            let mut written_hash = DefaultHasher::new();
+            let mut stored_hash = DefaultHasher::new();
+            atom.hash(&mut written_hash);
+            term.hash(&mut stored_hash);
+            assert_eq!(written_hash.finish(), stored_hash.finish());
+            for (other_atom, other_term) in atoms.iter().zip(&stored) {
+                assert_eq!(atom.cmp(other_atom), term.cmp(other_term));
+            }
+            assert_stored_proposition_keys(
+                term.root().unwrap(),
+                &memory_erased_condition_key(atom),
+            );
+        }
+    }
 }
 
 #[cfg(test)]

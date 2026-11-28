@@ -797,6 +797,13 @@ impl StoredConditionTerm {
     /// The same ordering and hash as the written condition. Address comparisons
     /// already hold the operands that the identity borrows.
     fn with_atomic_identity<R>(&self, read: impl FnOnce(ConditionIdentity<'_>) -> R) -> R {
+        let operand = self.operand_view();
+        if let Some(value) = operand.constant() {
+            return read(ConditionIdentity::Constant(value));
+        }
+        if let Some(variable) = operand.variable() {
+            return read(ConditionIdentity::Variable(variable));
+        }
         match self.pointer_equality() {
             Some(pair) => pair.with_written(|written| read(written.identity())),
             None => read(self.old_form().identity()),
