@@ -319,7 +319,17 @@ fn defer_post_execution_case_split<'a>(
         && (nested
             || !explicit_cursor
                 && !proof.post_execution_if_is_path_decided(condition, disjunction)?);
-    if (needs_split || deferred.reads_deferred_binding)
+    let before = outcome_path_count(&proof);
+    let split = needs_split.then(|| proof.driver().split_outcome_paths(&deferred));
+    let forks_before_continuation =
+        |split: &Proof<'_>| outcome_path_count(split) > before && !ends_after_split(continuation);
+    let needs_join = deferred.reads_deferred_binding
+        || match &split {
+            Some(Ok(split)) => forks_before_continuation(split),
+            Some(Err(OutcomeSplitFailure::Partition(_))) => !disjunction,
+            _ => false,
+        };
+    if needs_join
         && let Some(assertions) = ensuring
         && let Some(join) = return_if_fact_join(condition, assertions, then_branch, else_branch)
     {
@@ -332,11 +342,18 @@ fn defer_post_execution_case_split<'a>(
             expansion_capture,
         )?));
     }
-    if needs_split {
-        // The case is open on some outcome path: fork those paths, one per
-        // arm.
-        let before = outcome_path_count(&proof);
-        match proof.driver().split_outcome_paths(&deferred) {
+    if let Some(split) = split {
+        match split {
+            Ok(split) if forks_before_continuation(&split) => {
+                let error = if disjunction {
+                    post_execution_cases_forks_the_proof()
+                } else {
+                    post_execution_if_forks_the_proof()
+                };
+                return Err(split
+                    .at_source_tactic(source_index)
+                    .attach_step_diagnostic(error));
+            }
             Ok(split) => proof = split,
             Err(OutcomeSplitFailure::Obligation(error)) => return Err(error),
             Err(OutcomeSplitFailure::Partition(error)) if disjunction => return Err(error),
@@ -344,18 +361,6 @@ fn defer_post_execution_case_split<'a>(
                 check_verification_deadline()?;
                 return decline();
             }
-        }
-        // What follows a case split is checked once, after execution as
-        // before it: a split that forks paths would check it once per arm.
-        if outcome_path_count(&proof) > before && !ends_after_split(continuation) {
-            let error = if disjunction {
-                post_execution_cases_forks_the_proof()
-            } else {
-                post_execution_if_forks_the_proof()
-            };
-            return Err(proof
-                .at_source_tactic(source_index)
-                .attach_step_diagnostic(error));
         }
     }
     Ok(Ok(proof.defer_post_execution_source_tactic(
