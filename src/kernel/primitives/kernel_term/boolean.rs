@@ -297,6 +297,17 @@ impl<'a> BooleanOperandView<'a> {
         }
     }
 
+    pub(crate) fn variable(self) -> Option<&'a Variable> {
+        match self {
+            Self::Shared(root) => match root.node() {
+                KernelTermNode::Variable(variable) => Some(variable),
+                _ => None,
+            },
+            Self::Native(OldConditionTerm::Variable(variable)) => Some(variable),
+            _ => None,
+        }
+    }
+
     pub(crate) fn conditional(self) -> Option<[Self; 3]> {
         match self {
             Self::Shared(root) => match root.node() {
