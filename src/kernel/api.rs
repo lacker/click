@@ -479,6 +479,9 @@ pub struct LoopPreservationContext {
     /// iteration that continues past the loop, and the body proof that runs
     /// inside it, both continue from here.
     next_kernel_variable: u64,
+    /// The head this context's body runs from. The loop rule's exits use
+    /// it too, so its back edges and exits share one head.
+    head: std::sync::Arc<super::loops::LoopHead>,
 }
 
 /// Facts retained by a checked loop exit. Explicit constructor inputs have
@@ -673,6 +676,19 @@ impl LoopFinalExitCandidate {
 ///
 /// Written breaks, false tests and checked natural exits carry the state and
 /// facts they reached. They owe no back-edge invariant closure or decrease.
+/// One loop head of a proof-driven loop and the states its checked body
+/// reached when it returned there: the iterations no exit's path holds. The
+/// loop rule reads their writes from the memory history and records them on
+/// the loop's exits.
+#[derive(Clone, Debug)]
+pub(crate) struct LoopBackEdges {
+    pub(super) head: std::sync::Arc<super::loops::LoopHead>,
+    pub(super) states: Vec<ExecutionState>,
+    /// The fresh-variable counter after the head was built: identities
+    /// below it may belong to the head.
+    pub(super) next_kernel_variable: u64,
+}
+
 /// The loop rule joins these paths with its direct guard-false exit into the
 /// single successor the enclosing frontier continues from.
 #[derive(Clone, Debug)]
@@ -926,6 +942,16 @@ mod loop_exit_sharing_tests {
 }
 
 impl LoopPreservationContext {
+    /// The states this context's checked body reached when it returned to
+    /// the head, for the loop rule.
+    pub(crate) fn back_edges(&self, states: Vec<ExecutionState>) -> LoopBackEdges {
+        LoopBackEdges {
+            head: self.head.clone(),
+            states,
+            next_kernel_variable: self.next_kernel_variable,
+        }
+    }
+
     pub(crate) fn restored_exit(
         &self,
         state: &ExecutionState,
@@ -1207,6 +1233,7 @@ pub(crate) fn loop_phase_preservation_contexts(
             }
         });
     }
+    let shared_head = std::sync::Arc::new(head.clone());
     // Preservation runs the body with the loop's declared resources.
     let exit_frame = head
         .narrows_resources()
@@ -1336,6 +1363,7 @@ pub(crate) fn loop_phase_preservation_contexts(
                 // built with, so each reports the same high-water mark rather
                 // than the mark at the moment it happened to be pushed.
                 next_kernel_variable,
+                head: shared_head.clone(),
             });
         }
     }
@@ -5396,6 +5424,7 @@ pub(crate) fn prove_symbolic_loop_exit_with_proven_phases(
         final_exit_candidates,
         early_exits,
         return_exits,
+        &[],
         None,
         None,
         &mut budget,
@@ -5434,6 +5463,7 @@ pub(crate) fn prove_symbolic_loop_exit_with_proven_phases_using_budget(
     final_exit_candidates: Vec<LoopFinalExitCandidate>,
     early_exits: Vec<LoopEarlyExit>,
     return_exits: Vec<LoopReturnExit>,
+    back_edges: &[LoopBackEdges],
     otherwise: Option<&mut LoopOtherwiseProof<'_>>,
     exit_fact_scope: Option<&LoopExitFactScope<'_>>,
     budget: &mut ExecutionBudget,
@@ -5470,6 +5500,7 @@ pub(crate) fn prove_symbolic_loop_exit_with_proven_phases_using_budget(
         &final_exit_candidates,
         &early_exits,
         &return_exits,
+        back_edges,
         otherwise,
         exit_fact_scope,
         budget,

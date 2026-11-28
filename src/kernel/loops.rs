@@ -1692,6 +1692,7 @@ pub(in crate::kernel) fn abstract_loop_paths(
         &[],
         &[],
         &[],
+        &[],
         None,
         None,
         execution_context.semantics,
@@ -2174,6 +2175,7 @@ pub(super) fn execute_program_loop_exit_paths_with_proven_phases(
     final_exit_candidates: &[LoopFinalExitCandidate],
     early_exits: &[LoopEarlyExit],
     return_exits: &[LoopReturnExit],
+    back_edges: &[super::api::LoopBackEdges],
     otherwise: Option<&mut LoopOtherwiseProof<'_>>,
     exit_fact_scope: Option<&LoopExitFactScope<'_>>,
     budget: &mut ExecutionBudget,
@@ -2188,6 +2190,7 @@ pub(super) fn execute_program_loop_exit_paths_with_proven_phases(
         final_exit_candidates,
         early_exits,
         return_exits,
+        back_edges,
         otherwise,
         exit_fact_scope,
         execution_context.semantics,
@@ -4529,6 +4532,7 @@ fn execute_program_loop_exit_paths(
     final_exit_candidates: &[LoopFinalExitCandidate],
     early_exits: &[LoopEarlyExit],
     return_exits: &[LoopReturnExit],
+    back_edges: &[super::api::LoopBackEdges],
     otherwise: Option<&mut LoopOtherwiseProof<'_>>,
     exit_fact_scope: Option<&LoopExitFactScope<'_>>,
     execution_semantics: ExecutionSemantics,
@@ -4559,17 +4563,27 @@ fn execute_program_loop_exit_paths(
     }
 
     let composite_resource_definitions = environment_composite_resource_definitions(environment);
-    let head = prepare_loop_top_state(
-        state,
-        effect_checks,
-        invariant_checks,
-        resource_specs,
-        &composite_resource_definitions,
-        body,
-        assumptions,
-        budget,
-        variables,
-    )?;
+    // A proof-checked body ran from a head the kernel already built; its
+    // exits, back edges and this rule's guard exit share that one head.
+    let head = match back_edges.first() {
+        Some(proof) => {
+            // The head's identities were invented before this rule; what it
+            // invents now comes after them.
+            budget.continue_past_mark(proof.next_kernel_variable);
+            (*proof.head).clone()
+        }
+        None => prepare_loop_top_state(
+            state,
+            effect_checks,
+            invariant_checks,
+            resource_specs,
+            &composite_resource_definitions,
+            body,
+            assumptions,
+            budget,
+            variables,
+        )?,
+    };
     // Entry invariants are checked at the real loop entry, with the loop's
     // binders already bound to the instances they name there. `old(...)` keeps
     // reading the state as the enclosing proof wrote it, under the identities
@@ -4596,7 +4610,7 @@ fn execute_program_loop_exit_paths(
     // authority never leaves the head.
     let guard_state = head.guard.clone();
     let whole_loop_effect_summaries = head.summaries.clone();
-    let (preservation_obligations, mut final_exit_paths, body_early_exits) =
+    let (preservation_obligations, mut final_exit_paths, body_early_exits, iteration_writes) =
         if let Some(environment) = preservation_environment {
             let summary = collect_loop_preservation_summary(
                 state,
@@ -4616,9 +4630,10 @@ fn execute_program_loop_exit_paths(
                 summary.obligations,
                 summary.final_exit_paths,
                 summary.early_exits,
+                summary.iteration_writes,
             )
         } else {
-            (Vec::new(), Vec::new(), Vec::new())
+            (Vec::new(), Vec::new(), Vec::new(), None)
         };
     let mut loop_check_obligations = Vec::new();
     // A loop may only declare resources the enclosing context actually holds.
@@ -5049,10 +5064,45 @@ fn execute_program_loop_exit_paths(
         ));
     }
     budget.check_path_width(paths.len())?;
+    // Every exit follows the iterations that returned to a head; record
+    // what they wrote where each exit's history can see it. A kernel-checked
+    // body gave its back edges above; a proof-checked body's come with it.
+    let mut iterations = Vec::new();
+    if let Some(head_point) = head.top.path_link().loop_head()
+        && let Some(writes) = iteration_writes
+    {
+        iterations.push((head_point, Some(std::sync::Arc::new(writes))));
+    }
+    for proof in back_edges {
+        let Some(head_point) = proof.head.body.path_link().loop_head() else {
+            continue;
+        };
+        let writes = proof.states.iter().try_fold(
+            crate::kernel::RecordedWrites::default(),
+            |mut writes, state| {
+                let mut reached = state.clone();
+                reached.complete_staged_memory();
+                writes.merge(&crate::kernel::RecordedWrites::between(
+                    proof.head.body.path_link(),
+                    reached.path_link(),
+                )?);
+                Some(writes)
+            },
+        );
+        iterations.push((head_point, writes.map(std::sync::Arc::new)));
+    }
     for path in &mut paths {
         path.obligations
             .extend(head.borrow_requirements.iter().cloned());
         path.loop_invariant_correspondence.iterations = Some(head.iterations.clone());
+        if let Some(state) = path.outcome.state_mut() {
+            for (head_point, writes) in &iterations {
+                state.record_loop_iterations(crate::kernel::program_point::LoopIterations::new(
+                    *head_point,
+                    writes.clone(),
+                ));
+            }
+        }
     }
     Ok(paths)
 }
@@ -5532,6 +5582,10 @@ pub(super) struct LoopPreservationSummary {
     /// reached. The rule joins them with the guard-false exit exactly as it
     /// joins the ones a checked preservation proof reports.
     pub(super) early_exits: Vec<LoopEarlyExit>,
+    /// What the body wrote on its paths back to the head: the writes of the
+    /// iterations that reach no exit. `None` when some such path does not
+    /// record them.
+    pub(super) iteration_writes: Option<crate::kernel::RecordedWrites>,
 }
 
 pub(super) fn collect_loop_preservation_summary(
@@ -5562,6 +5616,7 @@ pub(super) fn collect_loop_preservation_summary(
     let mut obligations = Vec::new();
     let mut final_exit_paths = Vec::new();
     let mut early_exits = Vec::new();
+    let mut iteration_writes = Some(crate::kernel::RecordedWrites::default());
     // The body executes from the loop's own resource context; everything the
     // enclosing frame withheld is returned on the way out.
     let top_state = &head.body;
@@ -5637,6 +5692,17 @@ pub(super) fn collect_loop_preservation_summary(
                         | StatementOutcome::Jump { state, .. } => state,
                         _ => unreachable!("classified loop back edge has another outcome"),
                     };
+                    // This iteration returns to the head, so no exit's path
+                    // holds its writes: read them from its own history.
+                    let mut reached = (*next_state).clone();
+                    reached.complete_staged_memory();
+                    iteration_writes = iteration_writes.and_then(|mut writes| {
+                        writes.merge(&crate::kernel::RecordedWrites::between(
+                            top_state.path_link(),
+                            reached.path_link(),
+                        )?);
+                        Some(writes)
+                    });
                     // The back edge binds the loop's names again exactly as
                     // the head did. A body that refolded its instance under
                     // another name still hands the binder back, and a body
@@ -5966,6 +6032,7 @@ pub(super) fn collect_loop_preservation_summary(
         obligations,
         final_exit_paths,
         early_exits,
+        iteration_writes,
     })
 }
 
@@ -6097,6 +6164,7 @@ pub(super) fn collect_whole_loop_effect_summaries(
 /// when the loop declares resources of its own: the body then owns exactly
 /// what the loop declared, and the rest of the enclosing frame's resources are
 /// withheld until the loop exits.
+#[derive(Clone, Debug)]
 pub(super) struct LoopHead {
     pub(super) top: ExecutionState,
     pub(super) body: ExecutionState,
