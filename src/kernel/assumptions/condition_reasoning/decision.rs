@@ -1286,6 +1286,9 @@ impl PureFactContext {
         &self,
         condition: &OldConditionTerm,
     ) -> Option<bool> {
+        if let OldConditionTerm::Constant(literal) = condition {
+            return self.exact_literal_value(*literal);
+        }
         if let OldConditionTerm::Overflows {
             format,
             op,
@@ -1313,6 +1316,26 @@ impl PureFactContext {
         value
     }
 
+    fn exact_literal_value(&self, literal: bool) -> Option<bool> {
+        if let Some(value) = self.condition_facts.literal_value(literal) {
+            if implicit_consulted_premises_capturing() {
+                let fact = Proposition::ConditionIs(
+                    crate::kernel::StoredConditionTerm::constant(literal),
+                    value,
+                );
+                record_implicit_consulted_premises(self, &fact);
+            }
+            return Some(value);
+        }
+        for truth in [true, false] {
+            if let Some(source) = self.observation_comparisons.literal_source(literal, truth) {
+                record_implicit_consulted_premises(self, source);
+                return Some(truth);
+            }
+        }
+        None
+    }
+
     /// Use the literal condition's exact lookup when both signed words fold.
     /// A symbolic sum is looked up with its written operand ordering.
     pub(in crate::kernel) fn exact_signed_add_overflow(
@@ -1320,14 +1343,11 @@ impl PureFactContext {
         left: &OldMachineTerm,
         right: &OldMachineTerm,
     ) -> Option<bool> {
-        let words = [left, right];
-        let literals = words.map(|word| word.constant32().map(OldMachineTerm::constant));
-        if let [Some(a), Some(b)] = &literals {
-            return self.exact_condition_value(&OldConditionTerm::signed_add_overflows(
-                a.clone(),
-                b.clone(),
-            ));
+        let words = [left, right].map(OldMachineTerm::constant32);
+        if let [Some(a), Some(b)] = words {
+            return self.exact_literal_value((a as i32).overflowing_add(b as i32).1);
         }
+        let literals = words.map(|word| word.map(OldMachineTerm::constant));
         self.exact_overflow_value(
             MachineIntegerType::Int32,
             OverflowOperation::Add,

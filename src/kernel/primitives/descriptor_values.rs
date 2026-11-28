@@ -408,6 +408,11 @@ impl<'a> std::borrow::Borrow<dyn BorrowedConditionKey + 'a> for OldConditionTerm
 }
 
 impl crate::kernel::fact_collections::FactMap<OldConditionTerm, bool> {
+    pub(in crate::kernel) fn literal_value(&self, literal: bool) -> Option<bool> {
+        self.get(&ConditionIdentity::Constant(literal) as &dyn BorrowedConditionKey)
+            .copied()
+    }
+
     pub(in crate::kernel) fn written_overflow_value(
         &self,
         format: MachineIntegerType,
