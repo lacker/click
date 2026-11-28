@@ -866,44 +866,33 @@ pub(crate) fn integer_condition_alpha_key(
     let Proposition::ConditionIs(condition, true) = proposition else {
         return None;
     };
-    if let Some(root) = condition.root() {
-        if let KernelTermNode::IntegerCompare {
-            operator,
-            arguments,
-        } = root.node()
-        {
-            if !arguments
-                .iter()
-                .any(|operand| matches!(operand.node(), KernelTermNode::Fold(_)))
-            {
-                return None;
-            }
-            if let Some(key) = fold_keys::unchanged_integer_comparison_key(*operator, arguments) {
-                return Some(key);
-            }
-            if crate::instrumentation::deadline_exceeded_with_work(0) {
-                return None;
-            }
-            if let Some(normalized) =
-                super::term_rewrite::TermRewrite::retained_arithmetic_comparison(arguments)
-                && let Some(key) = fold_keys::integer_comparison_key(*operator, &normalized, false)
-            {
-                return Some(key);
-            }
-            if crate::instrumentation::deadline_exceeded_with_work(0) {
-                return None;
-            }
-        } else {
-            return None;
-        }
-    }
-    let (left, right) = match condition.old_form() {
-        crate::kernel::integer_comparison_condition!(left, right) => (left, right),
-        _ => return None,
+    // StoredConditionTerm imports every Integer comparison into a shared root.
+    let KernelTermNode::IntegerCompare {
+        operator,
+        arguments,
+    } = condition.root()?.node()
+    else {
+        return None;
     };
-    if !matches!(left.as_ref(), IntegerTerm::RangeFold { .. })
-        && !matches!(right.as_ref(), IntegerTerm::RangeFold { .. })
+    if !arguments
+        .iter()
+        .any(|operand| matches!(operand.node(), KernelTermNode::Fold(_)))
     {
+        return None;
+    }
+    if let Some(key) = fold_keys::unchanged_integer_comparison_key(*operator, arguments) {
+        return Some(key);
+    }
+    if crate::instrumentation::deadline_exceeded_with_work(0) {
+        return None;
+    }
+    if let Some(normalized) =
+        super::term_rewrite::TermRewrite::retained_arithmetic_comparison(arguments)
+        && let Some(key) = fold_keys::integer_comparison_key(*operator, &normalized, false)
+    {
+        return Some(key);
+    }
+    if crate::instrumentation::deadline_exceeded_with_work(0) {
         return None;
     }
     let comparison = super::term_rewrite::TermRewrite::arithmetic_comparison(proposition);
@@ -923,18 +912,14 @@ pub(crate) fn integer_equality_alpha_key(
     let Proposition::ConditionIs(condition, true) = proposition else {
         return None;
     };
-    let is_equal = match condition.root().map(|root| root.node()) {
-        Some(KernelTermNode::IntegerCompare { operator, .. }) => {
-            *operator == IntegerComparisonOperator::Equal
-        }
-        None => {
-            matches!(condition.old_form(), OldConditionTerm::IntegerEqual(_, _))
-        }
-        _ => false,
+    let KernelTermNode::IntegerCompare {
+        operator: IntegerComparisonOperator::Equal,
+        ..
+    } = condition.root()?.node()
+    else {
+        return None;
     };
-    is_equal
-        .then(|| integer_condition_alpha_key(proposition))
-        .flatten()
+    integer_condition_alpha_key(proposition)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
