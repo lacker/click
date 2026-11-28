@@ -433,6 +433,7 @@ fn loop_freshness_ignores_unrelated_live_state() {
                         Vec::new(),
                         Vec::new(),
                         Vec::new(),
+                        &[],
                         None,
                         None,
                         &mut budget,

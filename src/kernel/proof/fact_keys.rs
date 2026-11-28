@@ -389,7 +389,8 @@ fn memory_erased_proposition_key_one(proposition: &Proposition) -> MemoryErasedP
             MemoryErasedPropositionKey::Exact(proposition.clone())
         }
         Proposition::ConditionIs(condition, value) => MemoryErasedPropositionKey::Condition(
-            memory_erased_condition_key(condition.old_form()),
+            structural_condition_key(condition.operand_view())
+                .unwrap_or_else(|| memory_erased_condition_key(condition.old_form())),
             *value,
         ),
         Proposition::Implies(left, right) => MemoryErasedPropositionKey::Implies(
@@ -487,8 +488,23 @@ fn state_observation_key(
 fn memory_erased_boolean_operand_key(
     condition: crate::kernel::BooleanOperandView<'_>,
 ) -> MemoryErasedConditionKey {
+    structural_condition_key(condition)
+        .unwrap_or_else(|| memory_erased_condition_key(&condition.native()))
+}
+
+fn structural_condition_key(
+    condition: crate::kernel::BooleanOperandView<'_>,
+) -> Option<MemoryErasedConditionKey> {
     use crate::kernel::machine_integer::comparison::{FactOperand, fact_operand_identity};
     if let Some((format, relation, operands)) = condition.comparison() {
+        let operands = operands.map(|operand| match operand {
+            crate::kernel::MachineOperandView::Shared(root)
+                if let Some(input) = root.written_machine_input() =>
+            {
+                crate::kernel::MachineOperandView::Old(input)
+            }
+            _ => operand,
+        });
         let (format, operands) = fact_operand_identity(format, relation, operands);
         let [left, right] = operands.map(|operand| match operand {
             FactOperand::Term(term) => memory_operands::operand(term),
@@ -496,38 +512,38 @@ fn memory_erased_boolean_operand_key(
                 &crate::kernel::ComparisonSide::Value(value).term(format),
             ),
         });
-        return MemoryErasedConditionKey::Comparison(
+        return Some(MemoryErasedConditionKey::Comparison(
             BitvectorComparisonOp::Compare(format, relation),
             left,
             right,
-        );
+        ));
     }
     if let Some((format, operation, [a, b])) = condition.overflow() {
-        return MemoryErasedConditionKey::Comparison(
+        return Some(MemoryErasedConditionKey::Comparison(
             BitvectorComparisonOp::Overflows(format, operation),
             memory_operands::operand(a),
             memory_operands::operand(b),
-        );
+        ));
     }
     if let Some([a, b]) = condition.pointer_offsets() {
-        return MemoryErasedConditionKey::AddressOffsetEqual(
+        return Some(MemoryErasedConditionKey::AddressOffsetEqual(
             pointer_keys::state_offset(&a),
             pointer_keys::state_offset(&b),
-        );
+        ));
     }
     if let Some([a, b]) = condition.pointer_values() {
-        return MemoryErasedConditionKey::PointerEqual(
+        return Some(MemoryErasedConditionKey::PointerEqual(
             pointer_keys::recorded_value(&a),
             pointer_keys::recorded_value(&b),
-        );
+        ));
     }
     if let Some([a, b]) = condition.pointer_addresses() {
-        return MemoryErasedConditionKey::AddressEqual(
+        return Some(MemoryErasedConditionKey::AddressEqual(
             pointer_keys::state_address(&a),
             pointer_keys::state_address(&b),
-        );
+        ));
     }
-    memory_erased_condition_key(&condition.native())
+    None
 }
 
 fn memory_erased_condition_key(condition: &OldConditionTerm) -> MemoryErasedConditionKey {
@@ -850,44 +866,33 @@ pub(crate) fn integer_condition_alpha_key(
     let Proposition::ConditionIs(condition, true) = proposition else {
         return None;
     };
-    if let Some(root) = condition.root() {
-        if let KernelTermNode::IntegerCompare {
-            operator,
-            arguments,
-        } = root.node()
-        {
-            if !arguments
-                .iter()
-                .any(|operand| matches!(operand.node(), KernelTermNode::Fold(_)))
-            {
-                return None;
-            }
-            if let Some(key) = fold_keys::unchanged_integer_comparison_key(*operator, arguments) {
-                return Some(key);
-            }
-            if crate::instrumentation::deadline_exceeded_with_work(0) {
-                return None;
-            }
-            if let Some(normalized) =
-                super::term_rewrite::TermRewrite::retained_arithmetic_comparison(arguments)
-                && let Some(key) = fold_keys::integer_comparison_key(*operator, &normalized, false)
-            {
-                return Some(key);
-            }
-            if crate::instrumentation::deadline_exceeded_with_work(0) {
-                return None;
-            }
-        } else {
-            return None;
-        }
-    }
-    let (left, right) = match condition.old_form() {
-        crate::kernel::integer_comparison_condition!(left, right) => (left, right),
-        _ => return None,
+    // StoredConditionTerm imports every Integer comparison into a shared root.
+    let KernelTermNode::IntegerCompare {
+        operator,
+        arguments,
+    } = condition.root()?.node()
+    else {
+        return None;
     };
-    if !matches!(left.as_ref(), IntegerTerm::RangeFold { .. })
-        && !matches!(right.as_ref(), IntegerTerm::RangeFold { .. })
+    if !arguments
+        .iter()
+        .any(|operand| matches!(operand.node(), KernelTermNode::Fold(_)))
     {
+        return None;
+    }
+    if let Some(key) = fold_keys::unchanged_integer_comparison_key(*operator, arguments) {
+        return Some(key);
+    }
+    if crate::instrumentation::deadline_exceeded_with_work(0) {
+        return None;
+    }
+    if let Some(normalized) =
+        super::term_rewrite::TermRewrite::retained_arithmetic_comparison(arguments)
+        && let Some(key) = fold_keys::integer_comparison_key(*operator, &normalized, false)
+    {
+        return Some(key);
+    }
+    if crate::instrumentation::deadline_exceeded_with_work(0) {
         return None;
     }
     let comparison = super::term_rewrite::TermRewrite::arithmetic_comparison(proposition);
@@ -907,18 +912,14 @@ pub(crate) fn integer_equality_alpha_key(
     let Proposition::ConditionIs(condition, true) = proposition else {
         return None;
     };
-    let is_equal = match condition.root().map(|root| root.node()) {
-        Some(KernelTermNode::IntegerCompare { operator, .. }) => {
-            *operator == IntegerComparisonOperator::Equal
-        }
-        None => {
-            matches!(condition.old_form(), OldConditionTerm::IntegerEqual(_, _))
-        }
-        _ => false,
+    let KernelTermNode::IntegerCompare {
+        operator: IntegerComparisonOperator::Equal,
+        ..
+    } = condition.root()?.node()
+    else {
+        return None;
     };
-    is_equal
-        .then(|| integer_condition_alpha_key(proposition))
-        .flatten()
+    integer_condition_alpha_key(proposition)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -5380,6 +5381,22 @@ mod machine_quantifier_identity_tests {
 mod pointer_index_tests;
 
 #[cfg(test)]
+fn assert_stored_proposition_keys(
+    root: &crate::kernel::KernelTerm,
+    expected: &MemoryErasedConditionKey,
+) {
+    let condition = crate::kernel::StoredConditionTerm::from_root(root.clone()).unwrap();
+    for truth in [true, false] {
+        let goal = Proposition::ConditionIs(condition.clone(), truth);
+        assert_eq!(
+            memory_erased_proposition_key(&goal),
+            MemoryErasedPropositionKey::Condition(expected.clone(), truth),
+        );
+    }
+    assert!(root.cached_condition_output().is_none());
+}
+
+#[cfg(test)]
 mod offset_condition_tests {
     use super::*;
     #[test]
@@ -5405,6 +5422,7 @@ mod offset_condition_tests {
                     crate::kernel::BooleanOperandView::Shared(&root),
                 );
                 assert_eq!(actual, expected);
+                assert_stored_proposition_keys(&root, &actual);
                 assert!(!keys.contains(&actual));
                 keys.push(actual);
             }
@@ -5439,6 +5457,7 @@ mod raw_pointer_condition_tests {
             let actual =
                 memory_erased_boolean_operand_key(crate::kernel::BooleanOperandView::Shared(&root));
             assert_eq!(actual, memory_erased_condition_key(&source));
+            assert_stored_proposition_keys(&root, &actual);
             assert!(!keys.contains(&actual));
             keys.push(actual);
         }
@@ -5470,6 +5489,7 @@ mod complete_pointer_condition_tests {
             let actual =
                 memory_erased_boolean_operand_key(crate::kernel::BooleanOperandView::Shared(&root));
             assert_eq!(actual, memory_erased_condition_key(&source));
+            assert_stored_proposition_keys(&root, &actual);
             assert!(!keys.contains(&actual));
             keys.push(actual);
         }
@@ -5477,8 +5497,26 @@ mod complete_pointer_condition_tests {
 }
 
 #[cfg(test)]
-mod overflow_condition_tests {
+mod machine_condition_tests {
     use super::*;
+    #[test]
+    fn stored_comparisons_keep_native_fact_identity_across_formats() {
+        let _session = crate::kernel::VerificationSession::enter();
+        use CompareRelation::*;
+        for format in crate::kernel::machine_integer::FORMATS {
+            for relation in [Equal, LessThan, LessEqual, GreaterThan, GreaterEqual] {
+                let source = OldConditionTerm::Compare {
+                    format,
+                    relation,
+                    left: Box::new(OldMachineTerm::Variable(Variable(998632))),
+                    right: Box::new(OldMachineTerm::narrow_constant(format, 1)),
+                };
+                let root = crate::kernel::KernelTermImport::default().condition(&source);
+                assert_stored_proposition_keys(&root, &memory_erased_condition_key(&source));
+            }
+        }
+    }
+
     #[test]
     fn overflow_conditions_keep_exact_format_and_operation_keys() {
         let _session = crate::kernel::VerificationSession::enter();
@@ -5502,6 +5540,7 @@ mod overflow_condition_tests {
                     crate::kernel::BooleanOperandView::Shared(&root),
                 );
                 assert_eq!(actual, memory_erased_condition_key(&source));
+                assert_stored_proposition_keys(&root, &actual);
                 assert!(!keys.contains(&actual));
                 keys.push(actual);
             }

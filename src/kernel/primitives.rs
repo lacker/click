@@ -9110,6 +9110,22 @@ pub enum StatementOutcome {
     RuntimeError(RuntimeError),
 }
 
+impl StatementOutcome {
+    /// The state this outcome continues from, when it has one.
+    pub(crate) fn state_mut(&mut self) -> Option<&mut ExecutionState> {
+        match self {
+            Self::Normal(state)
+            | Self::Break(state)
+            | Self::LoopTestFalse(state)
+            | Self::Continue(state)
+            | Self::Jump { state, .. }
+            | Self::Return { state, .. }
+            | Self::Throw { state, .. } => Some(state),
+            Self::VerificationDiverges | Self::UndefinedBehavior(_) | Self::RuntimeError(_) => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum FunctionOutcome {
     Return {

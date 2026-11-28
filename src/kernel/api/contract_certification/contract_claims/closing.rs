@@ -847,11 +847,8 @@ impl ContractExitObligations {
         }
         // What the function wrote is what the memory history records from
         // the caller's point to this exit, argument binding included.
-        //
-        // Known gap: a loop whose head records no checked footprint
-        // (`writes.unbounded_loop`) keeps the writes of its continuing
-        // iterations off every exit's history, so they are not checked here.
-        // The summary facts this replaced did not cover them either.
+        // A loop's iterations that return to its head are on no exit's
+        // path; its exit records their writes.
         let writes = crate::kernel::RecordedWrites::between(
             context.caller.path_link(),
             outcome.state.path_link(),
@@ -861,6 +858,11 @@ impl ContractExitObligations {
                 "the exit is not reached from the function's entry".into(),
             )
         })?;
+        if writes.unbounded_loop {
+            return Err(ContractClosingRefusal::Incomplete(
+                "a loop's iterations do not record what they wrote".into(),
+            ));
+        }
         if empty {
             check_empty_footprint(&context.caller, &writes, assumptions)?;
         }

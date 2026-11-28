@@ -11216,6 +11216,16 @@ impl ExecutionState {
         self.point = self.point.after(shared, steps);
     }
 
+    /// Moves this loop exit past a record of what the loop's iterations
+    /// wrote, at a new point with the same memory.
+    pub(in crate::kernel) fn record_loop_iterations(
+        &mut self,
+        iterations: super::program_point::LoopIterations,
+    ) {
+        self.complete_staged_memory();
+        self.point = self.point.after_loop_iterations(iterations);
+    }
+
     /// Ends a contract call's value effects: the state moves to the call's
     /// effect point (`call(f, j).effect`) with every staged step, even when
     /// it staged none, so each contract call has one.
