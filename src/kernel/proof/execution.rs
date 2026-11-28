@@ -6832,12 +6832,7 @@ pub(super) fn checked_interface_pointer_equality(
     facts: &PureFactStore,
     goal: &Proposition,
 ) -> bool {
-    matches!(&goal, condition_source_0 @ Proposition::ConditionIs(
-            _,
-            true
-        ) if matches!(condition_source_0.old_condition(), Some((crate::kernel::OldConditionTerm::AddressEqual(_, _)
-                | crate::kernel::OldConditionTerm::PointerEqual(_, _)
-                | crate::kernel::OldConditionTerm::AddressOffsetEqual(_, _), _))))
+    matches!(goal, Proposition::ConditionIs(condition, true) if condition.pointer_equality().is_some())
         && super::fact_reasoning::normalize_using_conditions(goal, &[], facts).is_ok()
 }
 

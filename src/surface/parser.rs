@@ -7478,6 +7478,18 @@ impl Parser {
     }
 
     fn parse_click_type(&mut self) -> Result<(ClickType, Option<ParsedType>), ClickError> {
+        // A tuple type, `(A, B)`, `(A,)` or `()` (`design/tuples.md`).
+        if self.peek() == Some(&Token::LParen) {
+            if self.algebraic_type_nesting >= MATCH_NESTING_LIMIT {
+                return Err(self.error("tuple type nesting exceeds Click's supported depth"));
+            }
+            self.algebraic_type_nesting += 1;
+            let components = self.parse_tuple_components(|parser| {
+                parser.parse_click_type().map(|(component, _)| component)
+            });
+            self.algebraic_type_nesting -= 1;
+            return Ok((crate::surface::tuples::click_type(components?), None));
+        }
         if self.peek_ident() == Some("Prop") {
             self.position += 1;
             return Ok((ClickType::Proposition, None));
@@ -7557,6 +7569,66 @@ impl Parser {
         }
         let application = self.parse_algebraic_type_application()?;
         Ok((ClickType::Algebraic(application), None))
+    }
+
+    /// The components of a tuple type, value or pattern from its `(`: a
+    /// comma-separated list with an optional trailing comma, which a single
+    /// component requires, as in Rust: `(a,)` is a tuple and `(a)` is `a`.
+    /// Here the parenthesized form is always a tuple; callers that also
+    /// read a parenthesized expression decide that before calling.
+    fn parse_tuple_components<T>(
+        &mut self,
+        mut component: impl FnMut(&mut Self) -> Result<T, ClickError>,
+    ) -> Result<Vec<T>, ClickError> {
+        self.expect(Token::LParen)?;
+        let mut components = Vec::new();
+        let mut trailing_comma = false;
+        while self.peek() != Some(&Token::RParen) {
+            components.push(component(self)?);
+            trailing_comma = self.peek() == Some(&Token::Comma);
+            if trailing_comma {
+                self.position += 1;
+            } else if self.peek() != Some(&Token::RParen) {
+                return Err(self.error("expected `,` or `)` in a tuple"));
+            }
+        }
+        self.expect(Token::RParen)?;
+        if components.len() == 1 && !trailing_comma {
+            return Err(self.error(
+                "a one-component tuple is written with a trailing comma, `(a,)`, as in Rust",
+            ));
+        }
+        if components.len() > crate::surface::tuples::MAX_ARITY {
+            return Err(self.error(format!(
+                "a tuple has at most {} components",
+                crate::surface::tuples::MAX_ARITY
+            )));
+        }
+        Ok(components)
+    }
+
+    /// The arity of the tuple pattern at this `(`, read ahead without
+    /// consuming it: its names up to the matching `)`.
+    fn tuple_pattern_arity(&self) -> Result<usize, ClickError> {
+        let mut arity = 0;
+        let mut trailing_comma = false;
+        for token in &self.tokens[self.position + 1..] {
+            match token {
+                Token::Ident(_) => {
+                    arity += 1;
+                    trailing_comma = false;
+                }
+                Token::Comma => trailing_comma = true,
+                Token::RParen => break,
+                _ => return Err(self.error("a tuple pattern binds names: `(a, b)`")),
+            }
+        }
+        if arity == 1 && !trailing_comma {
+            return Err(self.error(
+                "a one-component tuple is written with a trailing comma, `(a,)`, as in Rust",
+            ));
+        }
+        Ok(arity)
     }
 
     /// The built-in slice type spelled `Slice<T>`, a slice of the scalar or
@@ -11640,9 +11712,16 @@ impl Parser {
             self.expect(Token::LBrace)?;
             let mut arms = Vec::new();
             while self.peek() != Some(&Token::RBrace) {
-                let type_name = self.expect_ident("match pattern datatype")?;
-                self.expect(Token::ColonColon)?;
-                let variant = self.expect_ident("match pattern variant")?;
+                // A tuple pattern, `(a, b) => { ... }` (`design/tuples.md`).
+                let tuple_pattern = self.peek() == Some(&Token::LParen);
+                let (type_name, variant) = if tuple_pattern {
+                    let name = crate::surface::tuples::type_name(self.tuple_pattern_arity()?);
+                    (name.clone(), name)
+                } else {
+                    let type_name = self.expect_ident("match pattern datatype")?;
+                    self.expect(Token::ColonColon)?;
+                    (type_name, self.expect_ident("match pattern variant")?)
+                };
                 let mut bindings = Vec::new();
                 let mut binding_names = BTreeSet::new();
                 if self.peek() == Some(&Token::LParen) {
@@ -16494,6 +16573,21 @@ impl Parser {
                         });
                         continue;
                     }
+                    // A tuple projection, `t.0`: no C field starts with a
+                    // digit, so the receiver's type resolves it as it does
+                    // a method (`design/tuples.md`).
+                    if self.peek() == Some(&Token::Dot)
+                        && let Some(Token::Number(index)) = self.tokens.get(self.position + 1)
+                    {
+                        let method = crate::surface::tuples::projection_method(*index);
+                        self.position += 2;
+                        expression = SyntaxTerm::MethodCall {
+                            receiver: Box::new(expression),
+                            method,
+                            arguments: Vec::new(),
+                        };
+                        continue;
+                    }
                     // A method on a value of a Click type, resolved by the
                     // receiver's type during declaration expansion.
                     if self.peek() == Some(&Token::Dot)
@@ -16661,11 +16755,28 @@ impl Parser {
         self.expect(Token::LBrace)?;
         let mut arms = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
-            let type_name = self.expect_ident("match pattern datatype")?;
-            self.expect(Token::ColonColon)?;
-            let variant = self.expect_ident("match pattern variant")?;
-            let mut bindings = Vec::new();
-            if self.peek() == Some(&Token::LParen) {
+            // A tuple pattern, `(a, b) => ...` (`design/tuples.md`).
+            let tuple_bindings = if self.peek() == Some(&Token::LParen) {
+                Some(self.parse_tuple_components(|parser| {
+                    parser.expect_surface_binder("tuple pattern binding")
+                })?)
+            } else {
+                None
+            };
+            let (type_name, variant) = match &tuple_bindings {
+                Some(bindings) => {
+                    let name = crate::surface::tuples::type_name(bindings.len());
+                    (name.clone(), name)
+                }
+                None => {
+                    let type_name = self.expect_ident("match pattern datatype")?;
+                    self.expect(Token::ColonColon)?;
+                    (type_name, self.expect_ident("match pattern variant")?)
+                }
+            };
+            let tuple_pattern = tuple_bindings.is_some();
+            let mut bindings = tuple_bindings.unwrap_or_default();
+            if self.peek() == Some(&Token::LParen) && !tuple_pattern {
                 self.position += 1;
                 if self.peek() != Some(&Token::RParen) {
                     loop {
@@ -17779,10 +17890,25 @@ impl Parser {
             )),
             Some(Token::LParen) => {
                 let start = self.position;
+                // The unit value `()` and a tuple `(a, b)` or `(a,)`
+                // (`design/tuples.md`); `(a)` stays the parenthesized `a`.
+                if self.peek() == Some(&Token::RParen) {
+                    self.position += 1;
+                    return Ok(crate::surface::tuples::constructor(Vec::new()));
+                }
                 let boundary = std::mem::replace(&mut self.certificate_operand_boundary, false);
                 let expression = self.parse_contract_expression();
                 self.certificate_operand_boundary = boundary;
                 let expression = expression?;
+                if self.peek() == Some(&Token::Comma) {
+                    self.position = start - 1;
+                    let boundary =
+                        std::mem::replace(&mut self.certificate_operand_boundary, false);
+                    let components =
+                        self.parse_tuple_components(|parser| parser.parse_contract_expression());
+                    self.certificate_operand_boundary = boundary;
+                    return Ok(crate::surface::tuples::constructor(components?));
+                }
                 if self.continues_as_rust_bool_value() {
                     // Rust's `(x > 3)` is a `bool` value: the proposition's
                     // truth value, as in a `-> bool` body.
@@ -17859,6 +17985,9 @@ impl Parser {
     }
 
     fn parse_contract_value_let_expression(&mut self) -> Result<SyntaxTerm, ClickError> {
+        if self.peek_next() == Some(&Token::LParen) {
+            return self.parse_tuple_let_expression();
+        }
         let bool_body = std::mem::take(&mut self.bool_value_context);
         let mut bindings = Vec::new();
         let mut shadowed_lets = Vec::new();
@@ -17913,6 +18042,41 @@ impl Parser {
             };
         }
         Ok(body)
+    }
+
+    /// `let (a, b) = t; body`: the match `match t { (a, b) => body }`
+    /// (`design/tuples.md`).
+    fn parse_tuple_let_expression(&mut self) -> Result<SyntaxTerm, ClickError> {
+        let bool_body = std::mem::take(&mut self.bool_value_context);
+        self.expect_ident_spelling("let")?;
+        let bindings = self.parse_tuple_components(|parser| {
+            parser.expect_surface_binder("tuple pattern binding")
+        })?;
+        if self.peek() == Some(&Token::Colon) {
+            return Err(self.error(
+                "a destructuring `let` takes its type from its value; write the type on the value, \
+                 `let t: (A, B) = value;`, and destructure `t`",
+            ));
+        }
+        self.expect(Token::Equal)?;
+        let value = self.parse_contract_expression()?;
+        self.expect(Token::Semicolon)?;
+        let newly_bound = bindings
+            .iter()
+            .filter_map(|binding| binding.written().map(str::to_owned))
+            .filter(|binding| {
+                self.names
+                    .insert(NameKind::ContractBinding, (*binding).clone())
+            })
+            .collect::<Vec<_>>();
+        let body = self.parse_branch_value(bool_body);
+        for binding in newly_bound {
+            self.names.remove(NameKind::ContractBinding, &binding);
+        }
+        Ok(SyntaxTerm::AlgebraicMatch {
+            scrutinee: Box::new(value),
+            arms: vec![crate::surface::tuples::arm(bindings, body?)],
+        })
     }
 
     /// The value of an `if` branch, `match` arm or `let` body: a `bool`

@@ -46,7 +46,8 @@ const MAX_MEMORY_STATE_LABELS: usize = 32;
 /// and a reader could not tell "same memory" from "different memory" — the one
 /// thing those labels exist to show. A label is now a small ordinal, assigned
 /// in order of first appearance and shared by equal memories, so `state#1`
-/// twice means one memory and `state#1`/`state#2` means two. Internal
+/// twice means one memory and `state#1`/`state#2` means two, or one memory
+/// that two reads name differently (the legend says which). Internal
 /// variable IDs likewise become source names when the checked state provides
 /// one, or distinct alphabetic labels when it does not.
 #[derive(Clone, Default)]
@@ -86,6 +87,12 @@ pub(crate) struct MemoryStateLabels {
     /// Addresses no structural spelling names, spelled as the pointer local
     /// that held them at a recorded state: `at(region(2).exit, p)`.
     recorded_pointers: HashMap<Address, String>,
+    /// Slices no current name holds, by their count, spelled as the slice
+    /// local or call result that held them at a recorded state:
+    /// `at(statement(0).exit, view)`. Its data pointer is in
+    /// `recorded_pointers` as `at(statement(0).exit, view.as_ptr())`.
+    /// The flag is whether the slice is a string slice.
+    recorded_slices: Vec<(OldMachineTerm, String, bool)>,
     /// Typed values a recorded state names that the current state no
     /// longer holds: a call's result, `<region>.result`. A range over one is
     /// spelled from that name.
@@ -97,7 +104,20 @@ pub(crate) struct MemoryStateLabels {
     /// The parameters or locals a diagnostic spells addresses through, with
     /// their values, when the caller has them.
     naming: Option<std::sync::Arc<NamingTables>>,
+    /// Reads of one memory under different read names (a selected version
+    /// point, or the memory itself) get labels of their own, so two reads
+    /// that differ only in their read names do not print alike. Keyed by
+    /// the memory's label and the read's version point.
+    read_labels: HashMap<ReadLabelKey, usize>,
+    /// For each label a read claimed: the memory's own label and the read's
+    /// version point, which the legend states.
+    read_label_versions: HashMap<usize, ReadLabelKey>,
+    /// How many read names each memory's label is read under.
+    read_names_per_memory: HashMap<usize, usize>,
 }
+
+/// A memory's label and the version point a read of it is named at.
+type ReadLabelKey = (usize, Option<crate::kernel::program_point::ProgramPointId>);
 
 /// The word a narrow value widened into 32 bits has (rule K8, a relation): a local
 /// or parameter holding a promoted value is named, and typed, as the word
@@ -679,6 +699,33 @@ impl MemoryStateLabels {
         }
     }
 
+    /// Spells the slice whose count is `count` as `name`, when nothing named
+    /// it that way yet.
+    pub(crate) fn fallback_slice_name(&mut self, slice: &crate::kernel::Pointer, name: String) {
+        let Some(count) = slice.len() else {
+            return;
+        };
+        let string = slice.program_type()
+            == crate::kernel::ProgramType::SlicePointer(crate::kernel::SliceElement::Str);
+        if self.recorded_slices.len() < 128
+            && !self
+                .recorded_slices
+                .iter()
+                .any(|(known, _, _)| known == count)
+        {
+            self.recorded_slices.push((count.clone(), name, string));
+        }
+    }
+
+    /// The name [`Self::fallback_slice_name`] gave the slice counted by
+    /// `count`, and whether that slice is a string slice.
+    pub(crate) fn recorded_slice_name(&self, count: &OldMachineTerm) -> Option<(&str, bool)> {
+        self.recorded_slices
+            .iter()
+            .find(|(known, _, _)| known == count)
+            .map(|(_, name, string)| (name.as_str(), *string))
+    }
+
     /// Records `value` under `name` for spellings that need a typed value,
     /// a memory range's base, when nothing current names it.
     pub(crate) fn fallback_value_name(&mut self, name: String, value: crate::kernel::ProgramValue) {
@@ -822,12 +869,84 @@ impl MemoryStateLabels {
         Some(self.memories.len())
     }
 
+    /// The label of a read's memory: the memory's own label for the first
+    /// read name it is read under, and a fresh label for each other one.
+    fn read_label(&mut self, point: &crate::kernel::ProgramPoint) -> Option<usize> {
+        let memory = self.label(point.memory())?;
+        let key = (memory, point.read_version_id());
+        if let Some(label) = self.read_labels.get(&key) {
+            return Some(*label);
+        }
+        let claimed = self
+            .read_names_per_memory
+            .get(&memory)
+            .copied()
+            .unwrap_or(0);
+        let label = if claimed == 0 {
+            memory
+        } else {
+            let limit = if self.trace_labels {
+                MAX_NODES
+            } else {
+                MAX_MEMORY_STATE_LABELS
+            };
+            if self.memories.len() >= limit {
+                return Some(memory);
+            }
+            // The memory is the same; only the read name differs. Pushing it
+            // again gives the read its own ordinal, while lookups by memory
+            // still find the first one.
+            self.memories.push(point.memory().clone());
+            self.memories.len()
+        };
+        self.read_labels.insert(key, label);
+        self.read_label_versions.insert(label, key);
+        *self.read_names_per_memory.entry(memory).or_default() += 1;
+        Some(label)
+    }
+
+    /// What tells a read-claimed label apart from the others over its
+    /// memory, for the legend: the version point its reads are named at.
+    /// Nothing for a memory read under one read name only.
+    pub(super) fn read_label_note(&mut self, label: usize) -> Option<ReadLabelNote> {
+        let (memory, version) = *self.read_label_versions.get(&label)?;
+        if self
+            .read_names_per_memory
+            .get(&memory)
+            .copied()
+            .unwrap_or(0)
+            < 2
+        {
+            return None;
+        }
+        let reads = match version {
+            Some(id) => match self.definedness_point_context(id).0 {
+                Some(point) => format!("reads named at version {point}"),
+                None => "reads named at the current point's version".into(),
+            },
+            None => "reads named by the memory itself".into(),
+        };
+        Some(ReadLabelNote {
+            same_memory_as: (label != memory).then_some(memory),
+            reads,
+        })
+    }
+
     pub(crate) fn memory_state_name(&mut self, memory: &SymbolicMemory) -> String {
         self.label(memory).map_or_else(
             || "state<untracked>".to_owned(),
             |index| format!("state#{index}"),
         )
     }
+}
+
+/// How the legend tells apart labels over one memory that reads name
+/// differently.
+pub(super) struct ReadLabelNote {
+    /// The memory's own label, for a label only a read name sets apart.
+    pub(super) same_memory_as: Option<usize>,
+    /// The read name: the version point, or the memory itself.
+    pub(super) reads: String,
 }
 
 /// A comparison of full pointers can carry more information than their
@@ -2436,7 +2555,7 @@ impl Renderer<'_> {
             } else {
                 self.push("load(");
             }
-            self.memory(retained_state.shared_memory().as_ref());
+            self.read_memory(retained_state);
             self.push(", pointer=");
             self.pointer(pointer);
             self.push(")");
@@ -2878,6 +2997,13 @@ impl Renderer<'_> {
 
     fn memory(&mut self, memory: &SymbolicMemory) {
         match self.labels.label(memory) {
+            Some(label) => self.fmt(format_args!("state#{label}")),
+            None => self.push("state<untracked>"),
+        }
+    }
+    /// A read's memory, labeled by its read name as well as its contents.
+    fn read_memory(&mut self, point: &crate::kernel::ProgramPoint) {
+        match self.labels.read_label(point) {
             Some(label) => self.fmt(format_args!("state#{label}")),
             None => self.push("state<untracked>"),
         }

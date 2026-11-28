@@ -1876,8 +1876,8 @@ fn charon_slice_iter_sums_bytes_by_its_library_contract() {
         ),
         // The iterator stands where the count says, not one element on.
         (
-            "invariant iter.as_slice() == bytes.as_ptr() + (bytes.len() - iter.len());",
-            "invariant iter.as_slice() == bytes.as_ptr() + ((bytes.len() - iter.len()) + 1u64);",
+            "invariant iter.as_slice().as_ptr() == bytes.as_ptr() + (bytes.len() - iter.len());",
+            "invariant iter.as_slice().as_ptr() == bytes.as_ptr() + ((bytes.len() - iter.len()) + 1u64);",
         ),
         // Each `next()` yields one element.
         (
@@ -4266,6 +4266,49 @@ const SLICE_RETURNS_SIDECAR: &str =
 // its contract reads `result.len()` and `result.as_ptr()`, a call passes the
 // result on, and a caller binds it as one slice local. A
 // claim about a length or a data pointer the slice does not have fails.
+/// A slice is one value, not its data pointer: comparing a slice with a
+/// thin pointer, as `iter.as_slice() == bytes.as_ptr()` or `result.as_ptr()
+/// == bytes` did when the slice was its data pointer, is a type error naming
+/// `.as_ptr()` (`design/rust-slice-values.md`, "Source compatibility").
+#[test]
+fn charon_a_slice_compared_with_a_pointer_is_a_type_error() {
+    let iterator = Project::from_fixture("design/charon-trial/slice-iter");
+    let returns = Project::from_fixture("tests/fixtures/rust-verification/slice-returns");
+    for (project, sidecar, before, after) in [
+        (
+            &iterator,
+            SLICE_ITER_PROOF,
+            "have loop(0).iter.as_slice().as_ptr() == bytes.as_ptr();",
+            "have loop(0).iter.as_slice() == bytes.as_ptr();",
+        ),
+        (
+            &iterator,
+            SLICE_ITER_PROOF,
+            "invariant iter.as_slice().as_ptr() == bytes.as_ptr() + (bytes.len() - iter.len());",
+            "invariant iter.as_slice() == bytes.as_ptr() + (bytes.len() - iter.len());",
+        ),
+        (
+            &returns,
+            SLICE_RETURNS_SIDECAR,
+            "    ensures result.as_ptr() == bytes.as_ptr();\n}\n\n// A caller",
+            "    ensures result == bytes.as_ptr();\n}\n\n// A caller",
+        ),
+    ] {
+        assert!(sidecar.contains(before), "{before}");
+        let invalid = sidecar.replace(before, after);
+        fs::write(project.root.join("borrow.click"), &invalid).unwrap();
+        let prepared = project.prepared().unwrap();
+        let error = match ProgramVerificationSession::new_program_prepared(&invalid, &prepared) {
+            Ok(_) => panic!("accepted {after}"),
+            Err(error) => error.report(),
+        };
+        assert!(
+            error.contains("is a slice, not a pointer") && error.contains("`.as_ptr()`"),
+            "{after}: {error}"
+        );
+    }
+}
+
 #[test]
 fn charon_slice_returns_are_one_slice() {
     let p = Project::from_fixture("tests/fixtures/rust-verification/slice-returns");
@@ -4299,6 +4342,11 @@ fn charon_slice_returns_are_one_slice() {
             "    ensures result.len() == s.len();",
             "    ensures result.len() == s.len() + 1;",
         ),
+        (
+            "slice_returns::first",
+            "    views *bytes;\n    ensures result == bytes[0];\n}\n",
+            "    views *bytes;\n    ensures result == bytes[0] + 1u8;\n}\n",
+        ),
     ] {
         assert!(SLICE_RETURNS_SIDECAR.contains(before), "{before}");
         let invalid = SLICE_RETURNS_SIDECAR.replacen(before, after, 1);
@@ -4308,6 +4356,18 @@ fn charon_slice_returns_are_one_slice() {
         let rendered = format!("{error:?} {error}");
         let rendered = click::languages::rust::names::display_rust_names(&rendered);
         assert!(rendered.contains(function), "{rendered}");
+        // The slice local a recorded state held spells its data pointer as
+        // `view.as_ptr()`, which lowers, and its count as `view.len()`.
+        if function == "slice_returns::first" {
+            assert!(
+                rendered.contains("at(statement(0).exit, view.as_ptr()) == bytes.as_ptr()"),
+                "{rendered}"
+            );
+            assert!(
+                rendered.contains("at(statement(0).exit, view).len() == bytes.len()"),
+                "{rendered}"
+            );
+        }
     }
 }
 
@@ -4336,6 +4396,11 @@ fn charon_str_as_bytes_reads_the_same_bytes() {
             "    requires 0u64 < s.len();\n",
             "",
         ),
+        (
+            "str_bytes::first_byte",
+            "    ensures result == click::rust::str::as_bytes(s)[0];",
+            "    ensures result == click::rust::str::as_bytes(s)[0] + 1u8;",
+        ),
     ] {
         assert!(STR_BYTES_SIDECAR.contains(before), "{before}");
         let invalid = STR_BYTES_SIDECAR.replacen(before, after, 1);
@@ -4348,7 +4413,7 @@ fn charon_str_as_bytes_reads_the_same_bytes() {
         // The refused index's condition counts the stored slice local by
         // its own name, a spelling that lowers, not through its data
         // pointer (`bytes.as_ptr().len()`).
-        if function == "str_bytes::first_byte" {
+        if after.is_empty() {
             assert!(
                 rendered.contains("could not show `0u64 < bytes.len()`"),
                 "{rendered}"

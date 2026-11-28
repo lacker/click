@@ -156,12 +156,16 @@ pub(super) fn written(term: &OldMachineTerm) -> MemoryErasedBitvectorKey {
         ) && !condition.is_bool_value_form() =>
         {
             Node::If(
-                Box::new(memory_erased_condition_key(condition)),
+                Box::new(memory_erased_boolean_operand_key(
+                    crate::kernel::BooleanOperandView::Native(condition),
+                )),
                 memory_erased_bitvector_key(then_term),
                 memory_erased_bitvector_key(else_term),
             )
         }
-        OldMachineTerm::If { .. } | OldMachineTerm::RangeFold { .. } => {
+        OldMachineTerm::If { .. }
+        | OldMachineTerm::RangeFold { .. }
+        | OldMachineTerm::AlgebraicMatch { .. } => {
             Node::ExactOperand(crate::kernel::SharedMachineIntegerTerm::intern(
                 MachineIntegerType::Int32,
                 term.clone(),
@@ -208,7 +212,11 @@ pub(super) fn operand(view: crate::kernel::MachineOperandView<'_>) -> MemoryEras
         }
         crate::instrumentation::record_deterministic_work(1);
         let view = V::Shared(&root);
-        let children = if let Some((_, _, children)) = view.binary() {
+        // Retained inputs are keyed by written() below. Their children belong
+        // to the native expression and have no shared IDs to schedule here.
+        let children = if root.retained_machine_input().is_some() {
+            Vec::new()
+        } else if let Some((_, _, children)) = view.binary() {
             children.into_iter().collect::<Vec<_>>()
         } else if let Some((_, _, _, child)) = view.cast() {
             vec![child]
@@ -259,7 +267,10 @@ pub(super) fn operand(view: crate::kernel::MachineOperandView<'_>) -> MemoryEras
                 )
                 .expect("machine fold"),
             ))
-        } else if let Some(value) = root.machine_conversion_leaf() {
+        } else if let Some(value) = root
+            .machine_conversion_leaf()
+            .or_else(|| root.written_machine_input())
+        {
             written(value)
         } else if let Some(variable) = view.variable() {
             written(&OldMachineTerm::Variable(*variable))
@@ -427,6 +438,35 @@ mod tests {
         assert_ne!(key(&after_read), key(&other_kind));
         let (name, _) = crate::kernel::eval::load_variable_for_term(&before_read).unwrap();
         assert_eq!(written(&OldMachineTerm::Variable(name)), key(&before_read));
+    }
+
+    #[test]
+    fn exact_comparison_keys_preserve_truth_without_exporting_the_condition() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let variables = |ty: KernelType| {
+            [Variable(998241), Variable(998242)].map(|v| KernelTerm::variable(ty.clone(), v))
+        };
+        let integer = KernelTerm::integer_comparison(
+            IntegerComparisonOperator::LessThan,
+            variables(KernelType::Integer),
+        )
+        .unwrap();
+        let boolean = KernelTerm::boolean_equal_raw(variables(KernelType::Bool));
+        for root in [integer, boolean] {
+            for truth in [false, true] {
+                let condition =
+                    crate::kernel::StoredConditionTerm::from_root(root.clone()).unwrap();
+                let goal = Proposition::ConditionIs(condition, truth);
+                let MemoryErasedPropositionKey::Exact(Proposition::ConditionIs(stored, polarity)) =
+                    memory_erased_proposition_key(&goal)
+                else {
+                    panic!("comparison requires an exact key");
+                };
+                assert_eq!(stored.root(), Some(&root));
+                assert_eq!(polarity, truth);
+                assert!(root.cached_condition_output().is_none());
+            }
+        }
     }
 
     #[test]

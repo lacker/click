@@ -25,6 +25,9 @@ pub(super) struct Declarations<'a> {
     /// The width each pointer parameter's element has, struct layouts
     /// included, as the function declares it.
     pub(super) parameter_pointer_element_widths: Arc<BTreeMap<String, u32>>,
+    /// The declared type of each local the front end binds by its spelling
+    /// alone (`ImportedFunction::spelled_local_types`).
+    pub(super) spelled_local_types: Arc<BTreeMap<String, ProgramType>>,
 }
 
 impl<'a> AnnotationLowerer<'a> {
@@ -40,6 +43,7 @@ impl<'a> AnnotationLowerer<'a> {
             program_parameter_types: self.program_parameter_types.clone(),
             pointer_element_types: self.pointer_element_types.clone(),
             parameter_pointer_element_widths: self.parameter_pointer_element_widths.clone(),
+            spelled_local_types: Default::default(),
         }
     }
 }
@@ -88,6 +92,11 @@ impl Declarations<'static> {
             )
             .into(),
             global_declarations: Some(function.global_declarations()),
+            spelled_local_types: function
+                .spelled_local_types()
+                .cloned()
+                .unwrap_or_default()
+                .into(),
         }
     }
 }
@@ -154,6 +163,7 @@ impl Declarations<'_> {
         }
         name.metadata_in(self.program_parameter_types.as_ref())
             .copied()
+            .or_else(|| name.metadata_in(self.spelled_local_types.as_ref()).copied())
             .or_else(|| {
                 name.metadata_in(self.entry_values.as_ref())
                     .map(ProgramValue::program_type)
@@ -211,6 +221,7 @@ impl Declarations<'_> {
         } else {
             name.metadata_in(self.program_parameter_types.as_ref())
                 .copied()
+                .or_else(|| name.metadata_in(self.spelled_local_types.as_ref()).copied())
                 .or_else(|| {
                     name.metadata_in(self.entry_values.as_ref())
                         .map(ProgramValue::program_type)

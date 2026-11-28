@@ -122,6 +122,12 @@ impl LoopBoundary {
     pub(super) fn explicit_exit_state(&self) -> Option<&ExecutionState> {
         (self.may_exit() && !self.head_compatible).then_some(self.state())
     }
+
+    /// The state this boundary returns to the loop head from, when the
+    /// guard may let another iteration start.
+    pub(super) fn back_edge_state(&self) -> Option<&ExecutionState> {
+        self.guard.may_continue().then_some(self.state())
+    }
 }
 
 /// Feasible arms of one checked C `if` frontier.
@@ -1640,6 +1646,12 @@ fn register_call_result_name(
         crate::kernel::arithmetic_c_value!(read @ OldMachineTerm::MemoryLoad(..)) => {
             labels.fallback_read_name(read, spelling);
         }
+        // A slice result's data pointer is `<call>.result.as_ptr()`.
+        ProgramValue::Pointer(pointer) if pointer.is_wide() => {
+            labels.fallback_pointer_name(pointer.address(), format!("{spelling}.as_ptr()"));
+            labels.fallback_slice_name(pointer, spelling.clone());
+            labels.fallback_value_name(spelling, value.clone());
+        }
         ProgramValue::Pointer(pointer) => {
             labels.fallback_pointer_name(pointer.address(), spelling.clone());
             labels.fallback_value_name(spelling, value.clone());
@@ -1753,6 +1765,15 @@ fn register_state_names(
                 }
                 // An address no structural spelling names, a heap
                 // allocation, is the pointer local that held it.
+                // A slice local's data pointer is its `as_ptr()`, not the
+                // slice (`design/rust-slice-values.md`, step 3c-i).
+                ProgramValue::Pointer(pointer) if pointer.is_wide() => {
+                    labels.fallback_pointer_name(
+                        pointer.address(),
+                        format!("at({point}, {name}.as_ptr())"),
+                    );
+                    labels.fallback_slice_name(pointer, format!("at({point}, {name})"));
+                }
                 ProgramValue::Pointer(pointer) => {
                     labels.fallback_pointer_name(pointer.address(), format!("at({point}, {name})"));
                 }

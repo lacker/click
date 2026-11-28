@@ -597,8 +597,7 @@ fn rbtree_solve_recolor_expansion_rechecks() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let path = root.join("examples/rbtree/rbtree-insert/rbtree_insert.click");
     let mut source = fs::read_to_string(&path).unwrap();
-    let anchor =
-        "have rb_inorder(plug(Context::Top, RbTree::Node(nid, 0, Color::Black, nleft, nright)))";
+    let anchor = "have rb_inorder(plug(Context::Top, RbTree::Node(nid, nparent, Color::Black, nleft, nright)))";
     let have = source.find(anchor).expect("keep the original rbtree case");
     let start = have + source[have..].find("by {").unwrap();
     let open = start + "by ".len();

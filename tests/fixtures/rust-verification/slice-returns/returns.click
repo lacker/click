@@ -52,3 +52,11 @@ fn slice_returns::copied(bytes: &[u8]) -> u8 {
     have at(statement(0).exit, view[0]) == bytes[0];
     close();
 }
+
+// A caller reads an element through the slice a call returned, `view[0]`:
+// it is the argument's element.
+fn slice_returns::first(bytes: &[u8]) -> u8 {
+    requires 0u64 < bytes.len();
+    views *bytes;
+    ensures result == bytes[0];
+}

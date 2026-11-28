@@ -10818,6 +10818,18 @@ pub(in crate::kernel) fn population_quantity_sum(
     {
         return Some(total.as_ref().clone());
     }
+    // An explicitly held guard can be read with borrowed operands. During
+    // premise capture, let the proof query select and record its source.
+    if !crate::kernel::assumptions::implicit_consulted_premises_capturing()
+        && assumptions.condition_facts.written_overflow_value(
+            MachineIntegerType::Int32,
+            OverflowOperation::Add,
+            left,
+            right,
+        ) == Some(false)
+    {
+        return Some(OldMachineTerm::add(left.clone(), right.clone()));
+    }
     let no_overflow = OldConditionTerm::Overflows {
         format: MachineIntegerType::Int32,
         op: OverflowOperation::Add,

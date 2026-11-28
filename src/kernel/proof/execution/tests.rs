@@ -1765,7 +1765,10 @@ fn interface_pointer_congruence_preserves_scope_and_read_obligations() {
     let b = Address::symbolic(Variable(95_701));
     let c = Address::symbolic(Variable(95_702));
     let equal = |a: Address, b: Address| {
-        Proposition::condition_is(crate::kernel::OldConditionTerm::address_equal(a, b), true)
+        Proposition::ConditionIs(
+            crate::kernel::StoredConditionTerm::address_equal(&a, &b),
+            true,
+        )
     };
     let parent = PureFactStore::from_ordered(&[equal(a.clone(), b.clone())]);
     let arm = parent.with_fact(equal(b, c.clone()));

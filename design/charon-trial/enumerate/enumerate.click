@@ -15,7 +15,7 @@ fn last_index(bytes: &[u8]) -> usize {
         views bytes[0..bytes.len()];
         invariant iter.len() <= bytes.len();
         invariant iter.count == bytes.len() - iter.len();
-        invariant iter.as_slice() == bytes.as_ptr() + iter.count;
+        invariant iter.as_slice().as_ptr() == bytes.as_ptr() + iter.count;
         invariant iter.count != 0u64 implies last == iter.count - 1u64;
         maintain by {
             if 0u64 < iter.len() {
@@ -32,7 +32,7 @@ fn last_index(bytes: &[u8]) -> usize {
                 step_until(loop.back_edge);
                 have iter.count == at(taken, iter.count) + 1u64;
                 have iter.len() == at(taken, iter.len()) - 1u64;
-                have iter.as_slice() == bytes.as_ptr() + iter.count;
+                have iter.as_slice().as_ptr() == bytes.as_ptr() + iter.count;
                 have last == iter.count - 1u64;
                 have iter.len() < at(taken, iter.len());
             } else {
@@ -60,7 +60,7 @@ fn last_pair(words: &[u16]) -> u32 {
         views words[0..words.len()];
         invariant iter.len() <= words.len();
         invariant iter.count == words.len() - iter.len();
-        invariant iter.as_slice() == words.as_ptr() + iter.count;
+        invariant iter.as_slice().as_ptr() == words.as_ptr() + iter.count;
         invariant iter.count != 0u64 implies index == iter.count - 1u64;
         invariant value <= 65535u32;
         maintain by {
@@ -78,7 +78,7 @@ fn last_pair(words: &[u16]) -> u32 {
                 step_until(loop.back_edge);
                 have iter.count == at(taken, iter.count) + 1u64;
                 have iter.len() == at(taken, iter.len()) - 1u64;
-                have iter.as_slice() == words.as_ptr() + iter.count;
+                have iter.as_slice().as_ptr() == words.as_ptr() + iter.count;
                 have index == iter.count - 1u64;
                 have iter.len() < at(taken, iter.len());
             } else {

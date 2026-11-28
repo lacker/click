@@ -249,6 +249,18 @@ impl ConstructorTypes {
             } => self
                 .known_type(then_branch)
                 .or_else(|| self.known_type(else_branch)),
+            // A tuple projection, `t.1`, has its component's type.
+            SyntaxTerm::AlgebraicMatch { scrutinee, arms } => {
+                let index = crate::surface::tuples::projected_index(arms)?;
+                match self.known_type(scrutinee)? {
+                    ClickType::Algebraic(application)
+                        if crate::surface::tuples::arity(&application.name).is_some() =>
+                    {
+                        application.arguments.get(index).cloned()
+                    }
+                    _ => None,
+                }
+            }
             SyntaxTerm::Call { name, arguments } => {
                 let signature = self.functions.get(name)?;
                 let result = signature.result.as_ref()?;
@@ -483,6 +495,37 @@ impl ConstructorTypes {
         arguments: Vec<SyntaxTerm>,
     ) -> Result<SyntaxTerm, ClickError> {
         let receiver_type = self.known_type(&receiver);
+        // A tuple projection, `t.1` (`design/tuples.md`).
+        if let Some(index) = crate::surface::tuples::projection_method_index(method) {
+            let written = crate::surface::diagnostics::describe_contract_expression(&receiver);
+            let arity = match &receiver_type {
+                Some(ClickType::Algebraic(application)) => {
+                    crate::surface::tuples::arity(&application.name)
+                }
+                _ => None,
+            };
+            return match &receiver_type {
+                Some(click_type) if arity.is_some() => {
+                    let arity = arity.expect("checked above");
+                    if index < arity {
+                        Ok(crate::surface::tuples::projection(receiver, arity, index))
+                    } else {
+                        Err(ClickError::new(format!(
+                            "`{written}{method}`: the tuple type `{}` has no component {index}",
+                            super::describe_click_type(click_type)
+                        )))
+                    }
+                }
+                Some(click_type) => Err(ClickError::new(format!(
+                    "`{written}{method}`: `{}` is not a tuple, so it has no component {index}",
+                    super::describe_click_type(click_type)
+                ))),
+                None => Err(ClickError::new(format!(
+                    "`{written}{method}`: the type of `{written}` is not known here, so its \
+                     component {index} cannot be selected; a projection applies to a tuple"
+                ))),
+            };
+        }
         // A string slice's methods are `str`'s: its length, data pointer and
         // bytes, and nothing else a byte slice has.
         if receiver_type
@@ -699,6 +742,12 @@ pub(in crate::surface) fn unapplied_constructor_message(
     variant: &str,
     type_parameters: &[String],
 ) -> String {
+    if crate::surface::tuples::arity(datatype).is_some() {
+        return "cannot infer the type of a tuple: neither its components nor the type its \
+                position expects fix every component's type; give it one, as in \
+                `let t: (int32, int32) = (1, 2); ...`"
+            .to_string();
+    }
     let parameters = type_parameters.join(", ");
     format!(
         "cannot infer the type arguments of `{datatype}::{variant}`: neither its arguments nor the type its position expects fix `{parameters}`; write them, as in `{datatype}<...>::{variant}`"

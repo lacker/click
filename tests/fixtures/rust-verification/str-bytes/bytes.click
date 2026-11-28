@@ -7,8 +7,9 @@ fn str_bytes::byte_count(s: &str) -> usize {
 }
 
 // The byte view has the string's length, so its first byte is in bounds
-// whenever the string is not empty.
+// whenever the string is not empty, and it is the string's first byte.
 fn str_bytes::first_byte(s: &str) -> u8 {
     requires 0u64 < s.len();
     views *s;
+    ensures result == click::rust::str::as_bytes(s)[0];
 }

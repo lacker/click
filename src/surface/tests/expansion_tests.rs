@@ -6593,6 +6593,24 @@ fn whole_claim_expansion_spells_an_inner_call_result_by_its_call() {
     assert!(!expanded.contains('…'), "{expanded}");
     verify_c_sources(&expanded, &sources)
         .unwrap_or_else(|error| panic!("{}\n{expanded}", error.message()));
+
+    // Step through the outer call so the selected site owes a prerequisite
+    // on the inner result, then recheck just this site's generated steps.
+    let selected_step = "step_until(statement(2).entry);";
+    let selected_source = click.replace(
+        "step_until(statement(1).call(f, 1).entry);\n    have y == x + 1 by close();",
+        &format!("{selected_step}\n    have y == x + 3 by close();"),
+    );
+    let position = expansion::position_at_offset(
+        &selected_source,
+        selected_source.find(selected_step).unwrap(),
+    );
+    let selected = expand_c_tactics_source_at(&selected_source, &sources, &[position]).unwrap();
+    assert!(selected.source.contains("statement(1).call(f, 0).result"));
+    selected
+        .with_checked_closers(|| verify_c_sources(&selected.source, &sources))
+        .unwrap()
+        .unwrap();
 }
 
 /// Refuted helper arms have no generated return/postcondition suffix. Both

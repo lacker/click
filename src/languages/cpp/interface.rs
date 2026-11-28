@@ -296,6 +296,10 @@ fn prepare_functions(
             let mut record_references = BTreeMap::new();
             let mut objects = BTreeSet::new();
             let mut ambiguous = BTreeSet::new();
+            // The declared type of each local bound by its spelling, and the
+            // spellings two scopes declare at different types.
+            let mut spelled_local_types = BTreeMap::new();
+            let mut ambiguous_spellings = BTreeSet::new();
             let mut opaque_exception_constructor = None;
             let mut pending = vec![source.body.as_slice()];
             while let Some(body) = pending.pop() {
@@ -322,6 +326,14 @@ fn prepare_functions(
                                 }
                             } else {
                                 objects.insert(local.name.clone());
+                                if let Some(ty) =
+                                    super::lowering::spelled_local_type(local, layouts)
+                                    && spelled_local_types
+                                        .insert(local.name.clone(), ty)
+                                        .is_some_and(|known| known != ty)
+                                {
+                                    ambiguous_spellings.insert(local.name.clone());
+                                }
                             }
                             if let CppType::Record { name, .. } = &local.value_type {
                                 if locals.get(&local.name).is_some_and(|known| known != name) {
@@ -353,6 +365,9 @@ fn prepare_functions(
                         _ => {}
                     }
                 }
+            }
+            for name in &ambiguous_spellings {
+                spelled_local_types.remove(name);
             }
             for name in ambiguous {
                 locals.remove(&name);
@@ -418,6 +433,7 @@ fn prepare_functions(
                         .collect(),
                 )
                 .with_local_struct_pointers(record_references)
+                .with_spelled_local_types(spelled_local_types)
                 .with_local_references(
                     references
                         .difference(&objects)

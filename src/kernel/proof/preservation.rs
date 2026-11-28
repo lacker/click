@@ -289,7 +289,7 @@ fn preserve_field(
         (
             crate::kernel::ResourceFieldValue::Program(ProgramValue::Parameter(a)),
             crate::kernel::ResourceFieldValue::Program(ProgramValue::Parameter(b)),
-        ) if a.algebraic_type == b.algebraic_type => algebraic_equality(a, b),
+        ) if a.algebraic_type == b.algebraic_type => StoredConditionTerm::algebraic_equal(a, b),
         (
             crate::kernel::ResourceFieldValue::Program(ProgramValue::Pointer(a)),
             crate::kernel::ResourceFieldValue::Program(ProgramValue::Pointer(b)),
@@ -383,7 +383,7 @@ fn observation_equality(
         (ReadType::Abstract, ProgramValue::Parameter(a), ProgramValue::Parameter(b))
             if a.algebraic_type == b.algebraic_type =>
         {
-            algebraic_equality(&a, &b)
+            StoredConditionTerm::algebraic_equal(&a, &b)
         }
         (ReadType::Integer(format), a, b) => {
             integer_equality(format, integer_bits(a)?, integer_bits(b)?)?
@@ -391,12 +391,6 @@ fn observation_equality(
         _ => return None,
     };
     Some(Proposition::condition_is(condition, true))
-}
-
-fn algebraic_equality(left: &AlgebraicTerm, right: &AlgebraicTerm) -> StoredConditionTerm {
-    let mut import = KernelTermImport::for_exact_field_inputs();
-    let root = KernelTerm::algebraic_equal_raw([import.algebraic(left), import.algebraic(right)]);
-    StoredConditionTerm::from_root(root).expect("algebraic equality")
 }
 
 fn integer_bits(value: ProgramValue) -> Option<OldMachineTerm> {

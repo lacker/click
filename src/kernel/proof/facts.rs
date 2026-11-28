@@ -11,11 +11,11 @@ use super::{
     MemoryErasedPropositionKey, PersistentSequence, QuantifiedEquivalenceKey,
     memory_erased_proposition_key, quantified_equivalence_index_key,
 };
+use crate::kernel::CompareRelation;
 use crate::kernel::assumptions::observation_comparisons::PropositionKey;
 use crate::kernel::binary_node;
 use crate::kernel::binary_term;
 use crate::kernel::*;
-use crate::kernel::{CompareRelation, OverflowOperation};
 use crate::kernel::{OffsetTree, OffsetView};
 use crate::kernel::{bits32_constant, constant_u32};
 use crate::persistent::{PersistentMap, PersistentSet};
@@ -948,6 +948,12 @@ impl PureFactStore {
         self.with_fact(fact)
     }
 
+    /// A checked `have` keeps its exact judgment for replay and rewriting.
+    /// Use its definitional form when adding it to the reasoning context.
+    pub(crate) fn with_kernel_checked_have(&self, fact: Proposition) -> Self {
+        self.with_fact_in_context(fact, true)
+    }
+
     /// Reuse the checked path's reasoning context for the outcome, retaining
     /// the ordinary proof's premise indexes and reasoning policy. The selected
     /// statement's publication is the only ordinary delta since its entry.
@@ -987,6 +993,10 @@ impl PureFactStore {
     }
 
     pub(in crate::kernel) fn with_fact(&self, fact: Proposition) -> Self {
+        self.with_fact_in_context(fact, false)
+    }
+
+    fn with_fact_in_context(&self, fact: Proposition, canonicalize: bool) -> Self {
         // A closed comparison that holds, which lowering retains as written
         // (`3 == 3`), carries no information the context can use: checking
         // decides it from its literals (`available_as_written`). It is still
@@ -1016,10 +1026,20 @@ impl PureFactStore {
             return self.clone();
         }
         let fact = Arc::new(fact);
+        let context_fact = if canonicalize {
+            let canonical = crate::kernel::canonical_condition_fact(&fact);
+            if canonical == *fact {
+                fact.clone()
+            } else {
+                Arc::new(canonical)
+            }
+        } else {
+            fact.clone()
+        };
         let assumptions = self
             .assumptions
             .clone()
-            .assume_shared_proposition(fact.clone());
+            .assume_shared_proposition(context_fact);
         let consequences = assumptions.propagation_consequences_since(&self.assumptions);
         let mut result = self.with_indexed_fact(fact, assumptions);
         for consequence in consequences {
@@ -1037,7 +1057,8 @@ impl PureFactStore {
         }
         #[cfg(test)]
         INDEXED_FACT_ENTRIES.with(|count| count.set(count.get() + 1));
-        // Every index shares the proposition already admitted to the context.
+        // Index the checked judgment, including when the reasoning context
+        // received its definitional form.
         let mut exact = self.exact.clone();
         let mut call_payloads = self.call_payloads.clone();
         let mut proper_conjuncts = self.proper_conjuncts.clone();
@@ -2708,50 +2729,12 @@ pub(crate) fn is_definedness_guard(proposition: &Proposition) -> bool {
     }
     match proposition {
         Proposition::And(left, right) => is_definedness_guard(left) && is_definedness_guard(right),
-        Proposition::ConditionIs(condition, false) => matches!(
-            condition.old_form(),
-            OldConditionTerm::Overflows {
-                format: MachineIntegerType::Int32,
-                op: OverflowOperation::Add,
-                ..
-            } | OldConditionTerm::Overflows {
-                format: MachineIntegerType::Int32,
-                op: OverflowOperation::Subtract,
-                ..
-            } | OldConditionTerm::Overflows {
-                format: MachineIntegerType::Int32,
-                op: OverflowOperation::Multiply,
-                ..
-            } | OldConditionTerm::Overflows {
-                format: MachineIntegerType::Int32,
-                op: OverflowOperation::Divide,
-                ..
-            } | OldConditionTerm::Overflows {
-                format: MachineIntegerType::Int32,
-                op: OverflowOperation::ShiftLeft,
-                ..
-            } | OldConditionTerm::Overflows {
-                format: MachineIntegerType::Int64,
-                op: OverflowOperation::Add,
-                ..
-            } | OldConditionTerm::Overflows {
-                format: MachineIntegerType::Int64,
-                op: OverflowOperation::Subtract,
-                ..
-            } | OldConditionTerm::Overflows {
-                format: MachineIntegerType::Int64,
-                op: OverflowOperation::Multiply,
-                ..
-            } | OldConditionTerm::Overflows {
-                format: MachineIntegerType::Int64,
-                op: OverflowOperation::Divide,
-                ..
-            } | OldConditionTerm::Overflows {
-                format: MachineIntegerType::Int64,
-                op: OverflowOperation::ShiftLeft,
-                ..
-            }
-        ),
+        Proposition::ConditionIs(condition, false) => condition
+            .operand_view()
+            .overflow()
+            .is_some_and(|(format, _, _)| {
+                crate::kernel::machine_integer::representation::files_definedness(format)
+            }),
         _ => false,
     }
 }

@@ -2270,12 +2270,7 @@ impl CreationEvents {
                     OldMachineTerm::subtract(entry, OldMachineTerm::constant((-delta) as u32))
                 };
                 if !bounded
-                    && assumptions.exact_condition_value(
-                        &crate::kernel::OldConditionTerm::signed_add_overflows(
-                            current,
-                            quantity.clone(),
-                        ),
-                    ) != Some(false)
+                    && assumptions.exact_signed_add_overflow(&current, quantity) != Some(false)
                 {
                     return Err(CreationRefusal::InvalidQuantity);
                 }
@@ -2421,13 +2416,7 @@ impl CreationEvents {
                         ))
                     })
                     .ok_or(CreationRefusal::MissingAuthority)?;
-                if assumptions.exact_condition_value(
-                    &crate::kernel::OldConditionTerm::signed_add_overflows(
-                        current,
-                        quantity.clone(),
-                    ),
-                ) != Some(false)
-                {
+                if assumptions.exact_signed_add_overflow(&current, quantity) != Some(false) {
                     return Err(CreationRefusal::InvalidQuantity);
                 }
                 Some((true, OldMachineTerm::add(prior.clone(), quantity.clone())))
@@ -2574,11 +2563,8 @@ impl CreationEvents {
                     OldMachineTerm::constant(aggregate.delta.unsigned_abs()),
                 )
             };
-            let overflow = crate::kernel::OldConditionTerm::signed_add_overflows(
-                current,
-                OldMachineTerm::constant(1),
-            );
-            if assumptions.exact_condition_value(&overflow) != Some(false)
+            if assumptions.exact_signed_add_overflow(&current, &OldMachineTerm::constant(1))
+                != Some(false)
                 && !assumptions
                     .indexed_constant_interval(&entry)
                     .is_some_and(|(_, high)| {
@@ -2796,12 +2782,9 @@ impl CreationEvents {
                             OldMachineTerm::constant((-delta) as u32),
                         )
                     };
-                    let no_overflow = crate::kernel::OldConditionTerm::signed_add_overflows(
-                        total,
-                        OldMachineTerm::constant(1),
-                    );
                     if !assumptions.is_some_and(|facts| {
-                        facts.exact_condition_value(&no_overflow) == Some(false)
+                        facts.exact_signed_add_overflow(&total, &OldMachineTerm::constant(1))
+                            == Some(false)
                             || facts
                                 .equality_graph
                                 .signed_int32_interval(&entry)
@@ -2833,18 +2816,20 @@ impl CreationEvents {
                             ))
                         })
                         .ok_or(CreationRefusal::MissingAuthority)?;
-                    let condition = crate::kernel::OldConditionTerm::signed_add_overflows(
-                        current.clone(),
-                        OldMachineTerm::constant(amount),
-                    );
+                    let amount_word = OldMachineTerm::constant(amount);
                     if !assumptions.is_some_and(|facts| {
-                        facts.exact_condition_value(&condition) == Some(false)
+                        facts.exact_signed_add_overflow(&current, &amount_word) == Some(false)
                             || facts
                                 .indexed_constant_interval(&current)
                                 .is_some_and(|(_, high)| {
                                     high + i64::from(amount) <= i64::from(i32::MAX)
                                 })
-                            || PureFactContext::decide_intrinsically(&condition) == Some(false)
+                            || PureFactContext::decide_intrinsically(
+                                &crate::kernel::OldConditionTerm::signed_add_overflows(
+                                    current.clone(),
+                                    amount_word,
+                                ),
+                            ) == Some(false)
                     }) {
                         return Err(CreationRefusal::InvalidQuantity);
                     }

@@ -5674,3 +5674,21 @@ fn local_storage_and_resource_stars_have_round_tripping_spellings() {
     .unwrap();
     assert_eq!(lowered, original, "{printed}");
 }
+
+/// A tuple is a Click type (`design/tuples.md`), but a `fn` signature that
+/// takes or returns one is refused by name until tuple program values land.
+#[test]
+fn rust_fn_signatures_refuse_tuple_program_values() {
+    for source in [
+        "verifying \"split.rs\"; fn split(x: u32) -> (u32, u32) { ensures true; }",
+        "verifying \"split.rs\"; fn first(p: (u32, u32)) -> u32 { ensures true; }",
+    ] {
+        let error = parser::parse(source).expect_err("a tuple program value is refused");
+        assert!(
+            error
+                .message
+                .contains("is not supported as a program value yet"),
+            "{source}: {error:?}"
+        );
+    }
+}

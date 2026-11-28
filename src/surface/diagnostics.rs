@@ -3940,6 +3940,100 @@ pub(super) fn describe_read_address_mismatch(
     ))
 }
 
+/// The memory one side of a failed comparison reads, named by the point its
+/// read is recorded at: as a noun phrase (`memory`) and as the place a
+/// value may have changed *since* (`since`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ReadMemoryName {
+    pub(super) memory: String,
+    pub(super) since: String,
+}
+
+/// Which memory `value`, a read still standing as a load, reads: the point
+/// its read names, looked up in what the path retained. `entry` and
+/// `outcome` are the points of the function-entry and outcome states;
+/// `recorded` is the path's recorded-point index. `None` when the value is
+/// not a load or its point has no retained name.
+///
+/// Called only while a failure is printed: one point lookup per side.
+pub(super) fn describe_read_memory(
+    value: &ProgramValue,
+    entry: Option<crate::kernel::program_point::ProgramPointId>,
+    outcome: Option<crate::kernel::program_point::ProgramPointId>,
+    recorded: Option<&crate::surface::RecordedStates>,
+) -> Option<ReadMemoryName> {
+    let read = unresolved_load(value)?;
+    let named = |id: Option<crate::kernel::program_point::ProgramPointId>| {
+        if id.is_some() && id == entry {
+            Some(ReadMemoryName {
+                memory: "the function-entry memory".into(),
+                since: "function entry".into(),
+            })
+        } else if id.is_some() && id == outcome {
+            Some(ReadMemoryName {
+                memory: "the outcome memory".into(),
+                since: "the outcome state".into(),
+            })
+        } else {
+            None
+        }
+    };
+    // A selected read names its version point. A memory-named read is
+    // looked up by its memory, as raising looks it up, so both name the
+    // same recorded point.
+    if let Some(name) = named(read.point.read_version_id()) {
+        return Some(name);
+    }
+    let Some((selector, state)) =
+        recorded.and_then(|recorded| recorded.point_reading_load(&read.point, &read.pointer))
+    else {
+        return read
+            .point
+            .read_version_id()
+            .is_none()
+            .then(|| named(read.point.memory_point_id()))
+            .flatten();
+    };
+    if let Some(name) = named(state.observation_point_id()) {
+        return Some(name);
+    }
+    let spelled = describe_program_point_selector(selector);
+    let memory = match call_exit_function(selector) {
+        Some(function) => {
+            format!("the memory recorded at the exit of the call to `{function}` (`{spelled}`)")
+        }
+        None => format!("the memory recorded at `{spelled}`"),
+    };
+    Some(ReadMemoryName {
+        memory,
+        since: format!("`{spelled}`"),
+    })
+}
+
+/// The function a recorded call-exit point (`statement(0).call(f, 0).exit`)
+/// leaves, as the path spelling names it.
+fn call_exit_function(selector: &ProgramPointSelector) -> Option<String> {
+    let ProgramPointSelector::ProgramPoint(point) = selector else {
+        return None;
+    };
+    if point.kind != ProgramPointKind::Exit {
+        return None;
+    }
+    let steps = match &point.region {
+        CodeRegionRef::Path(steps) => steps.clone(),
+        CodeRegionRef::Region(index) => SPELLING_LAYOUT.with(|slot| {
+            slot.borrow()
+                .as_ref()?
+                .source_path_spelling(*index, point.kind)
+        })?,
+        _ => return None,
+    };
+    match steps.last()? {
+        SourcePathStep::Call(function, _) => Some(function.clone()),
+        _ => None,
+    }
+}
+
 /// The explanation for two evaluated sides that read one address at two
 /// program points.
 pub(super) fn describe_two_sided_version_mismatch(
@@ -3970,6 +4064,14 @@ pub(super) fn describe_two_sided_version_mismatch(
         left_origin,
         right_origin,
     );
+    // The tracker shows the cell unchanged from one read to the other, so
+    // the values differ only by how the two reads are named.
+    if explanation.outcome == resource_tracker::Sameness::Same {
+        return Some(
+            "the cell is unchanged between the two reads, but they carry different read names"
+                .into(),
+        );
+    }
     // Both labels name real program points, so the sentence is written
     // against the earlier of the two: that is the one the value may have
     // changed *since*.
@@ -7722,6 +7824,14 @@ fn describe_contract_expression_grouping_casts(
             if let Some(literal) = describe_byte_list(expression) {
                 return literal;
             }
+            if crate::surface::tuples::arity(variant).is_some() {
+                return crate::surface::tuples::spell(
+                    &arguments
+                        .iter()
+                        .map(describe_contract_expression)
+                        .collect::<Vec<_>>(),
+                );
+            }
             // A struct's value, `*p` or a literal of its fields.
             if algebraic_type.name() == variant
                 && algebraic_type.arguments().is_empty()
@@ -7762,20 +7872,28 @@ fn describe_contract_expression_grouping_casts(
         SyntaxTerm::Binding(name) => name.clone(),
         SyntaxTerm::AlgebraicMatch { scrutinee, arms } => {
             let scrutinee = describe_contract_expression(scrutinee);
+            if let Some(index) = crate::surface::tuples::projected_index(arms) {
+                return crate::surface::tuples::spell_projection(&scrutinee, index);
+            }
             let arms = arms
                 .iter()
                 .map(|arm| {
-                    format!(
-                        "{}::{}({}) => {}",
-                        arm.type_name,
-                        arm.variant,
-                        arm.bindings
-                            .iter()
-                            .map(ToString::to_string)
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                        describe_contract_expression(&arm.body)
-                    )
+                    let bindings = arm
+                        .bindings
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>();
+                    let pattern = if crate::surface::tuples::arity(&arm.type_name).is_some() {
+                        crate::surface::tuples::spell(&bindings)
+                    } else {
+                        format!(
+                            "{}::{}({})",
+                            arm.type_name,
+                            arm.variant,
+                            bindings.join(", ")
+                        )
+                    };
+                    format!("{pattern} => {}", describe_contract_expression(&arm.body))
                 })
                 .collect::<Vec<_>>();
             format!("match {scrutinee} {{ {} }}", arms.join(", "))

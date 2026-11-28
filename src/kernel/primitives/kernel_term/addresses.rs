@@ -744,6 +744,51 @@ mod tests {
     }
 
     #[test]
+    fn stored_overflow_keeps_each_numeric_address_declaration() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let declarations = [("x", ProgramType::Int32), ("y", ProgramType::Int64)];
+        let predicates = declarations.map(|(name, ty)| {
+            let owner = LocalFunctionId::new(None, "overflow_address".into());
+            owner.record_declaration_spelling(name, false);
+            let binding = LocalBindingId::new(owner, false, 0, Some(name.into()));
+            binding.initialize_program_type(ty);
+            let address = Address::new(
+                AddressBase::AutomaticLocal {
+                    binding,
+                    instance: LocalStorageInstance::Implicit,
+                },
+                AddressOffset::constant(0),
+            );
+            StoredConditionTerm::from(OldConditionTerm::Overflows {
+                format: MachineIntegerType::UInt64,
+                op: OverflowOperation::Subtract,
+                left: Box::new(OldMachineTerm::IntegerAddress(
+                    Box::new(address),
+                    AddressObjectClass::NONE,
+                )),
+                right: Box::new(OldMachineTerm::uint64_constant(1)),
+            })
+        });
+        assert_eq!(predicates[0], predicates[1]);
+        for (predicate, (name, ty)) in predicates.iter().zip(declarations) {
+            let root = predicate.root().expect("shared overflow predicate");
+            let OldConditionTerm::Overflows { left, .. } =
+                KernelTermExport::condition(root).unwrap()
+            else {
+                panic!("expected written overflow predicate");
+            };
+            let OldMachineTerm::IntegerAddress(address, _) = *left else {
+                panic!("expected the numeric address on the left");
+            };
+            let AddressBase::AutomaticLocal { binding, .. } = &address.base else {
+                panic!("expected local block");
+            };
+            assert_eq!(binding.spelling(), Some(name));
+            assert_eq!(binding.program_type(), Some(ty));
+        }
+    }
+
+    #[test]
     fn address_equality_keeps_each_producers_binding_metadata() {
         let _session = crate::kernel::VerificationSession::enter();
         for (order, declarations) in [
@@ -786,6 +831,26 @@ mod tests {
                 numeric_roots.push(numeric);
                 let stored = StoredConditionTerm::address_equal(&local, &other);
                 let root = stored.root().unwrap();
+                assert!(!root.has_cached_native_argument());
+                let displaced = local.with_offset(AddressOffset::raw_add(
+                    AddressOffset::constant(1),
+                    AddressOffset::constant(-1),
+                ));
+                let raw = KernelTerm::address_equal_raw([
+                    displaced.into_shared(),
+                    other.shared().clone(),
+                ]);
+                let source = crate::kernel::Proposition::condition_is(
+                    StoredConditionTerm::from_root(raw.clone()).unwrap(),
+                    false,
+                );
+                let crate::kernel::Proposition::ConditionIs(canonical, false) =
+                    crate::kernel::canonical_condition_fact(&source)
+                else {
+                    panic!("expected negative address fact")
+                };
+                assert_eq!(canonical.root(), Some(root));
+                assert!(!raw.has_cached_native_argument());
                 assert!(!root.has_cached_native_argument());
                 let native = StoredConditionTerm::from(OldConditionTerm::AddressEqual(
                     Box::new(local),

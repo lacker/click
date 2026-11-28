@@ -30,3 +30,8 @@ pub fn copied(bytes: &[u8]) -> u8 {
     let view = bytes;
     view[0]
 }
+
+pub fn first(bytes: &[u8]) -> u8 {
+    let view = whole(bytes);
+    view[0]
+}

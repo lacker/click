@@ -256,6 +256,68 @@ mod tests {
     }
 
     #[test]
+    fn stored_constructor_equality_keeps_boolean_call_argument_spelling() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let word = OldMachineTerm::Variable(Variable(999674));
+        let arguments = [
+            PureFunctionArgument::Value(ProgramValue::Int32(word.clone())),
+            PureFunctionArgument::SharedMachine(SharedMachineIntegerTerm::intern(
+                MachineIntegerType::Int32,
+                word,
+            )),
+        ];
+        let conditions = arguments.map(|arg| {
+            let mut model =
+                KernelMatch::test_scrutinee(vec![AlgebraicValueType::Program(ProgramType::Bool)]);
+            let variable = model.clone();
+            let call = OldConditionTerm::BoolApplication(SharedPureApplication::intern(
+                "constructor_boolean_field".into(),
+                vec![arg],
+            ));
+            model.node = AlgebraicTermNode::Constructor {
+                variant: "Arm".into(),
+                fields: vec![AlgebraicValue::Program(ProgramValue::Bool(
+                    OldMachineTerm::BoolCast {
+                        to: MachineIntegerType::UInt8,
+                        value: Box::new(call),
+                    },
+                ))],
+            };
+            StoredConditionTerm::algebraic_equal(&model, &variable)
+        });
+        assert_eq!(conditions[0], conditions[1]);
+        for (condition, shared) in conditions.iter().zip([false, true]) {
+            let root = condition.root().expect("shared constructor equality");
+            let exported = KernelTermExport::condition(root).unwrap();
+            for written in [condition.old_form(), &exported] {
+                let OldConditionTerm::AlgebraicEqual(left, _) = written else {
+                    panic!("expected equality")
+                };
+                let AlgebraicTermNode::Constructor { fields, .. } = &left.node else {
+                    panic!("expected constructor")
+                };
+                let [
+                    AlgebraicValue::Program(ProgramValue::Bool(OldMachineTerm::BoolCast {
+                        value,
+                        ..
+                    })),
+                ] = fields.as_slice()
+                else {
+                    panic!("expected Boolean field")
+                };
+                let OldConditionTerm::BoolApplication(call) = value.as_ref() else {
+                    panic!("expected Boolean call")
+                };
+                assert!(matches!(
+                    (shared, call.arguments()),
+                    (true, [PureFunctionArgument::SharedMachine(_)])
+                        | (false, [PureFunctionArgument::Value(ProgramValue::Int32(_))])
+                ));
+            }
+        }
+    }
+
+    #[test]
     fn common_algebraic_equality_keeps_operand_order_and_legacy_views() {
         let a = KernelMatch::test_scrutinee(vec![]);
         let mut b = a.clone();

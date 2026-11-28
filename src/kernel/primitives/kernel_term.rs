@@ -572,6 +572,13 @@ impl PartialEq for NodeKey {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
             || (self.0.ty == other.0.ty
+                // Logical type identity omits the schemas used for constructor checks
+                // and declared field classes. A stored root must reproduce both.
+                && match (&self.0.ty, &other.0.ty) {
+                    (KernelType::Algebraic(a), KernelType::Algebraic(b)) =>
+                        Arc::ptr_eq(&a.schemas, &b.schemas) || a.schemas == b.schemas,
+                    _ => true,
+                }
                 && match (&self.0.node, &other.0.node) {
                     (
                         KernelTermNode::MemoryLoad {
@@ -1574,15 +1581,20 @@ impl KernelTerm {
     ) -> Self {
         KernelTermImport::default()
             .machine_arithmetic(format, value)
-            .unwrap_or_else(|| {
-                // Native equality can ignore object-class evidence and
-                // state authority. Preserve this exact producer payload;
-                // checking may relate it to another leaf separately.
-                Self::intern(
-                    KernelType::Program(format.program_type()),
-                    KernelTermNode::WrittenMachine(KernelWrittenMachine::expression(format, value)),
-                )
-            })
+            .unwrap_or_else(|| Self::written_machine_operand(format, value))
+    }
+
+    /// Preserve the exact native operand for an output that must reproduce
+    /// its written syntax. Compound inputs can carry distinct declaration
+    /// metadata even when they compare equal.
+    pub(in crate::kernel) fn written_machine_operand(
+        format: MachineIntegerType,
+        value: &OldMachineTerm,
+    ) -> Self {
+        Self::intern(
+            KernelType::Program(format.program_type()),
+            KernelTermNode::WrittenMachine(KernelWrittenMachine::expression(format, value)),
+        )
     }
 
     /// An opaque address index already owns its exact producer syntax and
@@ -2142,6 +2154,26 @@ mod tests {
         assert!(SharedMachineIntegerTerm::from_shared(format, root.clone()).is_none());
         assert!(importer.machine_arithmetic(format, &native).is_none());
         assert_eq!(KernelTermExport::machine(&root).unwrap(), native);
+
+        use crate::kernel::machine_integer::definedness::{
+            integer_bounds_of_definedness, range_domain_query,
+        };
+        let condition = OldConditionTerm::Overflows {
+            format,
+            op: OverflowOperation::Add,
+            left: Box::new(native),
+            right: Box::new(OldMachineTerm::constant(1)),
+        };
+        let shared = StoredConditionTerm::from_root(importer.condition(&condition)).unwrap();
+        let source = Proposition::condition_is(condition, false);
+        let shared = Proposition::condition_is(shared, false);
+        let bounds = integer_bounds_of_definedness(&source);
+        assert_eq!(bounds.len(), 2);
+        assert_eq!(integer_bounds_of_definedness(&shared), bounds);
+        assert_eq!(
+            range_domain_query(&shared).unwrap().bounds().as_slice(),
+            bounds
+        );
     }
 
     #[test]

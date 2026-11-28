@@ -9919,6 +9919,7 @@ impl Parser {
             loop_iterators: Vec::new(),
             body_end_scope: Some(body_end_scope),
             parameter_scope: Some(parameter_scope),
+            spelled_local_types: None,
         })
     }
 

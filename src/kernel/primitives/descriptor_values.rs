@@ -330,6 +330,31 @@ impl From<OldConditionTerm> for StoredConditionTerm {
                     *variable,
                 )));
             }
+            OldConditionTerm::BoolApplication(application) => {
+                KernelTermImport::for_exact_field_inputs().boolean_call(application)
+            }
+            // Variables and reads have fixed-size roots. Importing either keeps
+            // the native comparison's original type, read version, and address.
+            OldConditionTerm::AlgebraicEqual(left, right)
+                if [left, right].iter().all(|term| {
+                    matches!(
+                        term.node,
+                        AlgebraicTermNode::Variable(_) | AlgebraicTermNode::MemoryLoad { .. }
+                    )
+                }) =>
+            {
+                KernelTermImport::for_exact_field_inputs().condition(&value)
+            }
+            OldConditionTerm::Overflows {
+                format,
+                op,
+                left,
+                right,
+            } => Self::written_overflow_root(
+                *format,
+                *op,
+                [left.as_ref(), right.as_ref()].map(MachineOperandView::Old),
+            ),
             crate::kernel::integer_comparison_condition!(_, _) => {
                 KernelTermImport::default().condition(&value)
             }
@@ -386,6 +411,16 @@ impl PartialEq for dyn BorrowedConditionKey + '_ {
     }
 }
 impl Eq for dyn BorrowedConditionKey + '_ {}
+impl PartialOrd for dyn BorrowedConditionKey + '_ {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for dyn BorrowedConditionKey + '_ {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.written_identity().cmp(&other.written_identity())
+    }
+}
 impl std::hash::Hash for dyn BorrowedConditionKey + '_ {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.written_identity().hash(state);
@@ -394,6 +429,29 @@ impl std::hash::Hash for dyn BorrowedConditionKey + '_ {
 impl<'a> std::borrow::Borrow<dyn BorrowedConditionKey + 'a> for OldConditionTerm {
     fn borrow(&self) -> &(dyn BorrowedConditionKey + 'a) {
         self
+    }
+}
+
+impl crate::kernel::fact_collections::FactMap<OldConditionTerm, bool> {
+    pub(in crate::kernel) fn literal_value(&self, literal: bool) -> Option<bool> {
+        self.get(&ConditionIdentity::Constant(literal) as &dyn BorrowedConditionKey)
+            .copied()
+    }
+
+    pub(in crate::kernel) fn written_overflow_value(
+        &self,
+        format: MachineIntegerType,
+        op: OverflowOperation,
+        left: &OldMachineTerm,
+        right: &OldMachineTerm,
+    ) -> Option<bool> {
+        self.get(&ConditionIdentity::Overflows {
+            format,
+            op,
+            left,
+            right,
+        } as &dyn BorrowedConditionKey)
+            .copied()
     }
 }
 
@@ -421,6 +479,34 @@ impl<'a> WrittenPointerEquality<'a> {
             Self::Pointer([a, b]) => ConditionIdentity::PointerEqual(a, b),
         }
     }
+    fn reversed(self) -> Self {
+        match self {
+            Self::Address([a, b]) => Self::Address([b, a]),
+            Self::Offset([a, b]) => Self::Offset([b, a]),
+            Self::Pointer([a, b]) => Self::Pointer([b, a]),
+        }
+    }
+
+    /// Exact fact lookup uses the same constant folding as the reversed
+    /// address and offset constructors. Full pointer equality stays as written.
+    pub(crate) fn reversed_exact_value(
+        self,
+        facts: &crate::kernel::fact_collections::FactMap<OldConditionTerm, bool>,
+    ) -> Option<bool> {
+        let reversed = self.reversed();
+        let constant = match reversed {
+            Self::Address([a, b]) => a
+                .shared()
+                .equality_value(b.shared(), SharedAddressOffset::written_constant),
+            Self::Offset([a, b]) => a
+                .shared()
+                .equality_value(b.shared(), SharedAddressOffset::written_constant),
+            Self::Pointer(_) => None,
+        };
+        let key = constant.map_or_else(|| reversed.identity(), ConditionIdentity::Constant);
+        facts.get(&key as &dyn BorrowedConditionKey).copied()
+    }
+
     pub(crate) fn cited_value(
         self,
         facts: &std::collections::HashMap<OldConditionTerm, bool>,
@@ -430,13 +516,7 @@ impl<'a> WrittenPointerEquality<'a> {
                 .get(&pair.identity() as &dyn BorrowedConditionKey)
                 .copied()
         };
-        lookup(self).or_else(|| {
-            lookup(match self {
-                Self::Address([a, b]) => Self::Address([b, a]),
-                Self::Offset([a, b]) => Self::Offset([b, a]),
-                Self::Pointer([a, b]) => Self::Pointer([b, a]),
-            })
-        })
+        lookup(self).or_else(|| lookup(self.reversed()))
     }
 }
 
@@ -508,6 +588,14 @@ impl StoredConditionTerm {
         Self::pointer_equal(left, right)
     }
 
+    pub(crate) fn algebraic_equal(left: &AlgebraicTerm, right: &AlgebraicTerm) -> Self {
+        let mut import = KernelTermImport::for_exact_field_inputs();
+        Self(StoredCondition::Shared(KernelTerm::algebraic_equal_raw([
+            import.algebraic(left),
+            import.algebraic(right),
+        ])))
+    }
+
     pub(crate) fn pointer_equal(left: &Pointer, right: &Pointer) -> Self {
         let root = match left.equality_kind(right) {
             PointerEqualityKind::Complete => {
@@ -532,6 +620,34 @@ impl StoredConditionTerm {
             [left.shared().clone(), right.shared().clone()],
             SharedAddressOffset::written_constant,
         )))
+    }
+
+    /// Preserve operand order and spelling for exact overflow premises.
+    pub(crate) fn written_overflow(
+        format: MachineIntegerType,
+        op: OverflowOperation,
+        operands: [MachineOperandView<'_>; 2],
+    ) -> Self {
+        Self(StoredCondition::Shared(Self::written_overflow_root(
+            format, op, operands,
+        )))
+    }
+
+    fn written_overflow_root(
+        format: MachineIntegerType,
+        op: OverflowOperation,
+        operands: [MachineOperandView<'_>; 2],
+    ) -> KernelTerm {
+        let roots = operands.map(|operand| match operand {
+            MachineOperandView::Shared(root) => root.clone(),
+            MachineOperandView::Old(
+                written @ (OldMachineTerm::Constant { .. } | OldMachineTerm::Variable(_)),
+            ) => KernelTermImport::for_exact_field_inputs().machine(format, written),
+            MachineOperandView::Old(written) => {
+                KernelTerm::written_machine_operand(format, written)
+            }
+        });
+        KernelTerm::boolean_overflow_raw(format, op, roots)
     }
 
     /// A signed count bound folds two literal words and keeps the written
@@ -769,6 +885,16 @@ impl StoredConditionTerm {
     /// The same ordering and hash as the written condition. Address comparisons
     /// already hold the operands that the identity borrows.
     fn with_atomic_identity<R>(&self, read: impl FnOnce(ConditionIdentity<'_>) -> R) -> R {
+        let operand = self.operand_view();
+        if let Some(value) = operand.constant() {
+            return read(ConditionIdentity::Constant(value));
+        }
+        if let Some(variable) = operand.variable() {
+            return read(ConditionIdentity::Variable(variable));
+        }
+        if let Some([left, right]) = operand.written_algebraic_equality() {
+            return read(ConditionIdentity::AlgebraicEqual(left, right));
+        }
         match self.pointer_equality() {
             Some(pair) => pair.with_written(|written| read(written.identity())),
             None => read(self.old_form().identity()),
@@ -1084,6 +1210,49 @@ mod protocol_value_tests {
         assert_eq!(left.cmp(&right), constructors[0].cmp(&constructors[1]));
         assert!(!left.root().unwrap().has_cached_native_argument());
         assert!(!right.root().unwrap().has_cached_native_argument());
+    }
+
+    #[test]
+    fn reversed_pointer_fact_lookup_preserves_folded_and_written_keys() {
+        let a = Address::symbolic(Variable(982861));
+        let b = Address::symbolic(Variable(982862));
+        let p = Pointer::new(a.clone(), ProgramType::Int32Pointer);
+        let q = Pointer::new(b.clone(), ProgramType::Int32Pointer);
+        let x = AddressOffset::variable(Variable(982863));
+        let y = AddressOffset::constant(3);
+        let z = AddressOffset::constant(4);
+        for (pair, expected) in [
+            (
+                WrittenPointerEquality::Address([&a, &b]),
+                OldConditionTerm::address_equal(b.clone(), a.clone()),
+            ),
+            (
+                WrittenPointerEquality::Address([&a, &a]),
+                OldConditionTerm::Constant(true),
+            ),
+            (
+                WrittenPointerEquality::Offset([&x, &y]),
+                OldConditionTerm::address_offset_equal(y.clone(), x.clone()),
+            ),
+            (
+                WrittenPointerEquality::Offset([&y, &z]),
+                OldConditionTerm::Constant(false),
+            ),
+            (
+                WrittenPointerEquality::Pointer([&p, &q]),
+                OldConditionTerm::PointerEqual(Box::new(q.clone()), Box::new(p.clone())),
+            ),
+            (
+                WrittenPointerEquality::Pointer([&p, &p]),
+                OldConditionTerm::PointerEqual(Box::new(p.clone()), Box::new(p.clone())),
+            ),
+        ] {
+            assert_eq!(pair.reversed_exact_value(&Default::default()), None);
+            for truth in [false, true] {
+                let facts = [(expected.clone(), truth)].into_iter().collect();
+                assert_eq!(pair.reversed_exact_value(&facts), Some(truth));
+            }
+        }
     }
 
     #[test]

@@ -568,7 +568,16 @@ impl MemoryStateLabels {
                 added = true;
             }
             if let Some(memory) = self.memories.get(memory_index).cloned() {
-                let definition = self.legend_state(&memory);
+                let definition = match self.read_label_note(memory_index + 1) {
+                    Some(ReadLabelNote {
+                        same_memory_as: Some(base),
+                        reads,
+                    }) => format!("the memory of state#{base}; {reads}"),
+                    Some(ReadLabelNote { reads, .. }) => {
+                        format!("{}; {reads}", self.legend_state(&memory))
+                    }
+                    None => self.legend_state(&memory),
+                };
                 output.push_str(&format!(
                     "\n    state#{} = {}",
                     memory_index + 1,

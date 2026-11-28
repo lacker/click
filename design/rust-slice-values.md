@@ -15,7 +15,8 @@ every wide pointer raising to it, and `Str` is its string slice type, with
 wide value through three program operations, and a Rust `fn`'s slice
 parameters and locals are one wide value. Step 3c is done: slice returns are
 one wide value, and `s.as_bytes()` in imported Rust calls the library's
-`str::as_bytes`. Steps 4 and 5 remain.
+`str::as_bytes`. Step 4b is done: a slice iterator holds the slice it still
+covers as one wide value. Steps 4 (the rest) and 5 remain.
 
 ## Requirements
 
@@ -243,7 +244,7 @@ one value.
 | `s[i]` | read at thin part `+ i` | owes `i < s.len()` and a covering resource | `s[i]` |
 | `s[a..b]`, `&mut s[a..b]` | construction: thin `+ a`, count `b - a` | owes `a <= b <= s.len()`; lends the subrange | `s[a..b]` |
 | `s.split_at(k)`, `split_at_mut` | two constructions | owes `k <= s.len()`; `_mut` lends disjoint `owns` | `s[..k]`, `s[k..]` |
-| `s.iter()`, `iter_mut`, `enumerate` | iterator over the thin range | item `k` is `&s[k]` | `s[k]` |
+| `s.iter()`, `iter_mut`, `enumerate` | iterator holding the slice it still covers, one wide value (step 4b) | item `k` is `&s[k]` | `iter.as_slice()`, `iter.as_slice().as_ptr()`, `iter.len()` |
 | `s.chunks(n)`, `chunks_exact` | item `k` a construction | item `k == s[k*n..k*n+n]` | `s[k*n..k*n + n]` |
 | `&*s`, `&mut *s` (reborrow) | the same value | a new loan of the same range | `s` |
 | `g(s)`, `return s` | one argument, one result | callee facts about `result.len()` reach the caller's `w.len()` by substitution | `w`, `w.len()` |
@@ -379,8 +380,8 @@ unmerged slice-return prototype). The kernel inventory is
   - about 13 `charon/temporaries.rs` folds that special-case slice
     temporaries or `SliceLength`.
 
-  Iterators keep their own fields (remaining pointer and length); only
-  their construction from a slice and their yielded slices change.
+  An iterator field that is a slice becomes one wide value (step 4b for
+  the slice iterator; 4c for `ChunksExact`'s `v` and `rem`).
 - **Surface:**
   - `FunctionParameter::rust_slice_length` and the about 20 constructors
     that set `slice_length`;
@@ -908,9 +909,8 @@ construct.
      proof reads `at(statement(0).exit, view.as_ptr())` and `.len()`. The
      raise-lower audit reports no failures on the fixture.
 
-     Known limit: an element read through a slice local at an earlier
-     point is not related to the same element read now, so a caller that
-     reads through a returned slice is not proved:
+     Fixed in `slice-reads-b`: a caller that reads through a returned
+     slice is proved:
 
      ```rust
      pub fn whole(bytes: &[u8]) -> &[u8] { bytes }
@@ -929,15 +929,54 @@ construct.
      }
      ```
 
-     The goal `at(statement(0).exit, bytes[0]) == bytes[0]` stays open
-     ("the two sides read the same address in different memory states"),
-     with `at(statement(0).exit, view.as_ptr()) == bytes.as_ptr()` proved.
-     It is specific to a read through a slice a call returned (the
-     no-call form below is now proved). In the caller of a returned slice the kernel goal is
-     `read<UInt8>(state#1, s.as_ptr()) == read<UInt8>(state#1, s.as_ptr())`
-     with the two loads at different memory versions, so "the two sides read
-     the same address in different memory states" is reported while both
-     sides print alike.
+     Before, the goal `result == bytes[0]` stayed open ("the two sides read
+     the same address in different memory states", both printing
+     `read<UInt8>(state#1, bytes.as_ptr())`), though the resource tracker
+     answers `Same` for the cell between the two reads. One unchanged cell
+     had two names. The claim's `bytes[0]` is a point-named read: its site's
+     `read_version` names the argument's cell at the function-entry point.
+     The program's `view[0]` is a C read through the call result's fresh
+     data pointer, which has no indexed version, so `point_named_symbolic_read`
+     declined it; `canonicalized_retained_symbolic_load_value_with_identity`
+     (`kernel/eval/memory_loads.rs`) then selected the argument's cell
+     through the checked address alias (`logical_memory_load_address`) and
+     built a memory-named read of it, which the legacy walk names at the
+     entry memory. Only a cross-state load equality could join the two, and
+     the kernel does not build one from facts
+     (`cross_state_load_equality_requires_a_supplied_conclusion`). Now a C
+     read whose address the alias selected is named at that cell's version
+     where its site names one, as a read written with that address is: it
+     is constructed at the site, by the same `point_named_symbolic_read`, and
+     nothing checks it afterwards. A read the site has no version for keeps
+     the memory-named read. The cost is one indexed `read_version` lookup,
+     only for a read whose address the alias changed. Classification: a bug
+     (one cell version had two names). Tests: `slice_returns::first` in
+     `charon_slice_returns_are_one_slice` and the element claim of
+     `str_bytes::first_byte` in `charon_str_as_bytes_reads_the_same_bytes`,
+     each with a refused `+ 1u8` variant.
+
+     Still open: a proof's logical read through the returned slice, `have
+     at(statement(0).exit, view[0]) == bytes[0];` in `first_of`, is not
+     proved. A logical read keeps the address it was written with (lowering
+     is fact-stable), so it reads the call result's data pointer, which has
+     no version point; it is a memory-named read at the entry memory, and
+     `bytes[0]` is point-named at the entry point. Joining those two forms
+     of an entry read is the memory-named/point-named read migration, not a
+     slice question. The contract claim above, over the program's read, is
+     proved.
+
+     Also fixed in `slice-reads-b`: the diagnostic renderer named a slice
+     local's data pointer at a recorded point by the local itself, so the
+     call's postcondition printed as `at(statement(0).exit, view) ==
+     bytes.as_ptr()`, which does not lower ("cannot compare `Slice<uint8>`
+     and `uint8*`"), and its count as `at(statement(0).exit,
+     view.as_ptr()).len()` once that was fixed. A recorded slice local's
+     data pointer is now `at(p, view.as_ptr())` and the slice, by its count,
+     is `at(p, view)` (`fallback_slice_name`, read by `slice_count` and
+     `slice_at_own_type`); a recorded call's slice result is `R.as_ptr()`
+     and `R` the same way. The facts print as `at(statement(0).exit,
+     view).len() == bytes.len()` and `at(statement(0).exit, view.as_ptr())
+     == bytes.as_ptr()`; the test asserts both.
 
      Fixed in `slice-reads`: with no call, in `let view = bytes; view[0]`,
      `have at(statement(0).exit, view[0]) == bytes[0];` was not proved
@@ -949,31 +988,6 @@ construct.
      value the recorded point's state binds `view` to, so the read is at the
      slice's element type and the `have` is proved. Test: the
      `slice_returns::copied` proof of `charon_slice_returns_are_one_slice`.
-
-     Investigated in `slice-reads`, not fixed: why the caller's two reads
-     are not related. The tracker answers `Same` for the cell between the
-     two reads' origins (`resource_tracker::explain` from the read after
-     `view = whole(bytes)` to the function exit), so no step in between
-     writes it; the call to a `views`-only callee is not the barrier
-     (`let v = whole(bytes); let n = v.len(); bytes[0]` is proved). The two
-     reads are named by two naming systems. The program read is made
-     through the call result's fresh data pointer, and the `result` it
-     yields is a read at an unplaced point (`ProgramPoint::unplaced`, no
-     path link) of the store's memory; the legacy snapshot walk
-     (`last_same_version_point`) names it at the function-entry memory, at
-     the argument's address. The claim's read of `bytes[0]` at the outcome
-     is placed and is named at a version point after the call
-     (`ProgramPointId(13)` in the reduction). One unchanged cell thus has
-     two names, which only a cross-state load equality could join, and the
-     kernel does not reconstruct frames for that from facts
-     (`cross_state_load_equality_requires_a_supplied_conclusion`). The
-     classification is a bug in read naming, on the unplaced-point
-     migration (`build_support/read_construction.rs` counts its remaining
-     uses): the read through the call result should be made at the placed
-     point its statement runs at, so both walks name the cell at one
-     version. `let view = whole(bytes); view[0] == bytes[0]` and
-     `ensures result == click::rust::str::as_bytes(s)[0]` for `let bytes =
-     s.as_bytes(); bytes[0]` fail the same way.
 
      Fixed in 3c-ii: the parameter routes of `synthesize_surface_pointer`
      and `synthesize_surface_pointer_offset` named a slice parameter's data
@@ -1003,8 +1017,12 @@ construct.
      result: `s.as_bytes().len()` is refused ("an unnamed compiler local
      requires storage with no supported identity"; so is `whole(bytes).len()`
      for a crate `fn`), and `result == click::rust::str::as_bytes(s)[0]` for
-     `let bytes = s.as_bytes(); bytes[0]` is not proved (the 3c-i element
-     read limit). The refused index printed its condition as `0u64 <
+     `let bytes = s.as_bytes(); bytes[0]` was not proved (the 3c-i element
+     read limit, fixed in `slice-reads-b`; it is proved now). Its expansion
+     raised the byte view as `s.as_bytes()`, which does not lower for a
+     `fn`'s `&str` parameter; the Rust spelling of `str::as_bytes` is now
+     the library call `click::rust::str::as_bytes(s)`
+     (`slice_call_spelling`), so the expansion audit passes. The refused index printed its condition as `0u64 <
      bytes.as_ptr().len()`, which does not lower: a call's slice result has
      its data pointer at the variable its count counts, so the diagnostic
      renderer (`slice_count`, `proof_diagnostics/render/surface.rs`) named
@@ -1012,7 +1030,50 @@ construct.
      the count names the local that holds a slice with that count, `0u64 <
      bytes.len()`; the test asserts the spelling.
 4. **split_at, iterators, chunks.** Their inputs and the slices they yield
-   are wide pointers; their internal fields stay.
+   are wide pointers, and a field that is a slice is one wide value.
+   - **4b. Slice iterators carry wide values.** Done. A slice iterator,
+     `core::slice::Iter` (`iter()`, `into_iter()` on a slice, a shared
+     array's iterator) and the iterator an `Enumerate` wraps, holds the slice
+     it still covers as one wide local of slice type
+     (`SliceIteratorFields::slice`, `LocalBindingKind::SliceIteratorSlice`),
+     not a data pointer and a separate count. `iter()` assigns it the
+     source's data pointer and count built into one slice
+     (`SliceFromRawParts`); `next` yields `SliceData(slice)` and moves on by
+     assigning `SliceFromRawParts(SliceData(slice) + 1, SliceLength(slice) -
+     1)`; the loop's test is `0 < SliceLength(slice)`. In a sidecar,
+     `iter.as_slice()` is that slice, `iter.as_slice().as_ptr()` its data
+     pointer and `iter.len()` (and `iter.as_slice().len()`) its count, the
+     program operations read where they are written. An index
+     `iter.as_slice()[k]` reads through the data pointer, as a slice
+     parameter's does. A pointer comparison or argument writes
+     `iter.as_slice().as_ptr()`: every sidecar in the repository that wrote
+     `iter.as_slice() == bytes.as_ptr() + k` (the slice-iterator,
+     enumerate, into-slices, scalar-slices and iterator-proof fixtures, the
+     two `examples/rust-iter*` projects and the `design/adler32` sidecars)
+     is migrated. Raising: a slice at a loop's head is a fresh
+     variable-named slice; `slice_variable`
+     (`surface_synthesis/slices.rs`) names it by the slice local that holds
+     it, in the current state or at a recorded point (`at(iteration,
+     iter.as_slice())`, one lookup in the index of locals holding a pointer
+     into the slice's block), before the thin pointer routes, which named
+     it by a thin local holding its data pointer (`slice::len(byte)`,
+     which does not lower). A thin pointer into such a slice raises as
+     `local.as_ptr() + k` of the slice local that holds it, here or at a
+     recorded point (`slice_data_pointer`), and the pointer-local route of
+     `synthesize_surface_pointer` names a pointer into a slice local's data
+     as `local.as_ptr() + k`, never as the slice. On the five iterator
+     fixtures the raise-lower audit reports the same failures as at
+     `f0275fe656`. A slice compared with a thin pointer, the old
+     `iter.as_slice() == bytes.as_ptr() + k` or `result == bytes.as_ptr()`,
+     is a type error naming `.as_ptr()` (`comparison_elaboration.rs`, with a
+     backstop in `comparison_proposition`); test
+     `charon_a_slice_compared_with_a_pointer_is_a_type_error`. The yielded element's `Option` payload stays a
+     thin pointer (`&T`). Rust slice iteration stays an importer
+     statement, a listed departure in `docs/concepts/library-interfaces.md`.
+   - **4c. Chunk iterators.** Remaining: `ChunksExact`'s `v` and `rem`
+     fields are still a pointer and a count each (`iter.v ==
+     bytes.as_ptr() + k`), and a chunk `Option`'s payload a pointer and a
+     length.
 5. **Cleanup and docs.** `docs/reference/rust.md` (byte slices, string
    slices, pure-function slices, signatures), `docs/internals/kernel.md`,
    and `design/first-class-slices.md`, which this note supersedes.

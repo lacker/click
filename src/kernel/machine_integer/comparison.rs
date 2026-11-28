@@ -1092,7 +1092,7 @@ impl NativeComparisonView<'_> {
         )
     }
 
-    fn boxed_condition(&self) -> Option<(OldConditionTerm, bool)> {
+    pub(crate) fn boxed_condition(&self) -> Option<(OldConditionTerm, bool)> {
         representation::comparison(
             self.format,
             self.relation,
@@ -1192,7 +1192,7 @@ pub(crate) fn retained_integer_observation_comparison(
     ))
 }
 
-fn native_comparison_from_integer_operands(
+pub(crate) fn native_comparison_from_integer_operands(
     operator: IntegerComparisonOperator,
     written: [&SharedIntegerTerm; 2],
     value: bool,
@@ -1302,7 +1302,16 @@ pub(crate) fn structural_native_comparison_view(
     condition: &OldConditionTerm,
     value: bool,
 ) -> Option<NativeComparisonView<'static>> {
-    let (relation, left, right) = integer_relation(condition, value)?;
+    let (operator, operands) = integer_comparison_operands(condition)?;
+    structural_comparison_from_integer_operands(operator, operands, value)
+}
+
+pub(crate) fn structural_comparison_from_integer_operands(
+    operator: IntegerComparisonOperator,
+    operands: [&SharedIntegerTerm; 2],
+    value: bool,
+) -> Option<NativeComparisonView<'static>> {
+    let (relation, left, right) = order_integer_operands(operator, operands, value);
     structural_native_comparison_from_operands(relation, left, right)
 }
 

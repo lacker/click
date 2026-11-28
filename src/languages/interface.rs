@@ -137,6 +137,10 @@ pub struct ImportedFunction {
     /// its parameters, the C names a clause about a returned outcome is
     /// written in, since the body's locals have left scope.
     pub(super) parameter_scope: Option<crate::languages::c::syntax::CSourceBindings>,
+    /// For a front end that binds a local by its spelling alone, as Rust's
+    /// does a name bound once, the declared type of each such local.
+    pub(super) spelled_local_types:
+        Option<std::sync::Arc<BTreeMap<String, crate::kernel::ProgramType>>>,
     /// For a front end that lowers its own body, the statements as written
     /// each region of that body comes from.
     pub(super) source_sites: Option<std::sync::Arc<SourceSites>>,
@@ -880,6 +884,7 @@ impl ImportedFunction {
             loop_iterators: Vec::new(),
             body_end_scope: None,
             parameter_scope: None,
+            spelled_local_types: None,
             source_sites: None,
         }
     }
@@ -1133,6 +1138,22 @@ impl ImportedFunction {
     pub(crate) fn with_loop_iterators(mut self, iterators: Vec<Option<RustLoopIterator>>) -> Self {
         self.loop_iterators = iterators;
         self
+    }
+
+    pub(crate) fn with_spelled_local_types(
+        mut self,
+        types: BTreeMap<String, crate::kernel::ProgramType>,
+    ) -> Self {
+        self.spelled_local_types = Some(std::sync::Arc::new(types));
+        self
+    }
+
+    /// The declared type of each local bound by its spelling alone; see the
+    /// field.
+    pub(crate) fn spelled_local_types(
+        &self,
+    ) -> Option<&BTreeMap<String, crate::kernel::ProgramType>> {
+        self.spelled_local_types.as_deref()
     }
 
     /// The declarations visible at the end of a C function's body; see the
@@ -2424,15 +2445,17 @@ impl ChunkIteratorFields {
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(crate) struct SliceIteratorFields {
-    pub(crate) pointer: crate::kernel::BindingName,
-    pub(crate) length: crate::kernel::BindingName,
+    /// The slice the iterator still covers, one wide value
+    /// (`design/rust-slice-values.md`, step 4b): `iter.as_slice()`, whose
+    /// data pointer is `iter.as_slice().as_ptr()` and count `iter.len()`.
+    pub(crate) slice: crate::kernel::BindingName,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum RustIteratorKind {
     /// `core::slice::Iter` or a shared array's iterator: the slice it still
-    /// covers, whose pointer and length a proof reads as `iter.as_slice()`
-    /// and `iter.len()`.
+    /// covers, which a proof reads as `iter.as_slice()`, with its data
+    /// pointer `iter.as_slice().as_ptr()` and its length `iter.len()`.
     Slice,
     /// `Enumerate<Iter<T>>`: the slice iterator's fields and its count,
     /// which a proof reads as `iter.count`.

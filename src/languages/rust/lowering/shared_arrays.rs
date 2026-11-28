@@ -1,8 +1,10 @@
 //! A shared slice iterator, `core::slice::Iter<'_, T>`, is held as the slice
-//! it still covers, what `iter.as_slice()` returns, and its length as read
-//! by `iter.len()`. `core`'s iterator holds
-//! the same slice as a start and an end pointer. `next` yields the element
-//! at the cursor and moves the slice on by one, as `core`'s does.
+//! it still covers, what `iter.as_slice()` returns: one wide value
+//! (`design/rust-slice-values.md`, step 4b), whose data pointer a proof
+//! reads as `iter.as_slice().as_ptr()` and whose count as `iter.len()`.
+//! `core`'s iterator holds the same slice as a start and an end pointer.
+//! `next` yields the element at the cursor and moves the slice on by one,
+//! as `core`'s does.
 use super::*;
 use crate::languages::interface::SliceIteratorFields;
 /// The cursor's pointer type, as a Rust reference to the element lowers.
@@ -17,8 +19,24 @@ fn pointer_type(element: &Type) -> Result<ProgramType, String> {
     .to_kernel_type())
 }
 
+/// The data pointer of the slice the iterator `fields` still covers.
+pub(super) fn cursor(fields: &SliceIteratorFields) -> ProgramExpression {
+    ProgramExpression::SliceData(Box::new(crate::kernel::program_expression::variable(
+        fields.slice.clone(),
+    )))
+}
+
+/// The count of the slice the iterator `fields` still covers.
+fn remaining(fields: &SliceIteratorFields) -> ProgramExpression {
+    ProgramExpression::SliceLength(Box::new(crate::kernel::program_expression::variable(
+        fields.slice.clone(),
+    )))
+}
+
 pub(super) struct SliceIteratorStorage {
     pub(super) element: ProgramType,
+    /// The thin type of the slice's data pointer, `&T`.
+    pointer_type: ProgramType,
     pub(super) fields: SliceIteratorFields,
 }
 
@@ -28,18 +46,15 @@ pub(super) struct SliceIteratorOptionStorage {
     pub(super) pointer: BindingName,
 }
 
-/// Move the iterator on by one element.
+/// Move the iterator on by one element: the slice after its first.
 pub(super) fn advance(fields: &SliceIteratorFields) -> ProgramStatement {
-    use crate::kernel::program_expression::{add, subtract, uint64_literal, variable};
-    program_seq(
-        program_assign(
-            fields.pointer.clone(),
-            add(variable(fields.pointer.clone()), uint64_literal(1)),
-        ),
-        program_assign(
-            fields.length.clone(),
-            subtract(variable(fields.length.clone()), uint64_literal(1)),
-        ),
+    use crate::kernel::program_expression::{add, subtract, uint64_literal};
+    program_assign(
+        fields.slice.clone(),
+        ProgramExpression::SliceFromRawParts {
+            data: Box::new(add(cursor(fields), uint64_literal(1))),
+            count: Box::new(subtract(remaining(fields), uint64_literal(1))),
+        },
     )
 }
 
@@ -96,29 +111,27 @@ impl Context<'_> {
             return Err("shared iterator state identity collision".into());
         }
         if !option {
-            let [pointer, length] =
-                LocalBindingId::slice_iterator_fields(owner.clone(), ordinal, pointer_type)
-                    .map(BindingName::from);
+            let slice_type = ProgramType::SlicePointer(
+                crate::kernel::SliceElement::of_thin_pointer_type(pointer_type)
+                    .ok_or("shared array iterator requires a scalar element")?,
+            );
+            let slice = BindingName::from(LocalBindingId::slice_iterator_slice(
+                owner.clone(),
+                ordinal,
+                slice_type,
+            ));
             self.shared_array_iterators.insert(
                 name.clone(),
                 SliceIteratorStorage {
                     element,
+                    pointer_type,
                     fields: SliceIteratorFields {
-                        pointer: pointer.clone(),
-                        length: length.clone(),
+                        slice: slice.clone(),
                     },
                 },
             );
-            return Ok(program_seq(
-                program_declare_with_all_qualifiers(
-                    pointer,
-                    pointer_type,
-                    false,
-                    false,
-                    false,
-                    true,
-                ),
-                program_declare(length, ProgramType::UInt64),
+            return Ok(program_declare_with_all_qualifiers(
+                slice, slice_type, false, false, false, true,
             ));
         }
 
@@ -160,6 +173,7 @@ impl Context<'_> {
     ) -> Result<ProgramStatement, String> {
         let state = self.shared_array_iterator(target)?;
         let expected = state.element;
+        let thin_type = state.pointer_type;
         let fields = state.fields.clone();
         let (pointer, length, element) = self.indexed_parts(source)?;
         if element != expected {
@@ -178,10 +192,7 @@ impl Context<'_> {
         let (l_capture, l) = self.capture_operand(length, &Type::Usize)?;
         Ok(program_seq(
             program_seq(p_capture, l_capture),
-            program_seq(
-                program_assign(fields.pointer, p),
-                program_assign(fields.length, l),
-            ),
+            program_assign(fields.slice, slice_value(p, thin_type, l, true)),
         ))
     }
 
@@ -190,10 +201,9 @@ impl Context<'_> {
         &self,
         iterator: &MirLocalId,
     ) -> Result<ProgramExpression, String> {
-        let length = self.shared_array_iterator(iterator)?.fields.length.clone();
         Ok(crate::kernel::program_expression::less_than(
             crate::kernel::program_expression::uint64_literal(0),
-            crate::kernel::program_expression::variable(length),
+            remaining(&self.shared_array_iterator(iterator)?.fields),
         ))
     }
 
@@ -209,15 +219,9 @@ impl Context<'_> {
             && target != source
             && destination.element == origin.element
         {
-            return Ok(program_seq(
-                program_assign(
-                    destination.fields.pointer.clone(),
-                    variable(origin.fields.pointer.clone()),
-                ),
-                program_assign(
-                    destination.fields.length.clone(),
-                    variable(origin.fields.length.clone()),
-                ),
+            return Ok(program_assign(
+                destination.fields.slice.clone(),
+                variable(origin.fields.slice.clone()),
             ));
         }
         Err("invalid shared iterator move".into())
@@ -243,9 +247,8 @@ impl Context<'_> {
                 if taken == Some(false) {
                     return Ok(program_skip());
                 }
-                use crate::kernel::program_expression::variable;
-                let pointer = variable(fields.pointer.clone());
-                let value = self.shared_array_yielded_value(pointer, element, payload_type)?;
+                let value =
+                    self.shared_array_yielded_value(cursor(&fields), element, payload_type)?;
                 let bind = self.bind_local(payload, value)?;
                 let some = program_seq(bind, advance(&fields));
                 Ok(match taken {
@@ -301,13 +304,10 @@ impl Context<'_> {
         else {
             return Err("shared iterator Option element mismatch".into());
         };
-        use crate::kernel::program_expression::{int32_literal, variable};
+        use crate::kernel::program_expression::int32_literal;
         let mut some = program_assign(destination.tag.clone(), int32_literal(1));
         for statement in [
-            program_assign(
-                destination.pointer.clone(),
-                variable(state.fields.pointer.clone()),
-            ),
+            program_assign(destination.pointer.clone(), cursor(&state.fields)),
             yielded,
             advance(&state.fields),
         ] {
@@ -347,7 +347,7 @@ mod tests {
             .iter()
             .find(|local| matches!(local.value_type, Type::SharedArrayIterator { .. }))
             .unwrap();
-        let colliding = ["ptr", "len"].map(|field| Place {
+        let colliding = ["slice"].map(|field| Place {
             name: format!("{}_{field}", iterator.name).into(),
             value_type: Type::Usize,
             span: iterator.span.clone(),

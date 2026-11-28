@@ -3601,12 +3601,18 @@ fn expand_selected_tactics_context(
             Some(file),
         )
     })?;
-    // The whole claim's tactics are rendered below, after checking ended:
-    // spell their step results by the checked function's layout.
-    let mut _whole_claim_spelling = None;
-    if let Some((name, claim)) = whole_function {
-        let theorem = select_expansion_theorem(&verified, name, claim)?;
-        _whole_claim_spelling = theorem.step_result_spelling_scope();
+    let theorem = match &site {
+        ProofSite::FunctionClaim {
+            function_name,
+            claim,
+        } => Some(select_expansion_theorem(&verified, function_name, *claim)?),
+        ProofSite::TheoremEnsure { .. } => None,
+    };
+    // The captured tactics are rendered after checking ended. Use their
+    // own function's source layout to spell results of nested call steps.
+    let _step_result_spelling =
+        theorem.and_then(VerifiedProgramTheorem::step_result_spelling_scope);
+    if whole && let Some(theorem) = theorem {
         let mut tactics = theorem.expanded_proof_certificate()?.to_proof_tactics();
         if theorem.function_block.is_tactic_procedure() {
             remove_tactic_procedure_ending(

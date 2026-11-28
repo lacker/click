@@ -1433,11 +1433,11 @@ fn identical_load_renders_name_distinct_state_loads() {
         "{message}"
     );
     assert!(
-        message.contains("`result` reads the outcome state"),
+        message.contains("`result` reads the memory recorded at `statement(1).exit`"),
         "{message}"
     );
     assert!(
-        message.contains("`old(p[0])` reads function entry"),
+        message.contains("`old(p[0])` reads the function-entry memory"),
         "{message}"
     );
     assert!(message.contains("proof context for the goal:"), "{message}");

@@ -185,6 +185,21 @@ mod tests {
     }
 
     #[test]
+    fn match_operands_have_the_same_stored_and_written_comparison_keys() {
+        let _session = crate::kernel::VerificationSession::enter();
+        for format in [MachineIntegerType::Int32, MachineIntegerType::UInt64] {
+            let source = OldConditionTerm::Compare {
+                format,
+                relation: CompareRelation::LessThan,
+                left: Box::new(selected_match(100, 2)),
+                right: Box::new(OldMachineTerm::Variable(Variable(101))),
+            };
+            let root = crate::kernel::KernelTermImport::default().condition(&source);
+            assert_stored_proposition_keys(&root, &memory_erased_condition_key(&source));
+        }
+    }
+
+    #[test]
     fn match_alpha_keys_preserve_free_variables_and_arm_scope() {
         let left = selected_match(100, 2);
         let right = selected_match(200, 2);

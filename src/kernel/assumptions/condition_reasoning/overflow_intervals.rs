@@ -2508,6 +2508,36 @@ mod shared_overflow_query_tests {
     }
 
     #[test]
+    fn exact_signed_add_overflow_keeps_direct_sources_and_requires_both_bounds() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let a = OldMachineTerm::Variable(Variable(983719));
+        let b = OldMachineTerm::Variable(Variable(983720));
+        let atom = OldConditionTerm::signed_add_overflows(a.clone(), b.clone());
+        let parent = PureFactContext::new();
+        for truth in [false, true] {
+            let fact = Proposition::condition_is(atom.clone(), truth);
+            let child = parent.clone().assume_proposition(fact.clone());
+            let (answer, sources) = collect_consulted_premises(|| {
+                capture_implicit_consulted_premises(|| child.exact_signed_add_overflow(&a, &b))
+            });
+            assert_eq!(answer, Some(truth));
+            assert!(sources.contains(&fact));
+        }
+        let bounds =
+            definedness::integer_bounds_of_definedness(&Proposition::condition_is(atom, false));
+        assert_eq!(bounds.len(), 2);
+        let upper = parent.clone().assume_proposition(bounds[0].clone());
+        assert_eq!(upper.exact_signed_add_overflow(&a, &b), None);
+        let both = upper.assume_proposition(bounds[1].clone());
+        let (answer, sources) = collect_consulted_premises(|| {
+            capture_implicit_consulted_premises(|| both.exact_signed_add_overflow(&a, &b))
+        });
+        assert_eq!(answer, Some(false));
+        assert!(bounds.iter().all(|bound| sources.contains(bound)));
+        assert_eq!(parent.exact_signed_add_overflow(&a, &b), None);
+    }
+
+    #[test]
     fn ordinary_overflow_queries_retain_legacy_sources_and_branch_scope() {
         let _session = crate::kernel::VerificationSession::enter();
         let format = MachineIntegerType::Int32;

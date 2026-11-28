@@ -1327,6 +1327,9 @@ pub(in crate::surface::proof) struct LoopPreservationProofResult {
     /// preservation proof. They are evidence for termination only; the
     /// enclosing contract still uses the outer loop's checked artifact.
     pub(in crate::surface::proof) nested_loop_rules: Vec<VerifiedLoopRule>,
+    /// The loop head this preservation proof started from and the states
+    /// its body reached when it returned there.
+    pub(in crate::surface::proof) back_edges: crate::kernel::LoopBackEdges,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1644,6 +1647,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     // exits in its own bucket rather than against every exit recorded so far.
     let mut seen_final_exits = SeenLoopExits::default();
     let mut seen_early_exits = SeenLoopExits::default();
+    let mut back_edge_states = Vec::new();
 
     let mut nested_loop_rules = Vec::new();
     for (execution, path_certificate) in refuted_case_paths {
@@ -1865,6 +1869,11 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                     )
                 })?
         };
+        // An iteration that returns to the head is on no exit's path: the
+        // loop rule reads its writes from this state.
+        if let Some(state) = boundary.as_ref().and_then(LoopBoundary::back_edge_state) {
+            back_edge_states.push(state.clone());
+        }
         let checked_execution = checked.execution_view()?.execution.clone();
         // An inner loop may return while this iteration continues. Export
         // those checked terminal paths through the outer rule as well.
@@ -2159,6 +2168,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         return_exits,
         nested_loop_rules,
         exit_points,
+        back_edges: preservation.back_edges(back_edge_states),
     })
 }
 

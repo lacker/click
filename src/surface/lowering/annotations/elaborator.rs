@@ -1369,7 +1369,7 @@ pub(in crate::surface) struct ElaboratedProofClause<'s> {
 /// Elaborate a proof clause at its position in `function`: the C names in
 /// scope there are `scope`, and the proof binds the Click names in
 /// `integer_values` and `algebraic_values`. `None` for a function whose
-/// front end records no scopes (Rust, C++), whose clauses lowering still
+/// front end records no declarations for them, whose clauses lowering still
 /// elaborates itself.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::surface) fn elaborate_proof_clause<'s>(
@@ -1382,7 +1382,12 @@ pub(in crate::surface) fn elaborate_proof_clause<'s>(
     retained_states: &RecordedStates,
     definitions: SpecDefinitions<'_>,
 ) -> Option<ElaboratedProofClause<'s>> {
-    function.body_end_scope()?;
+    // A front end records the declarations a clause's names resolve to:
+    // C's scopes at each position, or the types of the locals Rust's and
+    // C++'s bind by spelling.
+    if function.body_end_scope().is_none() && function.spelled_local_types().is_none() {
+        return None;
+    }
     let mut declarations = Declarations::of_function(function);
     declarations.source_bindings = scope.cloned();
     let algebraic_values = algebraic_values.clone().into_iter().collect();

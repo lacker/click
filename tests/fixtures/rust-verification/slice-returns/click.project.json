@@ -16,7 +16,8 @@
           "slice_returns::same",
           "slice_returns::exclusive",
           "slice_returns::named",
-          "slice_returns::copied"
+          "slice_returns::copied",
+          "slice_returns::first"
         ],
         "files": [
           "returns.rs"

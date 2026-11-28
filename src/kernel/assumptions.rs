@@ -12193,6 +12193,32 @@ mod integer_observation_tests {
     }
 
     #[test]
+    fn folded_signed_add_overflow_cites_the_observed_literal_source() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let bound = OldConditionTerm::IntegerLessEqual(
+            observe(MachineIntegerType::UInt64, 1852),
+            uint64_max(),
+        );
+        for truth in [false, true] {
+            let source = Proposition::condition_is(bound.clone(), truth);
+            let parent = PureFactContext::new();
+            let child = parent.clone().assume_proposition(source.clone());
+            for (a, overflow) in [(0, false), (i32::MAX as u32, true)] {
+                let a = OldMachineTerm::uint32_constant(a);
+                let one = OldMachineTerm::constant(1);
+                assert_eq!(parent.exact_signed_add_overflow(&a, &one), None);
+                let (answer, sources) = collect_consulted_premises(|| {
+                    capture_implicit_consulted_premises(|| {
+                        child.exact_signed_add_overflow(&a, &one)
+                    })
+                });
+                assert_eq!(answer, Some(truth == overflow));
+                assert_eq!(sources, vec![source.clone()]);
+            }
+        }
+    }
+
+    #[test]
     fn observation_contradictions_preserve_native_interoperability() {
         for ty in [
             MachineIntegerType::Int32,

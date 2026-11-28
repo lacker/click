@@ -604,7 +604,11 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                             apply(rb_parent_is_node_parent(nid, nparent, ncolor, nleft, nright, parent));
                                             close();
                                         }
-                                        have RbTree::Node(nid, 0, Color::Black, nleft, nright) == rb_recolor(RbTree::Node(nid, nparent, ncolor, nleft, nright), Color::Black) by {
+                                        have nparent == 0 by {
+                                            rewrite(nparent, parent);
+                                            close();
+                                        }
+                                        have RbTree::Node(nid, nparent, Color::Black, nleft, nright) == rb_recolor(RbTree::Node(nid, nparent, ncolor, nleft, nright), Color::Black) by {
                                             unfold(rb_recolor(RbTree::Node(nid, nparent, ncolor, nleft, nright), Color::Black));
                                             close();
                                         }
@@ -616,16 +620,16 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                             apply(ctx_insert_root_exit(RbTree::Node(nid, nparent, ncolor, nleft, nright)));
                                             close();
                                         }
-                                        have is_rb_root(plug(Context::Top, RbTree::Node(nid, 0, Color::Black, nleft, nright))) == 1 by {
-                                            rewrite(RbTree::Node(nid, 0, Color::Black, nleft, nright), rb_recolor(RbTree::Node(nid, nparent, ncolor, nleft, nright), Color::Black));
+                                        have is_rb_root(plug(Context::Top, RbTree::Node(nid, nparent, Color::Black, nleft, nright))) == 1 by {
+                                            rewrite(RbTree::Node(nid, nparent, Color::Black, nleft, nright), rb_recolor(RbTree::Node(nid, nparent, ncolor, nleft, nright), Color::Black));
                                             close();
                                         }
                                         have rb_inorder(plug(Context::Top, rb_recolor(RbTree::Node(nid, nparent, ncolor, nleft, nright), Color::Black))) == rb_inorder(plug(Context::Top, RbTree::Node(nid, nparent, ncolor, nleft, nright))) by {
                                             apply(plug_recolor_inorder(Context::Top, RbTree::Node(nid, nparent, ncolor, nleft, nright), Color::Black));
                                             close();
                                         }
-                                        have rb_inorder(plug(Context::Top, RbTree::Node(nid, 0, Color::Black, nleft, nright))) == rb_inorder(plug(old(c.model), RbTree::Node(identity, node_parent, color, left_model, right_model))) by {
-                                            rewrite(RbTree::Node(nid, 0, Color::Black, nleft, nright), rb_recolor(RbTree::Node(nid, nparent, ncolor, nleft, nright), Color::Black));
+                                        have rb_inorder(plug(Context::Top, RbTree::Node(nid, nparent, Color::Black, nleft, nright))) == rb_inorder(plug(old(c.model), RbTree::Node(identity, node_parent, color, left_model, right_model))) by {
+                                            rewrite(RbTree::Node(nid, nparent, Color::Black, nleft, nright), rb_recolor(RbTree::Node(nid, nparent, ncolor, nleft, nright), Color::Black));
                                             rewrite(rb_inorder(plug(Context::Top, rb_recolor(RbTree::Node(nid, nparent, ncolor, nleft, nright), Color::Black))), rb_inorder(plug(Context::Top, RbTree::Node(nid, nparent, ncolor, nleft, nright))));
                                             close();
                                         }
@@ -645,9 +649,9 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                             apply(rb_recolor_parent_consistent(RbTree::Node(nid, nparent, ncolor, nleft, nright), Color::Black, 0));
                                             close();
                                         }
-                                        have rb_parent_consistent(plug(Context::Top, RbTree::Node(nid, 0, Color::Black, nleft, nright)), 0) == 1 by {
-                                            unfold(plug(Context::Top, RbTree::Node(nid, 0, Color::Black, nleft, nright)));
-                                            rewrite(RbTree::Node(nid, 0, Color::Black, nleft, nright), rb_recolor(RbTree::Node(nid, nparent, ncolor, nleft, nright), Color::Black));
+                                        have rb_parent_consistent(plug(Context::Top, RbTree::Node(nid, nparent, Color::Black, nleft, nright)), 0) == 1 by {
+                                            unfold(plug(Context::Top, RbTree::Node(nid, nparent, Color::Black, nleft, nright)));
+                                            rewrite(RbTree::Node(nid, nparent, Color::Black, nleft, nright), rb_recolor(RbTree::Node(nid, nparent, ncolor, nleft, nright), Color::Black));
                                             close();
                                         }
                                         let { left: l, right: r } = unfold(t);
@@ -668,23 +672,23 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                         }
                                         let t = fold(rb_at(node),
                                             {
-                                            model: RbTree::Node(nid, 0, Color::Black, nleft, nright),
+                                            model: RbTree::Node(nid, nparent, Color::Black, nleft, nright),
                                             left: l, right: r
                                         });
                                         have is_rb_root(plug(c.model, t.model)) == 1 by {
                                             rewrite(c.model, Context::Top);
-                                            rewrite(t.model, RbTree::Node(nid, 0, Color::Black, nleft, nright));
+                                            rewrite(t.model, RbTree::Node(nid, nparent, Color::Black, nleft, nright));
                                             close();
                                         }
                                         have rb_inorder(plug(c.model, t.model)) == rb_inorder(plug(old(c.model), RbTree::Node(identity, node_parent, color, left_model, right_model))) by {
                                             rewrite(c.model, Context::Top);
-                                            rewrite(t.model, RbTree::Node(nid, 0, Color::Black, nleft, nright));
+                                            rewrite(t.model, RbTree::Node(nid, nparent, Color::Black, nleft, nright));
                                             close();
                                         }
                                         have rb_tree_parent_consistent(plug(c.model, t.model)) == 1 by {
                                             unfold(rb_tree_parent_consistent(plug(c.model, t.model)));
                                             rewrite(c.model, Context::Top);
-                                            rewrite(t.model, RbTree::Node(nid, 0, Color::Black, nleft, nright));
+                                            rewrite(t.model, RbTree::Node(nid, nparent, Color::Black, nleft, nright));
                                             close();
                                         }
                                         step();

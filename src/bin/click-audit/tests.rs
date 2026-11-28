@@ -1602,7 +1602,8 @@ uint32 count_live(struct cell *node) {
     }
     return rest + 1;
 }"#;
-    let click_source = r#"resource tagged(node: struct cell*) {
+    let click_source = r#"import click::separation;
+resource tagged(node: struct cell*) {
     if node != 0 {
         owns *node;
         fact aligned(node, 8);
@@ -1623,7 +1624,35 @@ uint32 count_live(struct cell* node) {
         close();
     } else {
         let { next: child } = unfold(tagged(node));
-        step_until(statement(2).entry);
+        step_until(statement(1).entry);
+        mark before_local;
+        step();
+        have separate(statement(1).region(0).footprint, memory(node->word)) by {
+            close() using {};
+        }
+        have *((&node->word) as (int32 **)) == at(before_local, *((&node->word) as (int32 **))) by {
+            preserve(memory(node->word), statement(1).region(0));
+        }
+        have ((node->word & ~1) as (struct cell *)) == child by { close(); }
+        have separate(tagged(child), memory(node->word)) by { close(); }
+        mark before_call;
+        step();
+        have contains(tagged(child), statement(1).region(1).footprint) by { close(); }
+        apply(separation::contains_refl(memory(node->word)));
+        apply(separation::separate_restrict(tagged(child), memory(node->word), statement(1).region(1).footprint, memory(node->word)));
+        have *((&node->word) as (int32 **)) == at(before_call, *((&node->word) as (int32 **))) by {
+            preserve(memory(node->word), statement(1).region(1));
+        }
+        have ((node->word & ~1) as (struct cell *)) == child by { close(); }
+        mark before_assignment;
+        step();
+        have separate(statement(1).assignment(rest, 0).footprint, memory(node->word)) by {
+            close() using {};
+        }
+        have *((&node->word) as (int32 **)) == at(before_assignment, *((&node->word) as (int32 **))) by {
+            preserve(memory(node->word), statement(1).assignment(rest, 0));
+        }
+        have ((node->word & ~1) as (struct cell *)) == child by { close(); }
         fold(tagged(node));
         observe(tagged(node));
     }

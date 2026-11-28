@@ -1874,6 +1874,15 @@ fn verify_contract_refinement_theorem(
             )
         })
         .collect::<Vec<_>>();
+    // The refinement's clauses are written in the contract's scope: its
+    // parameters and its result, with no locals.
+    let contract_signature = contract_definition.function_block().signature();
+    let contract_scope_function = crate::languages::interface::ImportedFunction::external(
+        contract_signature.return_type(),
+        contract_signature.name().to_string(),
+        parameters.clone(),
+    )
+    .with_spelled_local_types(BTreeMap::new());
     let proof_goal = obligations.proposition().clone();
     let mut presentation =
         super::surface_synthesis::synthesize_surface_proposition_at_entry_and_post(
@@ -1925,7 +1934,11 @@ fn verify_contract_refinement_theorem(
         &surfaces,
         spec_definitions,
         theorem_environment,
-    );
+    )
+    .with_clause_scope(ClauseScope {
+        function: &contract_scope_function,
+        bindings: None,
+    });
     let mut search = super::attempt::search_scope("contract refinement");
     let mut declined = None;
     let mut unfinished = None;

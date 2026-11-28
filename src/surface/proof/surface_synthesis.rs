@@ -8337,7 +8337,17 @@ fn synthesize_surface_pointer(
             if !has_surface_iterator_binding(name) {
                 return None;
             }
-            let element_width = base.program_type().pointee_type()?.byte_width();
+            // A slice local names pointers into its data through its data
+            // pointer, `local.as_ptr() + k`, never as the slice itself
+            // (`design/rust-slice-values.md`, step 4b).
+            let slice_element = match base.program_type() {
+                ProgramType::SlicePointer(element) if base.is_wide() => Some(element),
+                _ => None,
+            };
+            let element_width = match slice_element {
+                Some(element) => element.thin_pointer_type().pointee_type()?.byte_width(),
+                None => base.program_type().pointee_type()?.byte_width(),
+            };
             let size = SYNTHESIS_STRUCT_OWNERS.with(|slot| {
                 slot.borrow()
                     .as_ref()
@@ -8345,6 +8355,11 @@ fn synthesize_surface_pointer(
                     .map(crate::languages::interface::RecordLayout::size)
             });
             let name = ProgramExpression::Variable(surface_local_name(name));
+            let name = if slice_element.is_some() {
+                ProgramExpression::SliceData(Box::new(name))
+            } else {
+                name
+            };
             let element_width = match size {
                 None => element_width,
                 Some(crate::kernel::LayoutSize::Bytes(size)) => size,

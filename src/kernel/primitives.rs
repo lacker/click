@@ -5023,7 +5023,7 @@ pub struct AlgebraicVariantType {
 /// pointer value's class it is not part of the type's identity: two types
 /// that differ only in it are equal, and only fresh symbolic field values
 /// read it.
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct AlgebraicSchemas {
     variants:
         std::collections::BTreeMap<AlgebraicValueType, std::sync::Arc<[AlgebraicVariantType]>>,
@@ -9108,6 +9108,22 @@ pub enum StatementOutcome {
     VerificationDiverges,
     UndefinedBehavior(UndefinedBehavior),
     RuntimeError(RuntimeError),
+}
+
+impl StatementOutcome {
+    /// The state this outcome continues from, when it has one.
+    pub(crate) fn state_mut(&mut self) -> Option<&mut ExecutionState> {
+        match self {
+            Self::Normal(state)
+            | Self::Break(state)
+            | Self::LoopTestFalse(state)
+            | Self::Continue(state)
+            | Self::Jump { state, .. }
+            | Self::Return { state, .. }
+            | Self::Throw { state, .. } => Some(state),
+            Self::VerificationDiverges | Self::UndefinedBehavior(_) | Self::RuntimeError(_) => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

@@ -165,6 +165,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
             let mut preservation_path_certificates = Vec::new();
             let mut final_exit_candidates_by_context = Vec::with_capacity(contexts.len());
             let mut early_exits_by_context = Vec::with_capacity(contexts.len());
+            let mut back_edges_by_context = Vec::with_capacity(contexts.len());
             let mut return_exits_by_context = Vec::with_capacity(contexts.len());
             let mut exit_points_by_context = Vec::with_capacity(contexts.len());
             let mut guard_points_by_context = Vec::with_capacity(contexts.len());
@@ -175,6 +176,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
             for context in &contexts {
                 let mut final_exit_candidates = Vec::new();
                 let mut early_exits = Vec::new();
+                let mut back_edges = Vec::new();
                 let mut return_exits = Vec::new();
                 let mut exit_points = Vec::new();
                 let mut guard_points = Vec::new();
@@ -347,6 +349,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                         verified_loop_rules.extend(result.nested_loop_rules);
                         final_exit_candidates.extend(result.final_exit_candidates);
                         early_exits.extend(result.early_exits);
+                        back_edges.push(result.back_edges);
                         return_exits.extend(result.return_exits);
                         exit_points.extend(result.exit_points);
                         environment
@@ -408,6 +411,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                 }
                 final_exit_candidates_by_context.push(final_exit_candidates);
                 early_exits_by_context.push(early_exits);
+                back_edges_by_context.push(back_edges);
                 return_exits_by_context.push(return_exits);
                 environment
                     .frontier_loop_certificates
@@ -504,6 +508,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                 Some(&final_exit_candidates_by_context),
                 Some(&early_exits_by_context),
                 Some(&return_exits_by_context),
+                Some(&back_edges_by_context),
                 Some(&exit_points_by_context),
                 Some(&guard_points_by_context),
             )
@@ -583,6 +588,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                 None,
                 None,
                 None,
+                None,
             )?;
             bypassed.extend(advanced);
             Ok(bypassed)
@@ -651,6 +657,7 @@ fn advance_execution_proof_statement(
     loop_final_exit_candidates: Option<&[Vec<LoopFinalExitCandidate>]>,
     loop_early_exits: Option<&[Vec<LoopEarlyExit>]>,
     loop_return_exits: Option<&[Vec<LoopReturnExit>]>,
+    loop_back_edges: Option<&[Vec<crate::kernel::LoopBackEdges>]>,
     loop_exit_points: Option<&[Vec<RecordedRegionPoints>]>,
     guard_points_by_context: Option<&[Vec<RecordedRegionPoints>]>,
 ) -> Result<Vec<PlanningExecutionContext>, ClickError> {
@@ -680,6 +687,10 @@ fn advance_execution_proof_statement(
             .unwrap_or(&[]);
         let return_exits = loop_return_exits
             .and_then(|exits| exits.get(context_index))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let back_edges = loop_back_edges
+            .and_then(|edges| edges.get(context_index))
             .map(Vec::as_slice)
             .unwrap_or(&[]);
         let initialization_proven = match initializations {
@@ -786,6 +797,7 @@ fn advance_execution_proof_statement(
                 final_exit_candidates,
                 early_exits,
                 return_exits,
+                back_edges,
                 otherwise
                     .map(|_| &mut prove_otherwise as &mut crate::kernel::LoopOtherwiseProof<'_>),
                 exit_fact_scope,

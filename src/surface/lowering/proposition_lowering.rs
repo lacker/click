@@ -52,6 +52,27 @@ pub(in crate::surface) fn comparison_proposition(
             value,
         ));
     }
+    // A slice is one value, not its data pointer: comparing it with a thin
+    // pointer is written on `s.as_ptr()` (`design/rust-slice-values.md`,
+    // "Source compatibility").
+    if let (ProgramValue::Pointer(left_pointer), ProgramValue::Pointer(right_pointer)) =
+        (&left, &right)
+        && left_pointer.is_wide() != right_pointer.is_wide()
+        && !left_pointer.is_null()
+        && !right_pointer.is_null()
+    {
+        let slice = if left_pointer.is_wide() {
+            &left
+        } else {
+            &right
+        };
+        let written =
+            crate::surface::diagnostics::describe_program_value(slice, ParameterBinding::default());
+        return Err(ClickError::new(format!(
+            "`{written}` is a slice, not a pointer: a pointer comparison is written on its data pointer, `.as_ptr()`, as in `{written}.as_ptr() == p`"
+        ))
+        .with_kind(ClickErrorKind::Type));
+    }
     if let (ProgramValue::Pointer(left), ProgramValue::Pointer(right)) = (&left, &right)
         && (left
             .program_type()

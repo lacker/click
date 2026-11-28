@@ -9,7 +9,6 @@ fn arithmetic_guard_classification_keeps_shared_prefixes() {
             let _session = crate::kernel::VerificationSession::enter();
             let mut term =
                 KernelTerm::variable(KernelType::Program(format.program_type()), Variable(982200));
-            let (minimum, maximum) = range::range(format);
             let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
                 for _ in 0..size {
                     term = KernelTerm::arithmetic_binary(
@@ -24,21 +23,31 @@ fn arithmetic_guard_classification_keeps_shared_prefixes() {
                         IntegerTerm::Machine(observation.clone()),
                         IntegerTerm::constant(1.into()),
                     );
-                    let upper = Proposition::condition_is(
-                        OldConditionTerm::integer_less_equal(
-                            exact.clone(),
-                            IntegerTerm::constant(maximum.clone()),
-                        ),
-                        true,
-                    );
-                    let lower = Proposition::condition_is(
-                        OldConditionTerm::integer_greater_equal(
-                            exact,
-                            IntegerTerm::constant(minimum.clone()),
-                        ),
-                        true,
-                    );
+                    let [upper, lower] = ordinary_bounds(format, exact);
+                    let roots = [&upper, &lower].map(|bound| {
+                        let Proposition::ConditionIs(condition, true) = bound else {
+                            unreachable!()
+                        };
+                        condition.root().unwrap().clone()
+                    });
                     let guard = Proposition::And(Box::new(upper.clone()), Box::new(lower));
+                    let exports = crate::kernel::KernelTermExport::machine_export_count();
+                    let fact = definedness_of_integer_bound(&upper).unwrap();
+                    let Proposition::ConditionIs(condition, false) = fact else {
+                        unreachable!()
+                    };
+                    let result = ordinary_arithmetic_guard(&guard).unwrap();
+                    assert_eq!(condition.root().unwrap(), result.root().unwrap());
+                    let (_, _, [crate::kernel::MachineOperandView::Shared(left), _]) =
+                        result.operand_view().overflow().unwrap()
+                    else {
+                        unreachable!()
+                    };
+                    assert_eq!(left, &term);
+                    assert_eq!(
+                        crate::kernel::KernelTermExport::machine_export_count(),
+                        exports
+                    );
                     let query = ordinary_arithmetic_guard_view(&guard).unwrap();
                     assert_eq!(query.format, format);
                     assert_eq!(query.operation, Operation::Add);
@@ -46,6 +55,7 @@ fn arithmetic_guard_classification_keeps_shared_prefixes() {
                     let incomplete = Proposition::And(Box::new(upper.clone()), Box::new(upper));
                     assert!(ordinary_arithmetic_guard_view(&incomplete).is_none());
                     assert!(!crate::kernel::proof::is_definedness_guard(&incomplete));
+                    assert!(roots.iter().all(|root| !root.has_cached_native_argument()));
                     assert!(!observation.has_boxed_operand());
                 }
             });

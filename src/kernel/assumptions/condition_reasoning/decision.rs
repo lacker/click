@@ -1286,6 +1286,18 @@ impl PureFactContext {
         &self,
         condition: &OldConditionTerm,
     ) -> Option<bool> {
+        if let OldConditionTerm::Constant(literal) = condition {
+            return self.exact_literal_value(*literal);
+        }
+        if let OldConditionTerm::Overflows {
+            format,
+            op,
+            left,
+            right,
+        } = condition
+        {
+            return self.exact_overflow_value(*format, *op, left, right);
+        }
         if self.condition_facts.get(condition).is_none() {
             for truth in [true, false] {
                 if let Some(source) = self.observation_comparisons.source(condition, truth) {
@@ -1295,17 +1307,6 @@ impl PureFactContext {
             }
         }
         let value = self.exact_condition_value_unrecorded(condition);
-        if value == Some(false) && self.condition_facts.get(condition).is_none() {
-            let bounds = crate::kernel::machine_integer::definedness::integer_bounds_of_definedness(
-                &Proposition::condition_is(condition.clone(), false),
-            );
-            if !bounds.is_empty() {
-                for bound in bounds {
-                    record_implicit_consulted_premises(self, &bound);
-                }
-                return value;
-            }
-        }
         if let Some(value) = value {
             record_implicit_consulted_premises(
                 self,
@@ -1315,27 +1316,98 @@ impl PureFactContext {
         value
     }
 
-    fn exact_condition_value_unrecorded(&self, condition: &OldConditionTerm) -> Option<bool> {
-        if matches!(condition, OldConditionTerm::Overflows { .. }) {
-            let bounds = crate::kernel::machine_integer::definedness::integer_bounds_of_definedness(
-                &Proposition::condition_is(condition.clone(), false),
-            );
-            if !bounds.is_empty()
-                && bounds.iter().all(|bound| {
-                    let Proposition::ConditionIs(condition, true) = bound else {
-                        return false;
-                    };
-                    Self::decide_intrinsically(condition.old_form()) == Some(true)
-                        || integer_order_spellings(condition.old_form())
-                            .into_iter()
-                            .any(|condition| {
-                                self.contains_known(&Proposition::condition_is(condition, true))
-                            })
-                })
-            {
-                return Some(false);
+    fn exact_literal_value(&self, literal: bool) -> Option<bool> {
+        if let Some(value) = self.condition_facts.literal_value(literal) {
+            if implicit_consulted_premises_capturing() {
+                let fact = Proposition::ConditionIs(
+                    crate::kernel::StoredConditionTerm::constant(literal),
+                    value,
+                );
+                record_implicit_consulted_premises(self, &fact);
+            }
+            return Some(value);
+        }
+        for truth in [true, false] {
+            if let Some(source) = self.observation_comparisons.literal_source(literal, truth) {
+                record_implicit_consulted_premises(self, source);
+                return Some(truth);
             }
         }
+        None
+    }
+
+    /// Use the literal condition's exact lookup when both signed words fold.
+    /// A symbolic sum is looked up with its written operand ordering.
+    pub(in crate::kernel) fn exact_signed_add_overflow(
+        &self,
+        left: &OldMachineTerm,
+        right: &OldMachineTerm,
+    ) -> Option<bool> {
+        let words = [left, right].map(OldMachineTerm::constant32);
+        if let [Some(a), Some(b)] = words {
+            return self.exact_literal_value((a as i32).overflowing_add(b as i32).1);
+        }
+        let literals = words.map(|word| word.map(OldMachineTerm::constant));
+        self.exact_overflow_value(
+            MachineIntegerType::Int32,
+            OverflowOperation::Add,
+            literals[0].as_ref().unwrap_or(left),
+            literals[1].as_ref().unwrap_or(right),
+        )
+    }
+
+    fn exact_overflow_value(
+        &self,
+        format: MachineIntegerType,
+        op: OverflowOperation,
+        left: &OldMachineTerm,
+        right: &OldMachineTerm,
+    ) -> Option<bool> {
+        use crate::kernel::machine_integer::{Operation, definedness, representation};
+        let direct = self
+            .condition_facts
+            .written_overflow_value(format, op, left, right);
+        let bounds = Operation::from_overflow(op)
+            .filter(|_| representation::has_overflow_test(format))
+            .and_then(|operation| {
+                definedness::bounds_for_operation(
+                    format,
+                    operation,
+                    [left, right].map(MachineOperandView::Old),
+                )
+            });
+        let from_bounds = bounds.as_ref().is_some_and(|bounds| {
+            bounds.iter().all(|bound| {
+                let Proposition::ConditionIs(condition, true) = bound else {
+                    return false;
+                };
+                Self::decide_intrinsically(condition.old_form()) == Some(true)
+                    || integer_order_spellings(condition.old_form())
+                        .into_iter()
+                        .any(|condition| {
+                            self.contains_known(&Proposition::condition_is(condition, true))
+                        })
+            })
+        });
+        let value = if from_bounds { false } else { direct? };
+        if implicit_consulted_premises_capturing() {
+            if direct.is_some() {
+                let written = crate::kernel::StoredConditionTerm::written_overflow(
+                    format,
+                    op,
+                    [left, right].map(crate::kernel::MachineOperandView::Old),
+                );
+                record_implicit_consulted_premises(self, &Proposition::ConditionIs(written, value));
+            } else if let Some(bounds) = bounds {
+                for bound in bounds {
+                    record_implicit_consulted_premises(self, &bound);
+                }
+            }
+        }
+        Some(value)
+    }
+
+    fn exact_condition_value_unrecorded(&self, condition: &OldConditionTerm) -> Option<bool> {
         self.condition_facts
             .get(condition)
             .copied()
@@ -1352,24 +1424,12 @@ impl PureFactContext {
                         left.as_ref().clone(),
                     ))
                     .copied(),
-                OldConditionTerm::AddressOffsetEqual(left, right) => self
-                    .condition_facts
-                    .get(&OldConditionTerm::address_offset_equal(
-                        right.as_ref().clone(),
-                        left.as_ref().clone(),
-                    ))
-                    .copied(),
-                OldConditionTerm::PointerEqual(left, right) => self
-                    .condition_facts
-                    .get(&OldConditionTerm::PointerEqual(right.clone(), left.clone()))
-                    .copied(),
-                OldConditionTerm::AddressEqual(left, right) => self
-                    .condition_facts
-                    .get(&OldConditionTerm::address_equal(
-                        right.as_ref().clone(),
-                        left.as_ref().clone(),
-                    ))
-                    .copied(),
+                condition
+                    if let Some(pair) =
+                        crate::kernel::WrittenPointerEquality::from_condition(condition) =>
+                {
+                    pair.reversed_exact_value(&self.condition_facts)
+                }
                 OldConditionTerm::Compare {
                     format: MachineIntegerType::Int32,
                     relation: CompareRelation::LessThan,

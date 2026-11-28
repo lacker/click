@@ -342,10 +342,12 @@ one value too: the contract reads `result.len()`, `result.as_ptr()` and
 A proof reads a slice local where it was live,
 `at(statement(0).exit, view.as_ptr())`, and its elements there at the
 slice's element type: for `let view = bytes;`, `have
-at(statement(0).exit, view[0]) == bytes[0];` is proved. An element read
-through a slice a call returned is not yet related to the same element read
-through the argument, so a caller that indexes a returned slice is not
-proved
+at(statement(0).exit, view[0]) == bytes[0];` is proved. A caller that
+indexes a returned slice reads the argument's element: for `let view =
+whole(bytes); view[0]`, `ensures result == bytes[0]` is proved.
+A proof's own read through the returned slice at a recorded point, `have
+at(statement(0).exit, view[0]) == bytes[0]`, is not yet related to
+`bytes[0]`
 ([step 3c-i](https://github.com/clicklang/click/blob/master/design/rust-slice-values.md#plan)).
 An index or a range bound keeps
 its `usize` type, so nothing is cast and the contract states no bound on the
@@ -466,6 +468,11 @@ to one or to a crate struct, `*const T` or `*mut T`. Such a function takes value
 and a reference `&T` is refused there. `x as T` casts in a body as in a
 contract. The C forms (`uint8`, `const uint8*`, `x as int32`) still read
 the same types.
+
+A pure function, predicate, theorem or contract may use Click's tuples,
+`(u32, u32)`, `(a, b)` and `t.0`
+([grammar](language/grammar.md#tuples)). A `fn` signature that takes or
+returns a tuple is refused: tuple program values are not supported yet.
 
 A pure function may take a slice of scalars, `bytes: &[u8]`. The body reads
 `bytes[k]`, `bytes.len()` and `*bytes`. Each slice is one argument of a call:
@@ -1270,10 +1277,11 @@ fn str_bytes::byte_count(s: &str) -> usize {
 }
 
 // The byte view has the string's length, so its first byte is in bounds
-// whenever the string is not empty.
+// whenever the string is not empty, and it is the string's first byte.
 fn str_bytes::first_byte(s: &str) -> u8 {
     requires 0u64 < s.len();
     views *s;
+    ensures result == click::rust::str::as_bytes(s)[0];
 }
 ```
 
@@ -1281,9 +1289,8 @@ The result must be bound to a local first: `s.as_bytes().len()` is refused as
 an unnamed compiler local, as any call's slice result read in place is. An
 index into the bound local that may be out of bounds is refused with its
 condition over the local, `0u64 < bytes.len()`. A
-byte read through the result is not yet related to the same byte read
-through `s` (the [known limit of step 3c-i](https://github.com/clicklang/click/blob/master/design/rust-slice-values.md#plan)),
-so `ensures result == click::rust::str::as_bytes(s)[0];` is not proved. A
+byte read through the result is the string's byte, so
+`ensures result == click::rust::str::as_bytes(s)[0];` is proved. A
 contract spells the byte view of a `fn`'s `&str` parameter that way: the
 parameter's methods there are `s.len()` and `s.as_ptr()`. `&mut str`,
 `String`, string literals, `==` and the other `str` methods are refused with
@@ -1508,9 +1515,10 @@ The original Rust source stays unchanged.
 
 The adapter retains Charon's native control flow, iterator calls, and `Option`
 branches. An iterator is held as the slice it still covers, the slice
-`iter.as_slice()` returns: its data and its length. `core`'s `slice::Iter`
+`iter.as_slice()` returns: one slice value, with its data pointer and its
+length. `core`'s `slice::Iter`
 holds the same slice as a start and an end pointer. Each successful
-`next()` yields the element at `iter.as_slice()`, binds the loop variable to
+`next()` yields the element at `iter.as_slice().as_ptr()`, binds the loop variable to
 its shared address, and moves the slice on by one element before entering
 the Rust body; no `Option` or compiler temporary holds it, as for a range. A
 `match` on `next()` whose `Some(_)` arm binds nothing only moves the slice
@@ -1520,8 +1528,12 @@ slice.
 A proof reads a loop's iterator as `iter` inside that loop's clauses and
 phases, and as `loop(i).iter` anywhere, through Rust's own methods:
 `iter.len()` is the length left, and `iter.as_slice()` the remaining
-elements, which read as a slice parameter does, `iter.as_slice()[k]` and
-`iter.as_slice().len()`. The importer records which iterator each loop
+elements, a slice that reads as a slice parameter does: `iter.as_slice()[k]`,
+`iter.as_slice().len()` (which is `iter.len()`) and its data pointer
+`iter.as_slice().as_ptr()`. Pointer comparisons and arithmetic are written on
+`iter.as_slice().as_ptr()`, as on a slice parameter's `bytes.as_ptr()`; a
+slice compared with a pointer, `iter.as_slice() == bytes.as_ptr()`, is a type
+error naming `.as_ptr()`. The importer records which iterator each loop
 advances, so the iterator needs no name of its own; diagnostics print its
 state the same way. Where the iterator stands is an invariant the proof
 states:
@@ -1531,7 +1543,7 @@ loop {
     decreases iter.len();
     views bytes[0..bytes.len()];
     invariant iter.len() <= bytes.len();
-    invariant iter.as_slice() == bytes.as_ptr() + (bytes.len() - iter.len());
+    invariant iter.as_slice().as_ptr() == bytes.as_ptr() + (bytes.len() - iter.len());
     ...
 }
 ```
@@ -1573,15 +1585,15 @@ exhaustion yields no element.
 `for (i, x) in xs.iter().enumerate()` over a slice of any integer width is
 `core`'s `Enumerate { iter, count }`: the slice iterator above and `count`,
 how many elements it has yielded, which a proof reads as `iter.count`
-(`iter.len()` and `iter.as_slice()` read the slice iterator). The exporter
+(`iter.len()`, `iter.as_slice()` and `iter.as_slice().as_ptr()` read the slice iterator). The exporter
 checks that `enumerate` is the core `Iterator::enumerate` default method and
 that `next` is the core `impl<I: Iterator> Iterator for Enumerate<I>`. Each
-iteration yields index `iter.count` and the element at `iter.as_slice()`,
+iteration yields index `iter.count` and the element at `iter.as_slice().as_ptr()`,
 then counts it and moves the slice on; a reference pattern `(i, x)` binds
 the element's address and a copied pattern `(i, &x)` reads it.
 [`design/charon-trial/enumerate`](https://github.com/clicklang/click/blob/master/design/charon-trial/enumerate/enumerate.click)
 proves the last index a loop yields with `iter.count == xs.len() - iter.len()`
-and `iter.as_slice() == xs + iter.count`.
+and `iter.as_slice().as_ptr() == xs.as_ptr() + iter.count`.
 `.iter_mut()` and by-value array iteration remain outside this subset; a
 crate's own iterator is [below](#crate-iterators).
 
