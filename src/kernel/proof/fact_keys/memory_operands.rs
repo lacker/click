@@ -156,7 +156,9 @@ pub(super) fn written(term: &OldMachineTerm) -> MemoryErasedBitvectorKey {
         ) && !condition.is_bool_value_form() =>
         {
             Node::If(
-                Box::new(memory_erased_condition_key(condition)),
+                Box::new(memory_erased_boolean_operand_key(
+                    crate::kernel::BooleanOperandView::Native(condition),
+                )),
                 memory_erased_bitvector_key(then_term),
                 memory_erased_bitvector_key(else_term),
             )
