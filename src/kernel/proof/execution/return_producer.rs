@@ -94,7 +94,9 @@ impl ReturnRewriteProducer {
     }
 
     fn retain_fact(&mut self, fact: Proposition) {
-        self.context = std::mem::take(&mut self.context).assume_proposition(fact.clone());
+        // Return evidence keeps the checked judgment and its read points.
+        self.context = std::mem::take(&mut self.context)
+            .assume_proposition(crate::kernel::canonical_condition_fact(&fact));
         self.added.push(ExecutionPureFact::new(fact));
     }
 

@@ -526,7 +526,7 @@ impl<'a> ProofScope<'a> {
                 }
                 let body = self.body.certificate();
                 let mut facts = self.root.facts().clone();
-                facts = facts.with_kernel_checked_fact(kernel.clone());
+                facts = facts.with_kernel_checked_have(kernel.clone());
                 let mut checked_facts = vec![kernel.clone()];
                 if let Some(completion) = entry_completion {
                     let guarded = completion.proposition();
