@@ -397,9 +397,14 @@ front end records the declared type (`ImportedFunction::spelled_local_types`):
 `Declarations` reads that type for a name no binding resolves. That is
 enough for these front ends' clauses at each of the positions above.
 
-Lowering still elaborates one kind of clause itself: a contract
-refinement's, which name a contract definition's parameters rather than a
-position in a function body.
+A contract refinement's clauses are written in the contract's scope: its
+parameters and result, with no locals. The refinement proof's
+`ClauseScope` is the contract's signature as an `ImportedFunction`, whose
+empty spelled-locals table records that it has no locals.
+
+Every proof clause of a function is now elaborated by the proof driver.
+Lowering's own elaboration of proof clauses remains only behind the debug
+check that the two agree.
 
 `Declarations` reads names' C types from kernel states (the entry state, the
 entry values, and the state that declares the clause's locals) for names that
