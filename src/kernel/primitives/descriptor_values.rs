@@ -804,6 +804,9 @@ impl StoredConditionTerm {
         if let Some(variable) = operand.variable() {
             return read(ConditionIdentity::Variable(variable));
         }
+        if let Some([left, right]) = operand.written_algebraic_equality() {
+            return read(ConditionIdentity::AlgebraicEqual(left, right));
+        }
         match self.pointer_equality() {
             Some(pair) => pair.with_written(|written| read(written.identity())),
             None => read(self.old_form().identity()),

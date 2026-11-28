@@ -222,6 +222,32 @@ impl<'a> BooleanOperandView<'a> {
         ])
     }
 
+    /// Borrow the written operands for keys that compare algebraic term syntax.
+    pub(crate) fn written_algebraic_equality(self) -> Option<[&'a AlgebraicTerm; 2]> {
+        let native = match self {
+            Self::Native(condition) => condition,
+            Self::Shared(root) => {
+                let KernelTermNode::AlgebraicEqual {
+                    arguments: [left, right],
+                } = root.node()
+                else {
+                    return None;
+                };
+                let Some(condition) = root.cached_condition_output() else {
+                    return Some([
+                        left.algebraic_native_term()?,
+                        right.algebraic_native_term()?,
+                    ]);
+                };
+                condition
+            }
+        };
+        match native {
+            OldConditionTerm::AlgebraicEqual(left, right) => Some([left, right]),
+            _ => None,
+        }
+    }
+
     pub(crate) fn native_leaf(self) -> Option<&'a OldConditionTerm> {
         match self {
             Self::Native(value) => Some(value),
