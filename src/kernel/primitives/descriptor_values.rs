@@ -330,6 +330,16 @@ impl From<OldConditionTerm> for StoredConditionTerm {
                     *variable,
                 )));
             }
+            OldConditionTerm::Overflows {
+                format,
+                op,
+                left,
+                right,
+            } => Self::written_overflow_root(
+                *format,
+                *op,
+                [left.as_ref(), right.as_ref()].map(MachineOperandView::Old),
+            ),
             crate::kernel::integer_comparison_condition!(_, _) => {
                 KernelTermImport::default().condition(&value)
             }
@@ -595,6 +605,16 @@ impl StoredConditionTerm {
         op: OverflowOperation,
         operands: [MachineOperandView<'_>; 2],
     ) -> Self {
+        Self(StoredCondition::Shared(Self::written_overflow_root(
+            format, op, operands,
+        )))
+    }
+
+    fn written_overflow_root(
+        format: MachineIntegerType,
+        op: OverflowOperation,
+        operands: [MachineOperandView<'_>; 2],
+    ) -> KernelTerm {
         let roots = operands.map(|operand| match operand {
             MachineOperandView::Shared(root) => root.clone(),
             MachineOperandView::Old(
@@ -604,9 +624,7 @@ impl StoredConditionTerm {
                 KernelTerm::written_machine_operand(format, written)
             }
         });
-        Self(StoredCondition::Shared(KernelTerm::boolean_overflow_raw(
-            format, op, roots,
-        )))
+        KernelTerm::boolean_overflow_raw(format, op, roots)
     }
 
     /// A signed count bound folds two literal words and keeps the written

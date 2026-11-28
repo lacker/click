@@ -488,16 +488,21 @@ mod shared_query_tests {
                     };
                     let root = KernelTermImport::for_exact_field_inputs().condition(&native);
                     let stored = StoredConditionTerm::from_root(root.clone()).unwrap();
-                    for polarity in [true, false] {
-                        let expected = Proposition::condition_is(native.clone(), polarity);
+                    // A native producer can seed the same root's compatibility
+                    // cache. Exercise the shared reader before constructing it.
+                    let results = [true, false].map(|polarity| {
                         let actual = Proposition::condition_is(stored.clone(), polarity);
-                        let expected_bounds = integer_bounds_of_definedness(&expected);
-                        let expected_query = range_domain_query(&expected);
                         let before = KernelTermExport::machine_export_count();
                         let bounds = integer_bounds_of_definedness(&actual);
                         let query = range_domain_query(&actual);
                         assert_eq!(KernelTermExport::machine_export_count(), before);
                         assert!(!root.has_cached_native_argument());
+                        (polarity, bounds, query)
+                    });
+                    for (polarity, bounds, query) in results {
+                        let expected = Proposition::condition_is(native.clone(), polarity);
+                        let expected_bounds = integer_bounds_of_definedness(&expected);
+                        let expected_query = range_domain_query(&expected);
                         assert_eq!(bounds, expected_bounds, "{format:?} {op:?} {word:?}");
                         assert_eq!(query.map(|q| q.exact), expected_query.map(|q| q.exact));
                     }
