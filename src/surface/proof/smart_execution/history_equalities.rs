@@ -254,13 +254,16 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                 right: right.clone(),
             };
         let distinct = compare(read_index, ComparisonOperator::NotEqual, &write_index);
-        let separate_elements = ProofCertificate::from_steps(vec![ProofStep::ApplyTheoremUsing {
-            application: TheoremApplication {
-                name: "click::separation::separate_elements".into(),
-                arguments: vec![base.clone(), write_index.clone(), read_index.clone()],
+        let separate_elements = ProofCertificate::from_steps(vec![
+            ProofStep::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: "click::separation::separate_elements".into(),
+                    arguments: vec![base.clone(), write_index.clone(), read_index.clone()],
+                },
+                premises: vec![distinct.clone()],
             },
-            premises: vec![distinct.clone()],
-        }])
+            ProofStep::Known,
+        ])
         .expect("ordinary indexed separation");
         let separated = attempt::candidate_outcome(
             search_input

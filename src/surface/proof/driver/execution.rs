@@ -929,7 +929,10 @@ fn flat_post_execution_tactic(tactic: &ProofTactic) -> Option<PostExecutionTacti
         }
         ProofTactic::ApplyFact(fact) => Some(PostExecutionTactic::Have(ProofHave {
             proposition: crate::surface::proof::driver::fact_application_parts(fact).1,
-            proof: SourceProof::Script(vec![ProofTactic::ApplyFact(fact.clone())]),
+            proof: SourceProof::Script(vec![
+                ProofTactic::ApplyFact(fact.clone()),
+                ProofTactic::Known,
+            ]),
         })),
         ProofTactic::ApplyTheorem(application) => {
             Some(PostExecutionTactic::Apply(application.clone()))

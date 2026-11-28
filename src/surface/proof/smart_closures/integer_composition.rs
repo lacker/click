@@ -838,7 +838,11 @@ fn run_scope<'a>(
             step => scope = scope.driver().apply_step(step.clone())?,
         }
     }
-    Ok(scope)
+    if scope.is_complete() {
+        Ok(scope)
+    } else {
+        scope.driver().apply_step(ProofStep::Known)
+    }
 }
 
 #[cfg(test)]
@@ -989,7 +993,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             let marker = proof.checkpoint();
             let equal_arm = proof.focus_branch(ids[0])?;
             let scope = equal_arm.driver().open_have(impossible.clone())?;
-            let refuted = scope.driver().apply_step(substitution)?.join()?;
+            let refuted = scope.driver().apply_step_then_close(substitution)?.join()?;
             let equal_done = Self::close_refuted_fact(&refuted, &impossible)?;
             let unequal_done = equal_done
                 .focus_branch(ids[1])?
@@ -1655,9 +1659,14 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         if prepared.focused_discharged() {
             return Ok(Some(prepared));
         }
-        let finish = |branch: Proof<'a>| match &refuted_fact {
-            Some(fact) if !branch.focused_discharged() => Self::close_refuted_fact(&branch, fact),
-            _ => Ok(branch),
+        let finish = |branch: Proof<'a>| {
+            if branch.focused_discharged() {
+                return Ok(branch);
+            }
+            match &refuted_fact {
+                Some(fact) => Self::close_refuted_fact(&branch, fact),
+                None => branch.driver().apply_step(ProofStep::Known),
+            }
         };
         let result = if uses_negated_goal {
             let (proof, split, ids) = prepared.split_focused_if(surface_goal.clone())?;

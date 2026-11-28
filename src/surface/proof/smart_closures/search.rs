@@ -471,7 +471,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             surface_signed_integer_literal(&hi_y),
             surface_signed_integer_literal(target),
         ];
-        Ok(Some(proof.driver().apply_step(
+        Ok(Some(proof.driver().apply_step_then_close(
             ProofStep::ApplyPlannedTheorem {
                 application: TheoremApplication {
                     name: format!(
@@ -4207,7 +4207,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             premises: vec![source],
         };
         let Some(proof) = attempt::candidate_outcome(input.driver().apply_step(
-            super::super::wide_arithmetic::have(bound.clone(), vec![weakening]),
+            super::super::wide_arithmetic::have(bound.clone(), vec![weakening, ProofStep::Known]),
         ))?
         else {
             return Ok(None);
@@ -4269,7 +4269,10 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             premises: vec![first, second, finite(a), finite(b)],
         };
         let Some(proof) = attempt::candidate_outcome(proof.driver().apply_step(
-            super::super::wide_arithmetic::have(intermediate.clone(), vec![application]),
+            super::super::wide_arithmetic::have(
+                intermediate.clone(),
+                vec![application, ProofStep::Known],
+            ),
         ))?
         else {
             return Ok(None);
@@ -4364,7 +4367,10 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             premises: vec![source_bound, finite, sign],
         };
         let Some(proof) = attempt::candidate_outcome(proof.driver().apply_step(
-            super::super::wide_arithmetic::have(intermediate.clone(), vec![application]),
+            super::super::wide_arithmetic::have(
+                intermediate.clone(),
+                vec![application, ProofStep::Known],
+            ),
         ))?
         else {
             return Ok(None);
@@ -9269,7 +9275,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                     } else if indexed_read
                         && let Some(step) = Self::indexed_containment_step(premise)
                         && let Some(closed) =
-                            attempt::candidate_outcome(scope.driver().apply_step(step))?
+                            attempt::candidate_outcome(scope.driver().apply_step_then_close(step))?
                     {
                         Some(closed)
                     } else {
@@ -13867,7 +13873,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                 }
                 scope
                     .driver()
-                    .apply_step(ProofStep::ApplyPlannedTheorem {
+                    .apply_step_then_close(ProofStep::ApplyPlannedTheorem {
                         application: TheoremApplication {
                             name: law.into(),
                             arguments: arguments.into_iter().cloned().collect(),
@@ -13883,7 +13889,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             };
             let proof = prepared
                 .driver()
-                .apply_step(ProofStep::ApplyPlannedTheorem {
+                .apply_step_then_close(ProofStep::ApplyPlannedTheorem {
                     application: TheoremApplication {
                         name: "click::separation::viewable_restrict".into(),
                         arguments: [parent, child.clone()]

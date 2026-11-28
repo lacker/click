@@ -159,7 +159,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                 .driver()
                 .apply_step(super::super::wide_arithmetic::have(
                     intermediate.clone(),
-                    vec![application],
+                    vec![application, ProofStep::Known],
                 )),
         )
     }
@@ -278,7 +278,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             },
             premises: vec![lower.clone(), upper.clone(), finite(&lo), finite(&hi)],
         };
-        attempt::candidate_outcome(proof.driver().apply_step(step))
+        attempt::candidate_outcome(proof.driver().apply_step_then_close(step))
     }
 
     pub(in crate::surface::proof) fn try_float_zero_product_bound(
@@ -533,7 +533,10 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                 premises,
             };
             let Some(next) = attempt::candidate_outcome(proof.driver().apply_step(
-                super::super::wide_arithmetic::have(nonstrict.clone(), vec![application]),
+                super::super::wide_arithmetic::have(
+                    nonstrict.clone(),
+                    vec![application, ProofStep::Known],
+                ),
             ))?
             else {
                 return Ok(None);

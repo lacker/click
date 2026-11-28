@@ -88,7 +88,7 @@ fn retain<'a>(
         .driver()
         .open_have(goal)?
         .driver()
-        .apply_step(step)?
+        .apply_step_then_close(step)?
         .join()
 }
 

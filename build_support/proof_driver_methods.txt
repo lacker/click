@@ -12,6 +12,7 @@ prove_application_obligation
 apply_selected_theorem_application
 apply_step
 apply_step_at
+apply_step_then_close
 apply_step_with_obligation_proofs
 apply_step_with_origin
 apply_step_with_origin_inner

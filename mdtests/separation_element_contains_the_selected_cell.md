@@ -7,6 +7,7 @@ theorem signed(p: int32*, lo: int32, hi: int32, i: int32) {
     requires i < hi;
     ensures contains(memory(p[lo..hi]), memory(p[i])) by {
         apply(separation::contains_element(p, lo, hi, i));
+        close();
     }
 }
 theorem wide(p: uint64*, lo: uint64, hi: uint64, i: uint64) {
@@ -14,6 +15,7 @@ theorem wide(p: uint64*, lo: uint64, hi: uint64, i: uint64) {
     requires i < hi;
     ensures contains(memory(p[lo..hi]), memory(p[i])) by {
         apply(separation::contains_element(p, lo, hi, i));
+        close();
     }
 }
 ```

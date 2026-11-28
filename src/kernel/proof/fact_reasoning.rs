@@ -1216,8 +1216,7 @@ pub(crate) fn listed_comparison_fact_is_available(
     false
 }
 
-/// Complete an explicit theorem application across an equality representation
-/// boundary. Order claims retain their existing explicit `known` step.
+/// Match an explicitly selected fact across an equality representation boundary.
 pub(crate) fn listed_equality_fact_is_available(
     required: &Proposition,
     available: &[Proposition],

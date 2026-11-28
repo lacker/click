@@ -281,6 +281,14 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
             .apply_step_without_outcome_wrapping(step)
     }
 
+    /// Check a planner's selected step, then close its goal with the indexed closer.
+    pub(in crate::surface::proof) fn apply_step_then_close(
+        &self,
+        step: ProofStep,
+    ) -> Result<Proof<'a>, ClickError> {
+        self.apply_step(step)?.driver().apply_step(ProofStep::Known)
+    }
+
     /// Apply an ordinary derivation to its named target. Auxiliary transports
     /// use the same `have` scope as a written proof; no transport node remains.
     pub(in crate::surface::proof) fn apply_ordinary_transport_steps(
@@ -497,14 +505,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
             step => step,
         };
         let state = driver_proof.publish_checked_transition(transition)?;
-        let state = if matches!(
-            step,
-            ProofStep::ApplyFactUsing { .. }
-                | ProofStep::ApplyTheorem(_)
-                | ProofStep::ApplyTheoremUsing { .. }
-                | ProofStep::ApplyPlannedTheorem { .. }
-                | ProofStep::LetSatisfy(_)
-        ) {
+        let state = if matches!(step, ProofStep::LetSatisfy(_)) {
             close_goal_from_added_fact(state)
         } else {
             state
@@ -554,7 +555,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
     /// at the outcome, recorded with the facts it was proved under). An
     /// application's conclusion is such a checked fact, so it is recorded the
     /// same way: each spelled conclusion `C` is first proved as
-    /// `have C by { <this application> }` from the facts before the
+    /// `have C by { <this application>; close(); }` from the facts before the
     /// application. That `have` is the ordinary checked scope, and return
     /// certification checks its completion as it checks a written one: the
     /// facts it was proved under must be justified on the returning path.
@@ -571,7 +572,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
         application: &TheoremApplication,
     ) -> Result<Proof<'a>, ClickError> {
         let driver_proof = self.proof;
-        let body = ProofCertificate::from_validated_steps(vec![step.clone()]);
+        let body = ProofCertificate::from_validated_steps(vec![step.clone(), ProofStep::Known]);
         let mut current = driver_proof.clone();
         for conclusion in driver_proof.theorem_application_surface_conclusions(application) {
             check_verification_deadline()?;
@@ -603,9 +604,8 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
         })
     }
 
-    /// An `apply` that leaves its goal open adds its theorem's conclusions
-    /// as facts with no source spelling, so a later rewrite or `solve` could
-    /// not cite them. Spell each conclusion the way the caller would write it
+    /// A theorem application publishes its conclusions as kernel facts.
+    /// Spell each conclusion the way the caller would write it
     /// and record it as a checked `have` closed by `known`, which finds
     /// the fact the application just added. The `apply` keeps its own proof
     /// node: the spelling is an index entry for later premise lookups, not a

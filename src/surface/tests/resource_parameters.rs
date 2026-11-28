@@ -9,6 +9,7 @@ theorem restrict_again(A: Resource, B: Resource, a: Resource, b: Resource) {
     requires contains(B, b);
     ensures separate(a, b) by {
         apply(separation::separate_restrict(A, B, a, b));
+        close();
     }
 }
 "#;
@@ -81,6 +82,7 @@ fn resource_parameters_capture_simultaneously() {
         requires contains(A, a);
         ensures separate(b, a) by {
             apply(restrict_again(B, A, b, a));
+            close();
         }
     }
     "#;
@@ -104,6 +106,7 @@ fn resource_parameters_accept_declared_descriptors() {
         requires separate(cell(p), ticket(id));
         ensures separate(cell(p), ticket(id)) by {
             apply(transport(cell(p), ticket(id)));
+            close();
         }
     }
     "#;
@@ -220,7 +223,7 @@ fn generic_pointer_struct_parameters_apply_and_expand() {
     }
 
     let no_origin = source.replace("theorem identity<T>", "theorem requires_item(p: struct item*) { ensures p == p by { close(); } }\ntheorem identity<T>")
-        .replace("have p == p by { apply(identity(p)); }", "have p == p by { apply(identity(p)); }\n    have p == p by { apply(requires_item(p)); }");
+        .replace("have p == p by { apply(identity(p)); close(); }", "have p == p by { apply(identity(p)); close(); }\n    have p == p by { apply(requires_item(p)); }");
     assert!(no_origin.contains("apply(requires_item(p));"));
     let error = without_implicit_solve(|| verify_c_sources(&no_origin, &sources)).unwrap_err();
     assert!(

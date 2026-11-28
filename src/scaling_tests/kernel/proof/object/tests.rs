@@ -1216,16 +1216,14 @@ fn apply_fact_uses_only_selected_implication_and_evidence() {
         );
         let (((), work), maps) = crate::persistent::measure_persistent_work(|| {
             crate::instrumentation::measure_deterministic_work(|| {
-                assert!(
-                    root.apply_fact(&implication, std::slice::from_ref(&antecedent))
-                        .unwrap()
-                        .is_complete()
-                );
-                assert!(
-                    root.apply_fact_from_scope(&implication)
-                        .unwrap()
-                        .is_complete()
-                );
+                for applied in [
+                    root.apply_fact(&implication, std::slice::from_ref(&antecedent)),
+                    root.apply_fact_from_scope(&implication),
+                ] {
+                    let applied = applied.unwrap();
+                    assert!(!applied.is_complete());
+                    assert!(applied.focused_proposition().unwrap().1.contains(&conclusion));
+                }
                 assert!(root.apply_fact(&implication, &[]).is_err());
                 assert!(
                     root.apply_fact(&implication, &[atom("missing".into())])
@@ -1400,19 +1398,12 @@ fn apply_fact_quantified_sources_use_selected_alpha_keys() {
                         std::slice::from_ref(&guard),
                     )
                     .unwrap();
-                // Exact propagation may have published the original binder
-                // spelling already, allowing apply itself to close the goal.
-                let successor = if successor.is_complete() {
-                    successor
-                } else {
-                    successor
-                        .apply_known(PropositionKnownContext::Pure)
-                        .unwrap_or_else(|_| {
-                            panic!(
-                                "the applied existential must be available up to binder renaming"
-                            )
-                        })
-                };
+                assert!(!successor.is_complete());
+                let successor = successor
+                    .apply_known(PropositionKnownContext::Pure)
+                    .unwrap_or_else(|_| {
+                        panic!("the applied existential must be available up to binder renaming")
+                    });
                 assert!(successor.is_complete());
                 assert!(
                     root.apply_fact(

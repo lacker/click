@@ -1115,16 +1115,14 @@ establish the requested proposition; arm assumptions remain local.
 See [`have_disjunction_projection.md`](https://github.com/clicklang/click/blob/master/mdtests/have_disjunction_projection.md)
 and [`loop_exit_disjunction_projection.md`](https://github.com/clicklang/click/blob/master/mdtests/loop_exit_disjunction_projection.md).
 
-A simple tactic that adds a fact (`instantiate(...)`,
-`apply` and `obtain`) also closes a
-proposition goal that it adds, when it is the last written step or only
-`close()` follows it. An added order fact closes
-the goal under either form of the same claim: `0 <= e` closes the goal
-`e >= 0`, and `a < b` closes `b > a`, for machine and `Integer` operands
-alike. A written theorem application also closes the mirrored goal when
-its checked conclusion was already stated in the context. When other written
-steps follow, the goal stays open with the added fact available, so every remaining
-step is still checked.
+An application publishes its conclusions and leaves the goal open. The
+ordinary implicit closer can use those facts at the end of the block.
+Expansion writes an explicit `close()` when the application supplies the
+goal. Closers recognize equivalent order spellings such as `0 <= e` and
+`e >= 0`, or `a < b` and `b > a`, for machine and `Integer` operands.
+
+At the end of a block, `instantiate(...)` and `obtain` can close a goal
+under either order spelling when they add the corresponding fact.
 
 | Form | Class | Audience | Purpose | Details |
 | --- | --- | --- | --- | --- |
@@ -1179,8 +1177,7 @@ with the frontier it stands at; the end of a body is one `step()` of its own
 (`mdtests/solve_before_exit_in_arm_names_the_frontier.md`).
 
 Inside a `have` body, a tactic that already closed the goal (an `unfold`
-whose refreshed goal is an available fact or a theorem application whose
-conclusion is the goal) may be followed only by `close()`, which asserts the closed judgment
+whose refreshed goal is an available fact) may be followed only by `close()`, which asserts the closed judgment
 without emitting a step. So `unfold(f(x)); close();` means the same whether or not the
 unfold alone closed the goal
 (`mdtests/closer_after_unfold_closed_goal.md`); any other tactic after the
@@ -2588,7 +2585,8 @@ evaluation, in pure proofs, at the execution frontier, and on returned
 outcomes. Available facts and direct checking close these obligations,
 including evaluation conditions that are already established in scope.
 Ordinary implicit `close()` proves any remaining obligations. You can
-establish a missing fact first with `have P by { ... }`.
+establish a missing fact first with `have P by { ... }`. The conclusions
+are available to subsequent steps and to the implicit closer.
 
 **Failure, checking, and tools:**
 
@@ -2874,9 +2872,9 @@ range supplies those halves where they are available. The ordinary implicit
 solver tries any remaining premises, and a preceding `have` can supply a
 premise explicitly.
 
-The application adds the instantiated theorem conclusion and closes the
-focused goal if the conclusion proves it. Expansion retains the premise
-proofs as `have` steps followed by the bare application. A refusal names the
+The application adds the instantiated theorem conclusions and leaves the
+focused goal open. Expansion retains the premise proofs as `have` steps
+followed by the bare application and any needed closer. A refusal names the
 premise it could not prove.
 
 **Checked examples:** [`scalar_induction_after_helper_facts.md`](https://github.com/clicklang/click/blob/master/mdtests/scalar_induction_after_helper_facts.md), [`pure_induction_countdown_explicit.md`](https://github.com/clicklang/click/blob/master/mdtests/pure_induction_countdown_explicit.md), [`induction_hypothesis_cites_a_listed_range_with_its_span.md`](https://github.com/clicklang/click/blob/master/mdtests/induction_hypothesis_cites_a_listed_range_with_its_span.md), [`induction_hypothesis_owes_the_range_span.md`](https://github.com/clicklang/click/blob/master/mdtests/induction_hypothesis_owes_the_range_span.md).

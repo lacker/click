@@ -17,6 +17,7 @@ theorem restrict_again(A: Resource, B: Resource, a: Resource, b: Resource) {
     requires contains(B, b);
     ensures separate(a, b) by {
         apply(separation::separate_restrict(A, B, a, b));
+        close();
     }
 }
 
@@ -30,10 +31,12 @@ void copy_pos(struct cursor *target, struct cursor *source) {
     have separate(memory(target->pos), memory(source->data)) by {
         apply(restrict_again(memory(*target), memory(*source),
             memory(target->pos), memory(source->data)));
+        close();
     }
-    have contains(memory(*source), memory(*source)) by { apply(separation::contains_refl(memory(*source))); }
+    have contains(memory(*source), memory(*source)) by { apply(separation::contains_refl(memory(*source))); close(); }
     have separate(memory(target->pos), memory(*source)) by {
         apply(separation::separate_restrict(memory(*target), memory(*source), memory(target->pos), memory(*source)));
+        close();
     }
     step() by { close(); }
     step();

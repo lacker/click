@@ -109,13 +109,16 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                         ),
                     };
                     let scope = proof.driver().open_have(equality)?;
-                    let closed = scope.driver().apply_step(ProofStep::ApplyPlannedTheorem {
-                        application: TheoremApplication {
-                            name: "click::integer::multiply_commutative".into(),
-                            arguments: vec![source.clone(), written.clone()],
-                        },
-                        premises: vec![],
-                    })?;
+                    let closed =
+                        scope
+                            .driver()
+                            .apply_step_then_close(ProofStep::ApplyPlannedTheorem {
+                                application: TheoremApplication {
+                                    name: "click::integer::multiply_commutative".into(),
+                                    arguments: vec![source.clone(), written.clone()],
+                                },
+                                premises: vec![],
+                            })?;
                     proof = closed.join()?;
                 }
                 let proof = proof.driver().apply_step(ProofStep::ApplyPlannedTheorem {

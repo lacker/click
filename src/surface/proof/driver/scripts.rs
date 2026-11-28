@@ -630,26 +630,13 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
             // closer, leaves the goal closed.
             let retain_application = matches!(
                 tactic,
-                ProofTactic::ApplyFact(_)
-                    | ProofTactic::ApplyFactUsing { .. }
-                    | ProofTactic::ApplyTheoremUsing { .. }
-                    | ProofTactic::ApplyInduction { .. }
-                    | ProofTactic::Instantiate { .. }
-                    | ProofTactic::LetSatisfy(_)
+                ProofTactic::Instantiate { .. } | ProofTactic::LetSatisfy(_)
             ) && tactics.get(index + 1).is_some_and(|next| {
                 !matches!(
                     next,
                     ProofTactic::Known | ProofTactic::Close | ProofTactic::Solve
                 )
             });
-            let retain_application = retain_application
-                || (matches!(tactic, ProofTactic::ApplyTheorem(_))
-                    && tactics.get(index + 1).is_some_and(|next| {
-                        !matches!(
-                            next,
-                            ProofTactic::Known | ProofTactic::Close | ProofTactic::Solve
-                        )
-                    }));
             let before_application = retain_application.then(|| proof.clone());
             match tactic {
                 ProofTactic::IntroBlock { binder, body } => {
@@ -1047,13 +1034,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
             // the goal open after such a step.
             if matches!(
                 tactic,
-                ProofTactic::ApplyFact(_)
-                    | ProofTactic::ApplyFactUsing { .. }
-                    | ProofTactic::ApplyTheorem(_)
-                    | ProofTactic::ApplyTheoremUsing { .. }
-                    | ProofTactic::ApplyInduction { .. }
-                    | ProofTactic::Instantiate { .. }
-                    | ProofTactic::LetSatisfy(_)
+                ProofTactic::Instantiate { .. } | ProofTactic::LetSatisfy(_)
             ) && !proof.focused_discharged()
                 && checked_fact_spells_the_goal(&proof)
             {
@@ -1062,19 +1043,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
             if let Some(before) = before_application
                 && proof.focused_discharged()
             {
-                // An application guarantees every conclusion, including the
-                // parts that were not needed for the current goal.
-                let conclusions = match tactic {
-                    ProofTactic::ApplyTheorem(application)
-                    | ProofTactic::ApplyTheoremUsing { application, .. } => {
-                        before.theorem_application_surface_conclusions(application)
-                    }
-                    ProofTactic::ApplyFact(fact) | ProofTactic::ApplyFactUsing { fact, .. } => {
-                        vec![crate::surface::proof::driver::fact_application_parts(fact).1]
-                    }
-                    _ => Vec::new(),
-                };
-                proof = before.retain_completed_goal(&proof, &conclusions)?;
+                proof = before.retain_completed_goal(&proof, &[])?;
             }
             if let Some(capture) = nested_capture {
                 capture.finish(&proof);
@@ -1121,9 +1090,8 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
                 premises: vec![premise],
             })
             .ok()?;
-        // The lemma's conclusion is the goal, so applying it discharges the
-        // goal where it is stated exactly; the focus then leaves it, though
-        // sibling goals (other members of a loop bundle) may remain.
+        // Discharge the focused goal from the lemma's conclusion. Sibling
+        // goals in the same loop bundle can remain open.
         if applied.is_complete() || applied.goal() != driver_proof.goal() {
             return Some(applied);
         }

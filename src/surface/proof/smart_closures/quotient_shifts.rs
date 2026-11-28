@@ -191,13 +191,16 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                     .driver()
                     .apply_step(super::super::wide_arithmetic::have(
                         shifted.clone(),
-                        vec![ProofStep::ApplyPlannedTheorem {
-                            application: TheoremApplication {
-                                name: "click::integer::nonnegative_quotient_shift".into(),
-                                arguments: vec![x.clone(), d.clone(), k.clone()],
+                        vec![
+                            ProofStep::ApplyPlannedTheorem {
+                                application: TheoremApplication {
+                                    name: "click::integer::nonnegative_quotient_shift".into(),
+                                    arguments: vec![x.clone(), d.clone(), k.clone()],
+                                },
+                                premises: guards,
                             },
-                            premises: guards,
-                        }],
+                            ProofStep::Known,
+                        ],
                     ))?;
                 if proof.focused_discharged() {
                     return Ok(Some(proof));

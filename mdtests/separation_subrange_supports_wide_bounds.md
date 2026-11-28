@@ -9,6 +9,7 @@ theorem wide(p: int32*, lo: uint64, hi: uint64, a: uint64, b: uint64) {
     requires b <= hi;
     ensures contains(memory(p[lo..hi]), memory(p[a..b])) by {
         apply(separation::contains_subrange(p, lo, hi, a, b));
+        close();
     }
 }
 ```

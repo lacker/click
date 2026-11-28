@@ -14356,7 +14356,7 @@ fn linear_open_have_retains_the_selected_theorem_application() {
                             SourceProof::Script(body)
                                 if matches!(
                                     body.as_slice(),
-                                    [ProofTactic::ApplyTheorem(application)]
+                                    [ProofTactic::ApplyTheorem(application), ProofTactic::Known]
                                         if application.name == "int32_reflexive"
                                 )
                         )
@@ -15795,7 +15795,7 @@ fn branch_arms_retain_nested_have_proofs() {
                     SourceProof::Script(body)
                         if matches!(
                             body.as_slice(),
-                            [ProofTactic::ApplyTheorem(application)]
+                            [ProofTactic::ApplyTheorem(application), ProofTactic::Known]
                                 if application.name == "int32_reflexive"
                         )
                 )
@@ -27609,7 +27609,10 @@ fn known_argument_evaluation_expands_without_an_extra_proof() {
     let (source, _) = mdtest_sources("mdtests/pure_apply_argument_obligations.md");
     let claim = "use_argument.ensures_0";
     let expanded = expand_c_claim_source_by_label(&source, &[], claim).unwrap();
-    assert!(expanded.contains("apply(identity((x + 1)));"), "{expanded}");
+    assert!(
+        expanded.contains("apply(identity((x + 1)));\n        close();"),
+        "{expanded}"
+    );
     assert!(!expanded.contains("have "), "{expanded}");
     assert!(!expanded.contains(" using {"), "{expanded}");
     without_implicit_solve_for_claim(claim, || {

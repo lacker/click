@@ -362,6 +362,19 @@ impl<'p, 'a> ProofDriver<'p, ProofScope<'a>> {
         Ok(next)
     }
 
+    /// Check a planner's selected step and explicitly close the nested goal.
+    pub(in crate::surface::proof) fn apply_step_then_close(
+        &self,
+        step: ProofStep,
+    ) -> Result<ProofScope<'a>, ClickError> {
+        let scope = self.apply_step(step)?;
+        if scope.is_complete() {
+            Ok(scope)
+        } else {
+            scope.driver().apply_step(ProofStep::Known)
+        }
+    }
+
     /// Runs the implicit tail's search inside this scope.
     ///
     /// Each selected statement is checked and retained by

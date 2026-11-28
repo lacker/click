@@ -14,6 +14,7 @@ void keep(uint8* bytes, uint64 i, uint64 k) {
     have separate(memory(*(bytes + i)), memory(*(bytes + k))) by {
         have i != k by { close() using { k < i; }; }
         apply(separation::separate_elements(bytes, i, k));
+        close();
     }
     mark before;
     step();

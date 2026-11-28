@@ -109,6 +109,7 @@ src/surface/proof/driver/obligations.rs	driver	ProofDriver::plan_bare_statement_
 src/surface/proof/driver/outcome_cases.rs	driver	ProofDriver::split_outcome_paths	driver	2
 src/surface/proof/driver/scopes.rs	driver	ProofDriver::apply_expanded_execution_if	driver	1
 src/surface/proof/driver/scopes.rs	driver	ProofDriver::apply_step	driver	1
+src/surface/proof/driver/scopes.rs	driver	ProofDriver::apply_step_then_close	driver	1
 src/surface/proof/driver/scopes.rs	driver	ProofDriver::apply_theorem_application	driver	1
 src/surface/proof/driver/scopes.rs	driver	ProofDriver::complete_nested_scope	driver	1
 src/surface/proof/driver/scopes.rs	driver	ProofDriver::complete_scope	driver	1
@@ -141,7 +142,7 @@ src/surface/proof/driver/scripts.rs	driver	ProofDriver::close_with_unsigned_lemm
 src/surface/proof/driver/scripts.rs	driver	ProofDriver::close_with_unsigned_lemma	try_direct_logical_closure	1
 src/surface/proof/driver/scripts.rs	driver	ProofDriver::have_by_integer_arithmetic	driver	1
 src/surface/proof/driver/scripts.rs	driver	ProofDriver::apply_scoped_intro	driver	2
-src/surface/proof/driver/scripts.rs	driver	ProofDriver::run_addressed_linear_script	driver	20
+src/surface/proof/driver/scripts.rs	driver	ProofDriver::run_addressed_linear_script	driver	19
 src/surface/proof/driver/scripts.rs	driver	ProofDriver::run_addressed_linear_script	try_restricted_solve_closure	1
 src/surface/proof/driver/scripts.rs	driver	ProofDriver::run_addressed_linear_script	try_solve_closure	3
 src/surface/proof/driver/scripts.rs	driver	ProofDriver::run_conjunct_proofs	driver	3
@@ -157,6 +158,7 @@ src/surface/proof/driver/state.rs	driver	ProofDriver::complete_fixed_state_oblig
 src/surface/proof/driver/steps.rs	driver	ProofDriver::apply_have_step	driver	2
 src/surface/proof/driver/steps.rs	driver	ProofDriver::apply_step	driver	1
 src/surface/proof/driver/steps.rs	driver	ProofDriver::apply_step_at	driver	1
+src/surface/proof/driver/steps.rs	driver	ProofDriver::apply_step_then_close	driver	1
 src/surface/proof/driver/steps.rs	driver	ProofDriver::apply_ordinary_transport_steps	driver	1
 src/surface/proof/driver/steps.rs	driver	ProofDriver::apply_step_with_origin_inner	driver	15
 src/surface/proof/driver/steps.rs	driver	ProofDriver::apply_step_without_outcome_wrapping	apply_arithmetic_using	1
@@ -712,11 +714,11 @@ src/surface/proof/smart_closures/integer_composition.rs	search	ProofSearch::appl
 src/surface/proof/smart_closures/search.rs	search	ProofSearch::try_equality_from_opposite_bounds	apply_arithmetic_using	1
 src/surface/proof/smart_closures/search.rs	search	ProofSearch::try_equality_from_opposite_bounds	driver	3
 src/surface/proof/smart_closures/search.rs	search	ProofSearch::try_equality_from_opposite_bounds	try_restricted_solve_closure	1
-src/surface/proof/smart_closures/integer_composition.rs	search	ProofSearch::apply_integer_composition	driver	7
+src/surface/proof/smart_closures/integer_composition.rs	search	ProofSearch::apply_integer_composition	driver	8
 src/surface/proof/smart_closures/integer_composition.rs	search	ProofSearch::apply_integer_composition	close_refuted_fact	2
 src/surface/proof/smart_closures/integer_composition.rs	search	ProofSearch::apply_integer_composition	try_direct_logical_closure	1
 src/surface/proof/smart_closures/signed_intervals.rs	search	ProofSearch::apply_signed_interval_composition	driver	23
-src/surface/proof/smart_closures/integer_composition.rs	mixed	::run_scope	driver	4
+src/surface/proof/smart_closures/integer_composition.rs	mixed	::run_scope	driver	5
 src/surface/proof/smart_closures/integer_composition.rs	search	ProofSearch::close_refuted_fact	driver	5
 src/surface/proof/smart_closures/integer_composition.rs	search	ProofSearch::close_refuted_fact	try_integer_algebra	1
 src/surface/proof/smart_closures/search.rs	search	ProofSearch::try_goal_conditional_closure	driver	2

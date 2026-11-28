@@ -1682,11 +1682,10 @@ impl<'a> Proof<'a> {
                 for fact in &added_facts {
                     facts = facts.with_kernel_checked_fact(fact.clone());
                 }
-                let complete = self.goal().is_some_and(|goal| facts.contains(goal));
                 self.checked_fact_transition(
                     self.state().locals().clone(),
                     facts,
-                    complete,
+                    false,
                     added_facts.clone(),
                     added_facts,
                 )

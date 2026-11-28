@@ -2,7 +2,7 @@
 //! transport steps.
 
 use super::*;
-use crate::kernel::proof::fact_reasoning::{InstanceArgument, listed_equality_fact_is_available};
+use crate::kernel::proof::fact_reasoning::InstanceArgument;
 use crate::kernel::proof::{CheckedProofCasePartition, OutcomeEvidenceFork, OutcomeForkArm};
 
 const MAX_EXISTENTIAL_PROJECTION_WORK: usize = 4096;
@@ -746,14 +746,10 @@ impl<'a> Proof<'a> {
             }
             facts = facts.with_kernel_checked_fact(conclusion.clone());
         }
-        let complete = self.goal().is_some_and(|goal| {
-            facts.introduced_goal_available(goal)
-                || listed_equality_fact_is_available(goal, &prepared.conclusions)
-        });
         let transition = self.checked_fact_transition(
             self.state().locals().clone(),
             facts,
-            complete,
+            false,
             added,
             prepared.conclusions,
         );
@@ -880,16 +876,10 @@ impl<'a> Proof<'a> {
             }
             facts = facts.with_kernel_checked_fact(fact.clone());
         }
-        // Only the selected theorem's checked conclusions participate in
-        // this representation bridge; ambient candidate matching stays unchanged.
-        let complete = self.goal().is_some_and(|goal| {
-            facts.introduced_goal_available(goal)
-                || listed_equality_fact_is_available(goal, &applied)
-        });
         Ok(self.checked_fact_transition(
             self.state().locals().clone(),
             facts,
-            complete,
+            false,
             added_facts,
             applied,
         ))
@@ -928,14 +918,10 @@ impl<'a> Proof<'a> {
             view.effect_facts,
             view.spec_definitions,
         )?;
-        let complete = self.goal().is_some_and(|goal| {
-            checked.facts.introduced_goal_available(goal)
-                || listed_equality_fact_is_available(goal, &checked.checked_facts)
-        });
         Ok(self.checked_fact_transition(
             self.state().locals().clone(),
             checked.facts,
-            complete,
+            false,
             checked.added_facts,
             checked.checked_facts,
         ))
@@ -986,13 +972,9 @@ impl<'a> Proof<'a> {
             &execution.core.effect_facts,
             context.spec_definitions,
         )?;
-        let complete = self.goal().is_some_and(|goal| {
-            checked.facts.introduced_goal_available(goal)
-                || listed_equality_fact_is_available(goal, &checked.checked_facts)
-        });
         Ok(self.checked_execution_transition(
             checked.facts,
-            complete,
+            false,
             execution,
             checked.added_facts,
             checked.checked_facts,

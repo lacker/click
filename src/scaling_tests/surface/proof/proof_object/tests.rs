@@ -2714,10 +2714,12 @@ fn fixed_state_application_proves_premises_and_replays_explicitly() {
             work <= *baseline.get_or_insert(work),
             "{size} facts increased preparation work to {work}"
         );
-        let completed = root
+        let applied = root
             .driver()
             .apply_theorem_application(&application)
             .unwrap();
+        assert!(!applied.is_complete());
+        let completed = applied.driver().apply_step(ProofStep::Known).unwrap();
         assert!(completed.is_complete());
         let tactics = completed.certificate().to_proof_tactics();
         assert!(matches!(tactics.first(), Some(ProofTactic::Have(_))));

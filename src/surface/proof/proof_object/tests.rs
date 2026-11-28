@@ -4221,14 +4221,15 @@ fn apply_fact_uses_selected_implication_and_alpha_equivalent_antecedent() {
         assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
         assert_eq!(extracted.certificate().steps(), &[step]);
-        // With binders numbered by height the renamed antecedent is the
-        // required one exactly, and the step closes the goal on the spot,
-        // which leaves no added fact; any fact it does report is the target.
+        assert!(extracted.facts().contains(&target));
+        assert!(!extracted.is_complete());
         assert!(
-            extracted.added_facts().is_empty()
-                || extracted.added_facts() == std::slice::from_ref(&target)
+            extracted
+                .driver()
+                .apply_step(ProofStep::Known)
+                .unwrap()
+                .is_complete()
         );
-        assert!(extracted.is_complete());
 
         let missing_antecedent = Proof::for_pure_goal(
             "missing implication antecedent",
@@ -5372,7 +5373,7 @@ fn smart_retry_uses_static_local_array_qualified_source() {
 }
 
 #[test]
-fn nested_have_accepts_trailing_known_after_closure() {
+fn nested_have_closes_with_known_after_apply() {
     let click_file = crate::surface::parse(
         r#"
             theorem less_than_implies_less_equal(left: int32, right: int32) { requires left < right; ensures left <= right; }
@@ -5453,9 +5454,7 @@ fn nested_have_accepts_trailing_known_after_closure() {
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
-    // The theorem application's conclusion is the have's goal, so the goal
-    // is discharged before the script's final `known`; that trailing
-    // tactic asserts a closed judgment and must not decline the script.
+    // The application provides the fact consumed by the final closer.
     let scope = root
         .driver()
         .open_have(conclusion.clone())
@@ -5470,7 +5469,7 @@ fn nested_have_accepts_trailing_known_after_closure() {
         .expect("the nested script is a bounded check");
     assert!(
         closed.is_some(),
-        "a trailing `known` after the discharging application must be accepted"
+        "the final closer should consume the applied fact"
     );
 
     let script = [
@@ -5493,11 +5492,16 @@ fn nested_have_accepts_trailing_known_after_closure() {
     assert_eq!(
         take_checked_have_operations(),
         5,
-        "three written proof steps plus the nested have's open and join; retaining the application adds no checks"
+        "three written proof steps plus the nested have's open and join"
     );
-    assert!(matches!(completed.body().certificate().steps(), [
-        ProofStep::Have { proof, .. }, ProofStep::Have { .. }, ProofStep::Known
-    ] if matches!(proof.steps(), [ProofStep::ApplyTheoremUsing { .. }])));
+    assert!(matches!(
+        completed.body().certificate().steps(),
+        [
+            ProofStep::ApplyTheoremUsing { .. },
+            ProofStep::Have { .. },
+            ProofStep::Known
+        ]
+    ));
     let error = scope
         .driver()
         .try_authoritative_linear_script(&[
@@ -8589,7 +8593,7 @@ fn symbolic_arithmetic_definedness_retains_two_indexed_theorem_premises() {
             assert!(closed.is_complete());
             assert!(matches!(
                 closed.certificate().steps(),
-                [ProofStep::ApplyTheoremUsing { application, premises }]
+                [ProofStep::ApplyTheoremUsing { application, premises }, ProofStep::Known]
                         if application.name == *theorem_name
                             && premises.as_slice() == selected
             ));
@@ -8641,7 +8645,7 @@ fn symbolic_arithmetic_definedness_retains_two_indexed_theorem_premises() {
             );
             assert!(matches!(
                 pure_closed.certificate().steps(),
-                [ProofStep::ApplyTheoremUsing { application, premises }]
+                [ProofStep::ApplyTheoremUsing { application, premises }, ProofStep::Known]
                     if application.name == *theorem_name
                         && premises.as_slice() == selected
             ));
@@ -9448,7 +9452,14 @@ fn pure_apply_using_selects_a_checked_conjunct_without_accepting_disjunctions() 
             premises: vec![selected],
         })
         .expect("a checked conjunct should satisfy the theorem requirement");
-    assert!(closed.is_complete());
+    assert!(!closed.is_complete());
+    assert!(
+        closed
+            .driver()
+            .apply_step(ProofStep::Known)
+            .unwrap()
+            .is_complete()
+    );
 }
 
 #[test]

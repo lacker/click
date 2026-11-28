@@ -1704,20 +1704,15 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             .into_iter()
             .collect::<Vec<_>>();
         let facts = facts.with_fact(conclusion.clone());
-        let complete = match &branch.obligation {
-            ProofObligation::Proposition(goal) => facts.contains(goal.proposition()),
-            _ => false,
-        };
         Ok(Self::new(
             ProofState {
                 termination: self.state.termination.clone(),
                 termination_root: self.state.termination_root,
                 locals: self.state.locals.clone(),
-                open_branches: self.state.open_branches.discharged_if_at(
-                    self.focused_branch,
-                    complete,
-                    facts,
-                ),
+                open_branches: self
+                    .state
+                    .open_branches
+                    .with_facts_at(self.focused_branch, facts),
                 checked_facts: Arc::new(added.clone()),
                 added_facts: Arc::new(added),
             },
@@ -3030,19 +3025,6 @@ impl<P: Clone, O: Clone, E: Clone> ProofBranches<ProofBranch<ProofObligation<P, 
             unreachable!("a frontier transition requires the addressed frontier goal");
         };
         self.replace_execution_at(at, facts, execution)
-    }
-
-    pub(crate) fn discharged_if_at(
-        &self,
-        at: BranchId,
-        complete: bool,
-        facts: PureFactStore,
-    ) -> Self {
-        if complete {
-            self.close_at(at)
-        } else {
-            self.with_facts_at(at, facts)
-        }
     }
 
     pub(crate) fn is_discharged(&self) -> bool {

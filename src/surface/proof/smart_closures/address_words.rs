@@ -210,13 +210,16 @@ impl Words<'_, '_> {
         self.record(
             a,
             b,
-            vec![ProofStep::ApplyPlannedTheorem {
-                application: TheoremApplication {
-                    name: format!("click::integer::{name}"),
-                    arguments,
+            vec![
+                ProofStep::ApplyPlannedTheorem {
+                    application: TheoremApplication {
+                        name: format!("click::integer::{name}"),
+                        arguments,
+                    },
+                    premises,
                 },
-                premises,
-            }],
+                ProofStep::Known,
+            ],
         )
     }
     fn aligned(&mut self, base: &E, mask: u64) -> Result<Option<SyntaxProposition>, ClickError> {

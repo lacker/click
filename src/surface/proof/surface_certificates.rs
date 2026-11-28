@@ -1732,16 +1732,19 @@ pub(super) fn viewability_restriction_steps(
         steps.push(ProofStep::Have {
             proposition: containment.clone(),
             proof: Box::new(
-                ProofCertificate::from_steps(vec![ProofStep::ApplyPlannedTheorem {
-                    application: TheoremApplication {
-                        name: "click::separation::contains_subrange".into(),
-                        arguments: [base, lo, hi, inner_lo, inner_hi]
-                            .into_iter()
-                            .cloned()
-                            .collect(),
+                ProofCertificate::from_steps(vec![
+                    ProofStep::ApplyPlannedTheorem {
+                        application: TheoremApplication {
+                            name: "click::separation::contains_subrange".into(),
+                            arguments: [base, lo, hi, inner_lo, inner_hi]
+                                .into_iter()
+                                .cloned()
+                                .collect(),
+                        },
+                        premises: bounds.to_vec(),
                     },
-                    premises: bounds.to_vec(),
-                }])
+                    ProofStep::Known,
+                ])
                 .expect("ordinary theorem application is a certificate step"),
             ),
         });
@@ -1760,6 +1763,7 @@ pub(super) fn viewability_restriction_steps(
         },
         premises: cited,
     });
+    steps.push(ProofStep::Known);
     Some((steps, narrow_range))
 }
 
@@ -1847,13 +1851,16 @@ pub(super) fn rebased_viewability_restriction_steps(
         right: observe(right),
     };
     let apply = |name: &str, arguments, premises| {
-        vec![ProofStep::ApplyPlannedTheorem {
-            application: TheoremApplication {
-                name: format!("click::separation::{name}"),
-                arguments,
+        vec![
+            ProofStep::ApplyPlannedTheorem {
+                application: TheoremApplication {
+                    name: format!("click::separation::{name}"),
+                    arguments,
+                },
+                premises,
             },
-            premises,
-        }]
+            ProofStep::Known,
+        ]
     };
     let arg = |resource: &ResourceSubject| SyntaxTerm::Resource(Box::new(resource.clone()));
     let mut cited = premises.to_vec();
@@ -2054,16 +2061,19 @@ pub(super) fn computed_viewability_restriction_steps(
     let identity = compare(observe(inner_hi.clone()), ComparisonOperator::Equal, exact);
     steps.push(have(
         identity.clone(),
-        vec![ProofStep::ApplyPlannedTheorem {
-            application: TheoremApplication {
-                name: law.into(),
-                arguments: vec![
-                    SyntaxTerm::ProgramExpression(*left),
-                    SyntaxTerm::ProgramExpression(*right),
-                ],
+        vec![
+            ProofStep::ApplyPlannedTheorem {
+                application: TheoremApplication {
+                    name: law.into(),
+                    arguments: vec![
+                        SyntaxTerm::ProgramExpression(*left),
+                        SyntaxTerm::ProgramExpression(*right),
+                    ],
+                },
+                premises: vec![defined],
             },
-            premises: vec![defined],
-        }],
+            ProofStep::Known,
+        ],
     ));
     cited.push(identity.clone());
     for (left, right) in [
@@ -2083,30 +2093,36 @@ pub(super) fn computed_viewability_restriction_steps(
     };
     steps.push(have(
         containment.clone(),
-        vec![ProofStep::ApplyPlannedTheorem {
-            application: TheoremApplication {
-                name: "click::separation::contains_subrange".into(),
-                arguments: [base, lo, hi, inner_lo, inner_hi]
-                    .into_iter()
-                    .cloned()
-                    .collect(),
+        vec![
+            ProofStep::ApplyPlannedTheorem {
+                application: TheoremApplication {
+                    name: "click::separation::contains_subrange".into(),
+                    arguments: [base, lo, hi, inner_lo, inner_hi]
+                        .into_iter()
+                        .cloned()
+                        .collect(),
+                },
+                premises: cited.clone(),
             },
-            premises: cited.clone(),
-        }],
+            ProofStep::Known,
+        ],
     ));
     cited.push(containment);
     steps.push(have(
         target.clone(),
-        vec![ProofStep::ApplyPlannedTheorem {
-            application: TheoremApplication {
-                name: "click::separation::viewable_restrict".into(),
-                arguments: vec![
-                    SyntaxTerm::Resource(Box::new(parent)),
-                    SyntaxTerm::Resource(Box::new(child)),
-                ],
+        vec![
+            ProofStep::ApplyPlannedTheorem {
+                application: TheoremApplication {
+                    name: "click::separation::viewable_restrict".into(),
+                    arguments: vec![
+                        SyntaxTerm::Resource(Box::new(parent)),
+                        SyntaxTerm::Resource(Box::new(child)),
+                    ],
+                },
+                premises: cited,
             },
-            premises: cited,
-        }],
+            ProofStep::Known,
+        ],
     ));
     Some(steps)
 }
@@ -3957,9 +3973,10 @@ pub(super) fn plan_int32_increment_definedness_theorem(
     premise_pairs: &[(Proposition, SyntaxProposition)],
 ) -> Option<Vec<ProofTactic>> {
     if let Some((value, surface)) = int32_increment_bound(goal, premise_pairs, false) {
-        return Some(vec![int32_increment_definedness_application(
-            value, surface,
-        )]);
+        return Some(vec![
+            int32_increment_definedness_application(value, surface),
+            ProofTactic::Known,
+        ]);
     }
 
     let (value, surface) = int32_increment_bound(goal, premise_pairs, true)?;
@@ -3980,19 +3997,23 @@ pub(super) fn plan_int32_increment_definedness_theorem(
     Some(vec![
         ProofTactic::Have(ProofHave {
             proposition: increment,
-            proof: SourceProof::Script(vec![int32_increment_definedness_application(
-                value, surface,
-            )]),
+            proof: SourceProof::Script(vec![
+                int32_increment_definedness_application(value, surface),
+                ProofTactic::Known,
+            ]),
         }),
         ProofTactic::Have(ProofHave {
             proposition: equal(value_plus_one.clone(), one_plus_value.clone()),
-            proof: SourceProof::Script(vec![ProofTactic::ApplyTheoremUsing {
-                application: TheoremApplication {
-                    name: "click::integer::sum_commute".to_string(),
-                    arguments: vec![value_plus_one.clone(), observed, one],
+            proof: SourceProof::Script(vec![
+                ProofTactic::ApplyTheoremUsing {
+                    application: TheoremApplication {
+                        name: "click::integer::sum_commute".to_string(),
+                        arguments: vec![value_plus_one.clone(), observed, one],
+                    },
+                    premises: vec![equal(value_plus_one.clone(), value_plus_one.clone())],
                 },
-                premises: vec![equal(value_plus_one.clone(), value_plus_one.clone())],
-            }]),
+                ProofTactic::Known,
+            ]),
         }),
         ProofTactic::Rewrite(equal(one_plus_value, value_plus_one)),
         ProofTactic::Known,
