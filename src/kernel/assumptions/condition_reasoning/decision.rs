@@ -1408,24 +1408,12 @@ impl PureFactContext {
                         left.as_ref().clone(),
                     ))
                     .copied(),
-                OldConditionTerm::AddressOffsetEqual(left, right) => self
-                    .condition_facts
-                    .get(&OldConditionTerm::address_offset_equal(
-                        right.as_ref().clone(),
-                        left.as_ref().clone(),
-                    ))
-                    .copied(),
-                OldConditionTerm::PointerEqual(left, right) => self
-                    .condition_facts
-                    .get(&OldConditionTerm::PointerEqual(right.clone(), left.clone()))
-                    .copied(),
-                OldConditionTerm::AddressEqual(left, right) => self
-                    .condition_facts
-                    .get(&OldConditionTerm::address_equal(
-                        right.as_ref().clone(),
-                        left.as_ref().clone(),
-                    ))
-                    .copied(),
+                condition
+                    if let Some(pair) =
+                        crate::kernel::WrittenPointerEquality::from_condition(condition) =>
+                {
+                    pair.reversed_exact_value(&self.condition_facts)
+                }
                 OldConditionTerm::Compare {
                     format: MachineIntegerType::Int32,
                     relation: CompareRelation::LessThan,

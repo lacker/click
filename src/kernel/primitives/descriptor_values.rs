@@ -449,6 +449,34 @@ impl<'a> WrittenPointerEquality<'a> {
             Self::Pointer([a, b]) => ConditionIdentity::PointerEqual(a, b),
         }
     }
+    fn reversed(self) -> Self {
+        match self {
+            Self::Address([a, b]) => Self::Address([b, a]),
+            Self::Offset([a, b]) => Self::Offset([b, a]),
+            Self::Pointer([a, b]) => Self::Pointer([b, a]),
+        }
+    }
+
+    /// Exact fact lookup uses the same constant folding as the reversed
+    /// address and offset constructors. Full pointer equality stays as written.
+    pub(crate) fn reversed_exact_value(
+        self,
+        facts: &crate::kernel::fact_collections::FactMap<OldConditionTerm, bool>,
+    ) -> Option<bool> {
+        let reversed = self.reversed();
+        let constant = match reversed {
+            Self::Address([a, b]) => a
+                .shared()
+                .equality_value(b.shared(), SharedAddressOffset::written_constant),
+            Self::Offset([a, b]) => a
+                .shared()
+                .equality_value(b.shared(), SharedAddressOffset::written_constant),
+            Self::Pointer(_) => None,
+        };
+        let key = constant.map_or_else(|| reversed.identity(), ConditionIdentity::Constant);
+        facts.get(&key as &dyn BorrowedConditionKey).copied()
+    }
+
     pub(crate) fn cited_value(
         self,
         facts: &std::collections::HashMap<OldConditionTerm, bool>,
@@ -458,13 +486,7 @@ impl<'a> WrittenPointerEquality<'a> {
                 .get(&pair.identity() as &dyn BorrowedConditionKey)
                 .copied()
         };
-        lookup(self).or_else(|| {
-            lookup(match self {
-                Self::Address([a, b]) => Self::Address([b, a]),
-                Self::Offset([a, b]) => Self::Offset([b, a]),
-                Self::Pointer([a, b]) => Self::Pointer([b, a]),
-            })
-        })
+        lookup(self).or_else(|| lookup(self.reversed()))
     }
 }
 
@@ -1122,6 +1144,49 @@ mod protocol_value_tests {
         assert_eq!(left.cmp(&right), constructors[0].cmp(&constructors[1]));
         assert!(!left.root().unwrap().has_cached_native_argument());
         assert!(!right.root().unwrap().has_cached_native_argument());
+    }
+
+    #[test]
+    fn reversed_pointer_fact_lookup_preserves_folded_and_written_keys() {
+        let a = Address::symbolic(Variable(982861));
+        let b = Address::symbolic(Variable(982862));
+        let p = Pointer::new(a.clone(), ProgramType::Int32Pointer);
+        let q = Pointer::new(b.clone(), ProgramType::Int32Pointer);
+        let x = AddressOffset::variable(Variable(982863));
+        let y = AddressOffset::constant(3);
+        let z = AddressOffset::constant(4);
+        for (pair, expected) in [
+            (
+                WrittenPointerEquality::Address([&a, &b]),
+                OldConditionTerm::address_equal(b.clone(), a.clone()),
+            ),
+            (
+                WrittenPointerEquality::Address([&a, &a]),
+                OldConditionTerm::Constant(true),
+            ),
+            (
+                WrittenPointerEquality::Offset([&x, &y]),
+                OldConditionTerm::address_offset_equal(y.clone(), x.clone()),
+            ),
+            (
+                WrittenPointerEquality::Offset([&y, &z]),
+                OldConditionTerm::Constant(false),
+            ),
+            (
+                WrittenPointerEquality::Pointer([&p, &q]),
+                OldConditionTerm::PointerEqual(Box::new(q.clone()), Box::new(p.clone())),
+            ),
+            (
+                WrittenPointerEquality::Pointer([&p, &p]),
+                OldConditionTerm::PointerEqual(Box::new(p.clone()), Box::new(p.clone())),
+            ),
+        ] {
+            assert_eq!(pair.reversed_exact_value(&Default::default()), None);
+            for truth in [false, true] {
+                let facts = [(expected.clone(), truth)].into_iter().collect();
+                assert_eq!(pair.reversed_exact_value(&facts), Some(truth));
+            }
+        }
     }
 
     #[test]
