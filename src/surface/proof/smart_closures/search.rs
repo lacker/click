@@ -6569,11 +6569,6 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             };
             proof = unfolded;
             unfolded_any = true;
-            // The unfold can close the goal itself: the refreshed goal may
-            // already be an available fact, which leaves no goal to search.
-            if proof.is_complete() {
-                return Ok(Some(proof));
-            }
             if let Some(closed) =
                 crate::kernel::search::ProofSearch::try_direct_logical_closure(&(proof))?
             {

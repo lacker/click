@@ -1708,15 +1708,12 @@ impl<'a> Proof<'a> {
                             &lower,
                         )
                     });
-                    let complete = facts.contains(&kernel);
-                    (!complete).then(|| {
-                        self.refined_proposition(
-                            self.refined_branch_state(facts.clone()),
-                            kernel,
-                            surface,
-                            false,
-                        )
-                    })
+                    Some(self.refined_proposition(
+                        self.refined_branch_state(facts.clone()),
+                        kernel,
+                        surface,
+                        false,
+                    ))
                 }
                 Some(Obligation::Frontier(_) | Obligation::FunctionOutcome(_)) => Some(
                     self.focused_branch()
@@ -1865,15 +1862,12 @@ impl<'a> Proof<'a> {
                         Err(_) => goal.kernel().clone(),
                     }
                 };
-                let complete = facts.contains(&kernel);
-                (!complete).then(|| {
-                    self.refined_proposition(
-                        self.refined_branch_state(facts.clone()),
-                        kernel,
-                        surface.or(original_surface),
-                        false,
-                    )
-                })
+                Some(self.refined_proposition(
+                    self.refined_branch_state(facts.clone()),
+                    kernel,
+                    surface.or(original_surface),
+                    false,
+                ))
             }
             Some(Obligation::Frontier(_) | Obligation::FunctionOutcome(_)) => Some(
                 self.focused_branch()

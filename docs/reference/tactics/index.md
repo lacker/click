@@ -1178,13 +1178,9 @@ the same proof state, followed like every script by the implicit tail. A
 with the frontier it stands at; the end of a body is one `step()` of its own
 (`mdtests/solve_before_exit_in_arm_names_the_frontier.md`).
 
-Inside a `have` body, a tactic that already closed the goal (an `unfold`
-whose refreshed goal is an available fact or a theorem application whose
-conclusion is the goal) may be followed only by `close()`, which asserts the closed judgment
-without emitting a step. So `unfold(f(x)); close();` means the same whether or not the
-unfold alone closed the goal
-(`mdtests/closer_after_unfold_closed_goal.md`); any other tactic after the
-closure is refused by naming the tactic that closed it
+Inside a `have` body, a tactic that has closed the goal may be followed by
+`close()`, which asserts the completed judgment without emitting a step.
+Any other tactic after closure names the tactic that discharged the goal
 (`mdtests/tactic_after_closed_goal_is_named.md`).
 
 Scalar `induct` is available only in a pure theorem and may follow earlier
@@ -2630,8 +2626,9 @@ names are in scope, and:
   substitution exposed: a constant `if` condition selects its arm, and width
   conversions of constants fold, so `(uint64)` of an `int32` constant becomes
   a `uint64` constant. Nothing else is normalized.
-- Closes the goal when the refreshed goal is an available fact, such as the
-  equation just added. After that only `close()` may follow.
+- Leaves the refreshed goal open. A following tactic sees the goal even when
+  it is already an available fact. An explicit `close()` or the block's
+  implicit closer can discharge it.
 - At a C execution frontier, adds the equation and leaves the frontier.
 - With `at(point, ...)`, adds `at(point, function(args)) == at(point, body)`:
   the defining equation with the arguments' array contents read at `point`,
@@ -2656,8 +2653,6 @@ names are in scope, and:
 
 **Outside it**, with what to write instead:
 
-- A refreshed goal that became `true` or reflexive, such as `x + 1 == x + 1`:
-  it stays open; close it with `close()`.
 - A call whose arguments mention a quantifier's binder before it is
   introduced: `intro()` first.
 - More than one layer: `unfold` again at the exposed call.
@@ -2676,7 +2671,7 @@ count mismatch fails; an argument that does not lower at this point fails with
 replay needs no implicit solver. Profiling charges the arguments, one body
 layer, and any implicit guard proofs.
 
-**Checked examples:** [`library_field_accessors_unfold_after_a_constructor_rewrite.md`](https://github.com/clicklang/click/blob/master/mdtests/library_field_accessors_unfold_after_a_constructor_rewrite.md), [`library_field_accessors_need_their_defining_equation.md`](https://github.com/clicklang/click/blob/master/mdtests/library_field_accessors_need_their_defining_equation.md), [`unfold_fold_integer_callback_uses_ordinary_obligations.md`](https://github.com/clicklang/click/blob/master/mdtests/unfold_fold_integer_callback_uses_ordinary_obligations.md), [`unfold_fold_empty_uses_ordinary_obligations.md`](https://github.com/clicklang/click/blob/master/mdtests/unfold_fold_empty_uses_ordinary_obligations.md), [`unfold_fold_int32_uses_ordinary_obligations.md`](https://github.com/clicklang/click/blob/master/mdtests/unfold_fold_int32_uses_ordinary_obligations.md), [`pure_function_unfold.md`](https://github.com/clicklang/click/blob/master/mdtests/pure_function_unfold.md), [`unfold_rewrites_each_occurrence_of_the_exact_call.md`](https://github.com/clicklang/click/blob/master/mdtests/unfold_rewrites_each_occurrence_of_the_exact_call.md), [`normalize_evaluates_a_substituted_conversion.md`](https://github.com/clicklang/click/blob/master/mdtests/normalize_evaluates_a_substituted_conversion.md), [`a_step_after_an_unfold_that_closed_the_goal_is_refused.md`](https://github.com/clicklang/click/blob/master/mdtests/a_step_after_an_unfold_that_closed_the_goal_is_refused.md), [`unfold_function_after_integer_intro.md`](https://github.com/clicklang/click/blob/master/mdtests/unfold_function_after_integer_intro.md), [`unfold_function_integer_shadow.md`](https://github.com/clicklang/click/blob/master/mdtests/unfold_function_integer_shadow.md), [`unfold_rejects_using_list.md`](https://github.com/clicklang/click/blob/master/mdtests/unfold_rejects_using_list.md)
+**Checked examples:** [`library_field_accessors_unfold_after_a_constructor_rewrite.md`](https://github.com/clicklang/click/blob/master/mdtests/library_field_accessors_unfold_after_a_constructor_rewrite.md), [`library_field_accessors_need_their_defining_equation.md`](https://github.com/clicklang/click/blob/master/mdtests/library_field_accessors_need_their_defining_equation.md), [`unfold_fold_integer_callback_uses_ordinary_obligations.md`](https://github.com/clicklang/click/blob/master/mdtests/unfold_fold_integer_callback_uses_ordinary_obligations.md), [`unfold_fold_empty_uses_ordinary_obligations.md`](https://github.com/clicklang/click/blob/master/mdtests/unfold_fold_empty_uses_ordinary_obligations.md), [`unfold_fold_int32_uses_ordinary_obligations.md`](https://github.com/clicklang/click/blob/master/mdtests/unfold_fold_int32_uses_ordinary_obligations.md), [`pure_function_unfold.md`](https://github.com/clicklang/click/blob/master/mdtests/pure_function_unfold.md), [`unfold_rewrites_each_occurrence_of_the_exact_call.md`](https://github.com/clicklang/click/blob/master/mdtests/unfold_rewrites_each_occurrence_of_the_exact_call.md), [`normalize_evaluates_a_substituted_conversion.md`](https://github.com/clicklang/click/blob/master/mdtests/normalize_evaluates_a_substituted_conversion.md), [`unfold_keeps_the_refreshed_goal_open.md`](https://github.com/clicklang/click/blob/master/mdtests/unfold_keeps_the_refreshed_goal_open.md), [`unfold_function_after_integer_intro.md`](https://github.com/clicklang/click/blob/master/mdtests/unfold_function_after_integer_intro.md), [`unfold_function_integer_shadow.md`](https://github.com/clicklang/click/blob/master/mdtests/unfold_function_integer_shadow.md), [`unfold_rejects_using_list.md`](https://github.com/clicklang/click/blob/master/mdtests/unfold_rejects_using_list.md)
 
 ### Constructor matches
 

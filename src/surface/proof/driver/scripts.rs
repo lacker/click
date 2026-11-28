@@ -583,16 +583,9 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
             let _origin = super::timing::trace_origin(tactic);
             let nested_capture = proof.begin_nested_tactic_capture();
             if proof.focused_discharged() {
-                // A closer after a step that already discharged the goal (a
-                // `transport` whose target is the goal, an exact theorem
-                // conclusion, an `unfold` whose refreshed goal was already
-                // an available fact) asserts a closed judgment: a harmless
-                // no-op that emits no redundant certificate step. That is
-                // `known`, a bare `solve`, and the checked bound closer,
-                // in any position, so `unfold(f(x)); close();` means the
-                // same whether or not the unfold alone closed the goal. Any
-                // other suffix after closure is a declined shape, named with
-                // the tactic that closed the goal.
+                // A closer after a step that already discharged the goal
+                // asserts the completed judgment without emitting a step.
+                // Any other suffix names the tactic that closed the goal.
                 if matches!(
                     tactic,
                     ProofTactic::Known

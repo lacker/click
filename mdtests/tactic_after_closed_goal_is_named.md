@@ -1,11 +1,8 @@
 # A tactic other than a closer after a closed goal names what closed it
 
-Only a closer such as `close()` may follow a tactic that already closed a
-`have`'s goal. Here `color_bit(Color::Red) == 0` is established
-first, so unfolding `red_bit_value()` in the second body leaves exactly that
-fact and closes the goal at once; the `rewrite` after it has no goal to
-rewrite, and the refusal names the `unfold` rather than reporting a failed
-rewrite.
+Only a closer may follow a tactic that has discharged a `have` goal.
+Here `close()` proves the refreshed goal after unfolding, and the next
+`rewrite` reports which tactic closed it.
 
 ```c filename=tactic_after_closed_goal_is_named.c
 int32 red_bit(int32 n) {
@@ -38,6 +35,7 @@ int32 red_bit(int32 n) {
     }
     have red_bit_value() == 0 by {
         unfold(red_bit_value());
+        close();
         rewrite(color_bit(Color::Red), 0);
         close();
     }
@@ -45,5 +43,5 @@ int32 red_bit(int32 n) {
 ```
 
 ```expect
-fail: `unfold` already closed this goal
+fail: `close` already closed this goal
 ```

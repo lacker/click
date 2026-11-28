@@ -1,17 +1,17 @@
-# A closer after an `unfold` that already closed the goal is a no-op
+# A closer can discharge the refreshed goal after unfolding
 
 The first `have` proves the concrete color's bit value. In the second
 `have`, unfolding `red_bit_value()` exposes the equality already established
 by the first proof. Both proofs accept a trailing `close()`.
 
-```c filename=closer_after_unfold_closed_goal.c
+```c filename=close_after_unfold_refreshes_the_goal.c
 int32 red_bit(int32 n) {
     return 0;
 }
 ```
 
 ```click
-verifying "closer_after_unfold_closed_goal.c";
+verifying "close_after_unfold_refreshes_the_goal.c";
 
 spec enum Color { Red, Black }
 
