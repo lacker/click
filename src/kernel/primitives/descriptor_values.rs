@@ -330,6 +330,18 @@ impl From<OldConditionTerm> for StoredConditionTerm {
                     *variable,
                 )));
             }
+            // Variables and reads have fixed-size roots. Importing either keeps
+            // the native comparison's original type, read version, and address.
+            OldConditionTerm::AlgebraicEqual(left, right)
+                if [left, right].iter().all(|term| {
+                    matches!(
+                        term.node,
+                        AlgebraicTermNode::Variable(_) | AlgebraicTermNode::MemoryLoad { .. }
+                    )
+                }) =>
+            {
+                KernelTermImport::for_exact_field_inputs().condition(&value)
+            }
             OldConditionTerm::Overflows {
                 format,
                 op,
